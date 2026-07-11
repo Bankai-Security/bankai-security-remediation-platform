@@ -1,0 +1,71 @@
+:root {
+  --color-bg: #F4F4F5;
+  --color-surface: #FCFCFD;
+  --color-surface-alt: #FAFAFB;
+  --color-border: #E5E5EA;
+  --color-border-strong: #D1D1D6;
+  --color-divider: #ECECEF;
+  --color-fill: #E9E9EB;
+  --color-text: #1C1C1E;
+  --color-text-muted: #8A8A8E;
+  --color-text-subtle: #3A3A3C;
+  --color-text-faint: #C7C7CC;
+  --color-green: #22C55E;
+  --color-green-dark: #15803D;
+  --color-blue: #2563EB;
+  --color-blue-dark: #1D4ED8;
+  --color-red: #DC2626;
+  --color-red-bg: #FEF2F2;
+
+  --radius-card: 20px;
+  --radius-lg: 18px;
+  --radius-md: 10px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--color-blue);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--color-blue-dark);
+}
+
+button {
+  font-family: inherit;
+}
+
+.avatar-ring {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 3.5px var(--color-green);
+}
