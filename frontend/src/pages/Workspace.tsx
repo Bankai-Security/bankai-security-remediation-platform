@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import './Workspace.css';
+import './workspace-pages/shared.css';
 
 export default function Workspace() {
   return (

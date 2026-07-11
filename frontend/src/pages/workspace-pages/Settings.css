@@ -1,0 +1,213 @@
+.settings-section {
+  margin-bottom: 22px;
+}
+
+.settings-h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 4px 0 18px 0;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.settings-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-profile-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  font-weight: 700;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px var(--color-surface), 0 0 0 4.5px var(--color-green);
+}
+
+.settings-profile-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-profile-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.settings-profile-email {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.settings-role-badge {
+  display: inline-flex;
+  border: 1.5px solid #93C5FD;
+  color: #1D4ED8;
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.settings-jira-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 24px;
+  margin-bottom: 18px;
+}
+
+.settings-field-label {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.settings-field-value {
+  font-size: 13.5px;
+  font-weight: 600;
+  background: var(--color-bg);
+  border-radius: 10px;
+  padding: 10px 13px;
+}
+
+.settings-jira-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.settings-jira-synced {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.settings-sla-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.settings-sla-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 12px;
+}
+
+.settings-sla-value {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.settings-sla-unit {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.settings-notif-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.settings-notif-row:last-child {
+  border-bottom: none;
+}
+
+.settings-notif-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-notif-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settings-notif-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.settings-team-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.settings-team-head {
+  display: grid;
+  grid-template-columns: 2.4fr 1.4fr 1fr;
+  gap: 0 12px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding: 0 2px 10px 2px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.settings-team-row {
+  display: grid;
+  grid-template-columns: 2.4fr 1.4fr 1fr;
+  gap: 0 12px;
+  align-items: center;
+  padding: 13px 2px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.settings-team-row:last-child {
+  border-bottom: none;
+}
+
+.settings-team-member {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.settings-team-member-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-team-member-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-team-member-email {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+.settings-team-access {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}

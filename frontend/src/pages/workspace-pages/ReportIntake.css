@@ -1,0 +1,250 @@
+.intake-card {
+  margin-bottom: 28px;
+  padding: 24px 28px 28px 28px;
+}
+
+.intake-card-header {
+  margin-bottom: 18px;
+}
+
+.intake-card-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 4px 0 0 0;
+}
+
+.intake-card-sub {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 5px;
+}
+
+.intake-processing,
+.intake-done,
+.intake-error {
+  border-radius: 16px;
+  padding: 24px 26px;
+}
+
+.intake-processing,
+.intake-done {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.intake-processing-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.intake-file-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--color-fill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-subtle);
+  flex-shrink: 0;
+}
+
+.intake-processing-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.intake-processing-filename {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.intake-processing-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.intake-processing-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-blue);
+}
+
+.intake-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.intake-step-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.intake-step-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #fff;
+  box-sizing: border-box;
+}
+
+.intake-step-label {
+  font-size: 13.5px;
+}
+
+.intake-done-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.intake-done-check {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.intake-done-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.intake-done-meta {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  margin-top: 1px;
+}
+
+.intake-done-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.intake-done-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.intake-download-link {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.intake-error {
+  border: 1px solid #FCA5A5;
+  background: var(--color-red-bg);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.intake-error-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-red);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.intake-error-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.intake-error-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #991B1B;
+}
+
+.intake-error-text {
+  font-size: 13px;
+  color: #B91C1C;
+  margin-top: 4px;
+}
+
+.intake-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.intake-error-log-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: #991B1B;
+}
+
+.intake-error-log-link:hover {
+  color: #7F1D1D;
+}
+
+.intake-history-head {
+  display: grid;
+  grid-template-columns: 2.2fr 1.2fr 0.7fr 0.9fr 1fr 0.8fr;
+  gap: 8px 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  padding: 0 2px 10px 2px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.intake-history-row {
+  display: grid;
+  grid-template-columns: 2.2fr 1.2fr 0.7fr 0.9fr 1fr 0.8fr;
+  gap: 8px 12px;
+  font-size: 13.5px;
+  align-items: center;
+  padding: 13px 2px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.intake-history-row:last-child {
+  border-bottom: none;
+}
+
+.intake-history-filename {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intake-history-date {
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+}
+
+.intake-history-action {
+  font-size: 12.5px;
+  font-weight: 600;
+}

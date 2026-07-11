@@ -1,0 +1,529 @@
+/* Shared building blocks for all /workspace/* pages (sidebar + content-area pages). */
+
+.ws-page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 26px 40px 48px 32px;
+  box-sizing: border-box;
+}
+
+.ws-page--narrow {
+  max-width: 1180px;
+}
+
+.ws-page--settings {
+  max-width: 920px;
+}
+
+.ws-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  padding-bottom: 16px;
+}
+
+.ws-breadcrumb-link {
+  color: var(--color-text-muted);
+}
+
+.ws-breadcrumb-link:hover {
+  color: var(--color-text-subtle);
+}
+
+.ws-breadcrumb-sep {
+  color: var(--color-text-faint);
+}
+
+.ws-breadcrumb-current {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.ws-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin-bottom: 28px;
+}
+
+/* Card / section */
+
+.ws-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 22px 26px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-sizing: border-box;
+}
+
+.ws-card-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+}
+
+.ws-card-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 4px 0 14px 0;
+}
+
+.ws-card-title--tight {
+  margin-bottom: 6px;
+}
+
+.ws-card-hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-bottom: 16px;
+}
+
+/* Page header row (eyebrow + h1/h2 + optional trailing content) */
+
+.ws-header-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.ws-header-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.ws-header-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 4px 0 0 0;
+}
+
+/* Empty state */
+
+.ws-empty {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  padding: 90px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.ws-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-fill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ws-empty-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-top: 18px;
+}
+
+.ws-empty-body {
+  font-size: 13.5px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+  max-width: 420px;
+}
+
+.ws-empty-cta {
+  display: inline-flex;
+  margin-top: 20px;
+  background: var(--color-blue);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.ws-empty-cta:hover {
+  background: var(--color-blue-dark);
+  color: #fff;
+}
+
+/* Dropzone */
+
+.ws-dropzone {
+  border: 2px dashed var(--color-text-faint);
+  border-radius: 16px;
+  background: var(--color-bg);
+  padding: 56px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.ws-dropzone-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 18px;
+}
+
+.ws-dropzone-body {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  margin-top: 7px;
+  max-width: 560px;
+}
+
+/* Buttons */
+
+.ws-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 10px 22px;
+  border: none;
+  white-space: nowrap;
+  font-family: inherit;
+  text-decoration: none;
+}
+
+.ws-btn:disabled {
+  cursor: not-allowed;
+}
+
+.ws-btn-primary {
+  background: var(--color-blue);
+  color: #fff;
+}
+
+.ws-btn-primary:hover:not(:disabled) {
+  background: var(--color-blue-dark);
+  color: #fff;
+}
+
+.ws-btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+}
+
+.ws-btn-secondary:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.ws-btn-outline-blue {
+  background: var(--color-surface);
+  color: var(--color-blue);
+  border: 1px solid var(--color-blue);
+}
+
+.ws-btn-outline-blue:hover:not(:disabled) {
+  background: #EFF6FF;
+}
+
+.ws-btn-danger-outline {
+  background: var(--color-surface);
+  color: #B91C1C;
+  border: 1px solid #FCA5A5;
+}
+
+.ws-btn-danger-outline:hover:not(:disabled) {
+  background: var(--color-red-bg);
+}
+
+.ws-btn-success {
+  background: var(--color-green);
+  color: #fff;
+}
+
+.ws-btn-success:hover:not(:disabled) {
+  background: var(--color-green-dark);
+}
+
+.ws-btn-disabled {
+  background: var(--color-fill);
+  color: var(--color-text-muted);
+}
+
+/* Stat tiles */
+
+.ws-stat-tile {
+  background: var(--color-fill);
+  border-radius: 14px;
+  padding: 18px 16px;
+}
+
+.ws-stat-tile-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ws-stat-tile-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 8px;
+}
+
+/* Badges */
+
+.ws-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3.5px 10px;
+}
+
+.ws-badge--outline {
+  font-weight: 600;
+  border: 1.5px solid transparent;
+  background: transparent;
+}
+
+.ws-badge--critical { background: #FEE2E2; color: #B91C1C; }
+.ws-badge--high { background: #FFEDD5; color: #C2410C; }
+.ws-badge--medium { background: #FEF9C3; color: #A16207; }
+.ws-badge--low { background: var(--color-fill); color: var(--color-text-subtle); }
+
+.ws-badge--bucket-new { border-color: #EC4899; color: #DB2777; }
+.ws-badge--bucket-progress { border-color: #93C5FD; color: #1D4ED8; }
+.ws-badge--bucket-changed { border-color: #FCD34D; color: #A16207; }
+.ws-badge--bucket-resolved { border-color: #86EFAC; color: #15803D; }
+
+.ws-badge--pill-green { background: #DCFCE7; color: #15803D; }
+.ws-badge--pill-red { background: #FEE2E2; color: #B91C1C; }
+.ws-badge--pill-neutral { background: var(--color-fill); color: var(--color-text-subtle); }
+
+.ws-dot-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ws-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Table (grid-based, column template supplied per table via className or inline style var) */
+
+.ws-table {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.ws-table-head {
+  display: grid;
+  grid-template-columns: var(--ws-cols);
+  gap: 0 10px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding: 13px 20px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-surface-alt);
+}
+
+.ws-table-row {
+  display: grid;
+  grid-template-columns: var(--ws-cols);
+  gap: 0 10px;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid #F1F1F3;
+}
+
+.ws-table-row:last-child {
+  border-bottom: none;
+}
+
+.ws-table-row--clickable {
+  cursor: pointer;
+}
+
+.ws-table-row--clickable:hover {
+  background: var(--color-bg);
+}
+
+.ws-col-right {
+  text-align: right;
+}
+
+.ws-mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* Select */
+
+.ws-select {
+  appearance: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 8px 30px 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%238A8A8E' fill='none' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  font-family: inherit;
+}
+
+/* Segmented control */
+
+.ws-segmented {
+  display: flex;
+  background: var(--color-fill);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.ws-segmented-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 7px 15px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+}
+
+.ws-segmented-btn--active {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* Toggle switch */
+
+.ws-toggle {
+  width: 42px;
+  height: 25px;
+  border-radius: 999px;
+  border: none;
+  background: var(--color-border-strong);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+
+.ws-toggle--on {
+  background: var(--color-green);
+}
+
+.ws-toggle-knob {
+  position: absolute;
+  top: 2.5px;
+  left: 2.5px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+
+.ws-toggle--on .ws-toggle-knob {
+  left: 19.5px;
+}
+
+/* Checkbox */
+
+.ws-checkbox {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1.5px solid var(--color-text-faint);
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.ws-checkbox--checked {
+  border: none;
+  background: var(--color-blue);
+}
+
+/* Progress bar */
+
+.ws-progress-track {
+  height: 6px;
+  background: var(--color-fill);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.ws-progress-track--thin {
+  height: 5px;
+}
+
+.ws-progress-fill {
+  height: 100%;
+  background: var(--color-blue);
+  border-radius: 99px;
+  transition: width 0.15s linear;
+}
+
+/* Avatar chip (initials) */
+
+.ws-avatar-chip {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+@keyframes ws-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.ws-skeleton {
+  background: var(--color-fill);
+  border-radius: 18px;
+  animation: ws-pulse 1.6s ease-in-out infinite;
+}

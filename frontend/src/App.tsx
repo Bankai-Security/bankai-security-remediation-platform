@@ -13,7 +13,10 @@ import {
   Tickets,
   Activity,
   Settings,
-} from './pages/stubs';
+  IntakeDetail,
+  DefectGenerationDetail,
+  JiraTicketsDetail,
+} from './pages/workspace-pages';
 
 export default function App() {
   return (
@@ -28,6 +31,9 @@ export default function App() {
       <Route path="/workspace" element={<Workspace />}>
         <Route index element={<Navigate to="workflow" replace />} />
         <Route path="workflow" element={<RemediationWorkflow />} />
+        <Route path="workflow/intake-triage" element={<IntakeDetail />} />
+        <Route path="workflow/defect-generation" element={<DefectGenerationDetail />} />
+        <Route path="workflow/jira-tickets" element={<JiraTicketsDetail />} />
         <Route path="overview" element={<Overview />} />
         <Route path="intake" element={<ReportIntake />} />
         <Route path="triage" element={<AITriage />} />
