@@ -1,5 +1,5 @@
 import { parse } from "csv-parse/sync";
-import { computeSlaDueDate } from "./sla.js";
+import { computeSlaDueDate, type SlaPolicyDays } from "./sla.js";
 import type { Bucket, Severity } from "./pipeline-types.js";
 
 export class CsvIngestError extends Error {}
@@ -236,6 +236,7 @@ export function planIngest(
   existing: ExistingFinding[],
   rows: NormalizedFinding[],
   now: Date,
+  policyDays: SlaPolicyDays,
 ): IngestPlan {
   const existingByFingerprint = new Map(existing.map((f) => [f.fingerprint, f]));
   const seenFingerprints = new Set<string>();
@@ -290,7 +291,7 @@ export function planIngest(
       bucket,
       confidence: computeConfidence(bucket, row),
       rationale,
-      sla_due_date: computeSlaDueDate(row.severity, dueFrom),
+      sla_due_date: computeSlaDueDate(row.severity, dueFrom, policyDays),
       last_seen_at: now.toISOString(),
     });
   }

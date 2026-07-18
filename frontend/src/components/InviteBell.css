@@ -1,0 +1,139 @@
+.invite-bell {
+  position: relative;
+  display: flex;
+}
+
+.invite-bell-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 0;
+}
+
+.invite-bell-btn:hover {
+  background: var(--color-divider);
+  color: var(--color-text);
+}
+
+.invite-bell-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--color-red);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.invite-bell-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.invite-bell-menu {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  width: 280px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+  padding: 10px;
+  z-index: 70;
+}
+
+.invite-bell-menu-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  padding: 4px 6px 8px 6px;
+}
+
+.invite-bell-empty {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  padding: 6px;
+}
+
+.invite-bell-item {
+  padding: 9px 6px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invite-bell-item:hover {
+  background: var(--color-bg);
+}
+
+.invite-bell-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.invite-bell-item-project {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.invite-bell-item-role {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.invite-bell-item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.invite-bell-accept,
+.invite-bell-decline {
+  flex: 1;
+  border-radius: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.invite-bell-accept {
+  background: var(--color-green);
+  border-color: var(--color-green);
+  color: #fff;
+}
+
+.invite-bell-decline:hover {
+  background: var(--color-red-bg);
+  color: var(--color-red);
+  border-color: var(--color-red-bg);
+}
+
+.invite-bell-accept:disabled,
+.invite-bell-decline:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

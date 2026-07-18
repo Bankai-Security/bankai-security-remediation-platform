@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
 import { ApiError, listScans, uploadScan, type Scan } from '../../lib/api';
+import { canEdit } from '../../lib/roles';
 import { useProject } from '../../lib/project-context';
 import './ReportIntake.css';
 
@@ -100,6 +101,7 @@ export default function ReportIntake() {
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
+    if (!canEdit(project?.myRole)) return;
     const file = e.dataTransfer.files?.[0];
     if (file) void startUpload(file);
   };
@@ -150,8 +152,15 @@ export default function ReportIntake() {
               accept=".csv,text/csv"
               style={{ display: 'none' }}
               onChange={handleFileInputChange}
+              disabled={!canEdit(project?.myRole)}
             />
-            <button onClick={() => fileInputRef.current?.click()} className="ws-btn ws-btn-primary" style={{ marginTop: 20 }}>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className={`ws-btn ${canEdit(project?.myRole) ? 'ws-btn-primary' : 'ws-btn-disabled'}`}
+              style={{ marginTop: 20 }}
+              disabled={!canEdit(project?.myRole)}
+              title={!canEdit(project?.myRole) ? 'Your role does not allow uploading scans.' : undefined}
+            >
               Browse File
             </button>
           </div>

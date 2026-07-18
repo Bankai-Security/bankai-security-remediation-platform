@@ -6,7 +6,7 @@ import { assertArcjetAllowed } from "../lib/enforce-arcjet.js";
 import { loginArcjet, signupArcjet } from "../lib/arcjet.js";
 import { HttpError } from "../lib/http-error.js";
 import { createRequestSupabaseClient, createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
-import type { ChangePasswordInput, LoginInput, SignupInput, UpdateProfileInput } from "../schemas/auth.schema.js";
+import type { ChangePasswordInput, DeleteAccountInput, LoginInput, SignupInput, UpdateProfileInput } from "../schemas/auth.schema.js";
 
 function toPublicUser(user: User) {
   return {
@@ -175,5 +175,36 @@ export async function changePassword(req: Request, res: Response): Promise<void>
     throw new HttpError(400, error.message);
   }
 
+  res.status(204).send();
+}
+
+// Deletes the auth.users row via the admin API — profiles.id FKs to it
+// `on delete cascade` (20260717120000_create_profiles.sql), which in turn
+// cascades to every project this user owns (and everything in those
+// projects: scans/findings/tickets/activity/members/invites), plus their
+// own project_members rows in anyone else's projects. This is strictly
+// more destructive than deleting a single project, so it requires the
+// same re-verify-current-password step as changePassword, just for an
+// irreversible action instead of a sensitive one.
+export async function deleteAccount(req: Request, res: Response): Promise<void> {
+  const { password } = req.body as DeleteAccountInput;
+  const email = req.user!.email;
+
+  if (!email) {
+    throw new HttpError(400, "This account has no email on file.");
+  }
+
+  const verifyClient = createRequestSupabaseClient();
+  const { error: verifyError } = await verifyClient.auth.signInWithPassword({ email, password });
+  if (verifyError) {
+    throw new HttpError(401, "Password is incorrect.");
+  }
+
+  const { error } = await supabaseAdmin.auth.admin.deleteUser(req.user!.id);
+  if (error) {
+    throw new HttpError(500, "Could not delete your account.");
+  }
+
+  clearAuthCookies(res);
   res.status(204).send();
 }

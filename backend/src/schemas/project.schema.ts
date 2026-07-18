@@ -8,8 +8,12 @@ export const createProjectSchema = z.object({
     .max(50, "Too many services")
     .optional()
     .default([]),
-  jiraSite: z.string().trim().max(253, "Jira site is too long").optional(),
-  jiraKey: z.string().trim().max(20, "Project key is too long").optional(),
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+
+export const deleteProjectSchema = z.object({
+  confirmName: z.string().trim().min(1, "Type the project name to confirm"),
+});
+
+export type DeleteProjectInput = z.infer<typeof deleteProjectSchema>;

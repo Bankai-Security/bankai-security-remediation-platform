@@ -9,6 +9,7 @@ import {
   type Finding,
   type Severity,
 } from '../../lib/api';
+import { canEdit } from '../../lib/roles';
 import { useProject } from '../../lib/project-context';
 import './AITriage.css';
 
@@ -99,6 +100,7 @@ export default function AITriage() {
 
   const toggleRow = (row: Finding) => {
     if (row.ticketKey) return; // already has a ticket — nothing to select
+    if (!canEdit(project?.myRole)) return;
     setSelected((prev) => ({ ...prev, [row.id]: !prev[row.id] }));
   };
 
@@ -206,7 +208,7 @@ export default function AITriage() {
           <button className="triage-bulk-clear" onClick={() => setSelected({})}>Clear</button>
           <button
             className="triage-bulk-create"
-            disabled={busy}
+            disabled={busy || !canEdit(project?.myRole)}
             onClick={() => void handleMarkForJira(Object.keys(selected).filter((id) => selected[id]))}
           >
             Create {selCount} ticket(s)
@@ -241,7 +243,10 @@ export default function AITriage() {
               <div
                 key={r.id}
                 className="ws-table-row ws-table-row--clickable triage-grid"
-                style={{ background: checked ? '#EFF6FF' : openId === r.id ? 'var(--color-bg)' : 'transparent' }}
+                style={{
+                  background: checked ? '#EFF6FF' : openId === r.id ? 'var(--color-bg)' : 'transparent',
+                  opacity: r.ticketKey ? 0.45 : 1,
+                }}
                 onClick={() => {
                   setOpenId(r.id);
                   setReassigning(false);
@@ -354,11 +359,20 @@ export default function AITriage() {
               ) : (
                 <>
                   <button className="ws-btn ws-btn-success" style={{ flex: 1 }} onClick={() => setOpenId(null)}>Accept</button>
-                  <button className="ws-btn ws-btn-secondary" style={{ flex: 1 }} onClick={() => setReassigning(true)}>Reassign bucket</button>
+                  <button
+                    className="ws-btn ws-btn-secondary"
+                    style={{ flex: 1 }}
+                    disabled={!canEdit(project?.myRole)}
+                    title={!canEdit(project?.myRole) ? 'Your role does not allow reassigning findings.' : undefined}
+                    onClick={() => setReassigning(true)}
+                  >
+                    Reassign bucket
+                  </button>
                   <button
                     className="ws-btn ws-btn-outline-blue"
                     style={{ flex: 1 }}
-                    disabled={busy || !!openRow.ticketKey}
+                    disabled={busy || !!openRow.ticketKey || !canEdit(project?.myRole)}
+                    title={!canEdit(project?.myRole) ? 'Your role does not allow creating tickets.' : undefined}
                     onClick={() => void handleMarkForJira([openRow.id])}
                   >
                     {openRow.ticketKey ? `Ticketed · ${openRow.ticketKey}` : 'Mark for Jira'}

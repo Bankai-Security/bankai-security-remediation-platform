@@ -1,14 +1,28 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
-import { ApiError, changePassword, updateProfile } from '../lib/api';
+import { ApiError, changePassword, deleteAccount, listProjects, updateProfile, type Project } from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
 import './AccountSettings.css';
 import './NewProject.css';
 
 export default function AccountSettings() {
   const { user, setUser } = useCurrentUser();
+  const navigate = useNavigate();
+
+  const [ownedProjects, setOwnedProjects] = useState<Project[] | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteEmailConfirm, setDeleteEmailConfirm] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  useEffect(() => {
+    listProjects()
+      .then(({ projects }) => setOwnedProjects(projects.filter((p) => p.myRole === 'owner')))
+      .catch(() => setOwnedProjects([]));
+  }, []);
 
   const [fullName, setFullName] = useState(user?.fullName ?? '');
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -65,6 +79,26 @@ export default function AccountSettings() {
       setPasswordError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Something went wrong. Please try again.');
     } finally {
       setSavingPassword(false);
+    }
+  };
+
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeleteError(null);
+
+    if (deleteEmailConfirm.trim().toLowerCase() !== (user?.email ?? '').toLowerCase()) {
+      setDeleteError('Type your account email exactly to confirm.');
+      return;
+    }
+
+    setDeleteBusy(true);
+    try {
+      await deleteAccount(deletePassword);
+      setUser(null);
+      navigate('/login');
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : 'Could not delete your account.');
+      setDeleteBusy(false);
     }
   };
 
@@ -185,6 +219,96 @@ export default function AccountSettings() {
             <Link to="/projects" className="new-project-cancel-link">Back to projects</Link>
           </div>
         </form>
+
+        <section
+          className="new-project-section"
+          style={{ marginTop: 28, border: '1px solid var(--color-red)', borderRadius: 14, padding: 20 }}
+        >
+          <h2 className="new-project-section-title" style={{ color: 'var(--color-red)' }}>Danger zone</h2>
+          <div className="account-settings-hint" style={{ marginTop: 4 }}>
+            Permanently deletes your account.
+            {ownedProjects && ownedProjects.length > 0 && (
+              <>
+                {' '}You own {ownedProjects.length} project{ownedProjects.length > 1 ? 's' : ''} — deleting your account
+                permanently deletes {ownedProjects.length > 1 ? 'all of them' : 'it'} too, including every scan, finding,
+                and ticket in {ownedProjects.length > 1 ? 'them' : 'it'} and any teammates&rsquo; access to{' '}
+                {ownedProjects.length > 1 ? 'them' : 'it'} — not just your own membership.
+              </>
+            )}
+            {' '}This cannot be undone.
+          </div>
+
+          {ownedProjects && ownedProjects.length > 0 && (
+            <ul style={{ margin: '10px 0 0 0', paddingLeft: 20, fontSize: 13 }}>
+              {ownedProjects.map((p) => (
+                <li key={p.id}>{p.name}</li>
+              ))}
+            </ul>
+          )}
+
+          {!showDeleteConfirm ? (
+            <div className="new-project-actions" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="new-project-create-btn"
+                style={{ background: 'var(--color-red)' }}
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                Delete account
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleDeleteAccount} style={{ marginTop: 16 }}>
+              {deleteError && <div className="new-project-error" role="alert">{deleteError}</div>}
+              <div className="new-project-field-stack">
+                <div className="new-project-field">
+                  <label htmlFor="delete-email-confirm">Type your email ({user?.email}) to confirm</label>
+                  <input
+                    id="delete-email-confirm"
+                    type="email"
+                    className="new-project-input"
+                    value={deleteEmailConfirm}
+                    onChange={(e) => setDeleteEmailConfirm(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="new-project-field">
+                  <label htmlFor="delete-password">Password</label>
+                  <input
+                    id="delete-password"
+                    type="password"
+                    className="new-project-input"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="new-project-actions" style={{ marginTop: 16 }}>
+                <button
+                  type="submit"
+                  className="new-project-create-btn"
+                  style={{ background: 'var(--color-red)' }}
+                  disabled={deleteBusy}
+                >
+                  {deleteBusy ? 'Deleting…' : 'Permanently delete my account'}
+                </button>
+                <button
+                  type="button"
+                  className="new-project-cancel-link"
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteError(null);
+                    setDeleteEmailConfirm('');
+                    setDeletePassword('');
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
       </main>
     </div>
   );

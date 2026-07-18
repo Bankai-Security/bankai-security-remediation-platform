@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { recordActivity } from "../lib/activity.js";
 import { CsvIngestError, parseFindingsCsv, planIngest, type ExistingFinding } from "../lib/csv-ingest.js";
 import { HttpError } from "../lib/http-error.js";
+import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 
@@ -43,6 +44,7 @@ function toPublicScan(row: ScanRow) {
 
 export async function uploadScan(req: Request, res: Response): Promise<void> {
   const project = req.project!;
+  requireRole(project.myRole, ["owner", "admin", "editor"]);
   const file = req.file;
 
   if (!file) {
@@ -102,7 +104,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
     bucket: f.bucket,
   }));
 
-  const plan = planIngest(project.id, scan.id, existing, rows, new Date());
+  const plan = planIngest(project.id, scan.id, existing, rows, new Date(), project.slaPolicyDays);
 
   if (plan.upsertRows.length > 0) {
     const { error: upsertError } = await supabase

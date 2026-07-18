@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { HttpError } from "../lib/http-error.js";
-import { computeSlaStatus } from "../lib/sla.js";
+import { requireRole } from "../lib/roles.js";
+import { computeSlaStatus, type SlaPolicyDays } from "../lib/sla.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import type { Bucket, Severity } from "../lib/pipeline-types.js";
 import type { UpdateFindingInput } from "../schemas/finding.schema.js";
@@ -33,7 +34,7 @@ interface FindingRow {
   tickets: { id: string; key: string }[] | { id: string; key: string } | null;
 }
 
-function toPublicFinding(row: FindingRow) {
+function toPublicFinding(row: FindingRow, policyDays: SlaPolicyDays) {
   const ticket = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
   const evidence = [
     row.component && `component: ${row.component}`,
@@ -51,7 +52,7 @@ function toPublicFinding(row: FindingRow) {
     service: row.service ?? "Unassigned",
     severity: row.severity,
     cvssScore: row.cvss_score,
-    sla: computeSlaStatus(row.severity, row.sla_due_date),
+    sla: computeSlaStatus(row.severity, row.sla_due_date, policyDays),
     slaDueDate: row.sla_due_date,
     bucket: row.bucket,
     confidence: row.confidence,
@@ -85,7 +86,7 @@ export async function listFindings(req: Request, res: Response): Promise<void> {
     throw new HttpError(500, "Could not load findings.");
   }
 
-  let findings = (data as unknown as FindingRow[]).map(toPublicFinding);
+  let findings = (data as unknown as FindingRow[]).map((row) => toPublicFinding(row, req.project!.slaPolicyDays));
 
   const { sla } = req.query;
   if (typeof sla === "string" && sla !== "all") {
@@ -96,6 +97,7 @@ export async function listFindings(req: Request, res: Response): Promise<void> {
 }
 
 export async function updateFinding(req: Request, res: Response): Promise<void> {
+  requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
   const { bucket } = req.body as UpdateFindingInput;
   const supabase = userScopedClient(req);
 
@@ -114,5 +116,5 @@ export async function updateFinding(req: Request, res: Response): Promise<void> 
     throw new HttpError(404, "Finding not found");
   }
 
-  res.status(200).json({ finding: toPublicFinding(data as unknown as FindingRow) });
+  res.status(200).json({ finding: toPublicFinding(data as unknown as FindingRow, req.project!.slaPolicyDays) });
 }

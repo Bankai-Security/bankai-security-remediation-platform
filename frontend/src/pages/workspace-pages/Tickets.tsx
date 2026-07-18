@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
-import { listTickets, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
+import { ApiError, listTickets, syncTicketsToJira, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
+import { canEdit } from '../../lib/roles';
 import { useProject } from '../../lib/project-context';
 import './Tickets.css';
 
@@ -35,6 +36,8 @@ export default function Tickets() {
   const [fService, setFService] = useState('all');
   const [fSeverity, setFSeverity] = useState('all');
   const [view, setView] = useState<'kanban' | 'table'>('kanban');
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project) return;
@@ -52,6 +55,28 @@ export default function Tickets() {
   }, [project?.id]);
 
   const services = useMemo(() => Array.from(new Set((tickets ?? []).map((t) => t.service))).sort(), [tickets]);
+
+  const handleSync = async () => {
+    if (!project) return;
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const { synced, failed, statusPulled, removed } = await syncTicketsToJira(project.id);
+      const parts = [
+        synced > 0 && `${synced} created`,
+        statusPulled > 0 && `${statusPulled} status update(s) pulled`,
+        removed > 0 && `${removed} removed (deleted in Jira)`,
+        failed > 0 && `${failed} failed`,
+      ].filter(Boolean);
+      setSyncMessage(parts.length > 0 ? parts.join(', ') : 'Everything is already up to date.');
+      const { tickets: refreshed } = await listTickets(project.id);
+      setTickets(refreshed);
+    } catch (err) {
+      setSyncMessage(err instanceof ApiError ? err.message : 'Could not sync tickets to Jira.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const filtered = useMemo(
     () => (tickets ?? []).filter((t) => (fService === 'all' || t.service === fService) && (fSeverity === 'all' || t.severity === fSeverity)),
@@ -78,7 +103,9 @@ export default function Tickets() {
       <div className="ws-divider" />
 
       <div className="tickets-title-row">
-        <div className="ws-header-eyebrow">Bankai-internal tickets · Jira sync not connected</div>
+        <div className="ws-header-eyebrow">
+          {project?.jiraConnected ? `Synced to Jira · project ${project.jiraKey}` : 'Bankai-internal tickets · Jira sync not connected'}
+        </div>
         <h2 className="ws-header-title">Tickets</h2>
       </div>
 
@@ -101,9 +128,22 @@ export default function Tickets() {
           </div>
         </div>
         <div className="tickets-toolbar-right">
-          <button className="ws-btn ws-btn-disabled" disabled title="Jira isn't connected yet — tickets stay in Bankai for now." style={{ padding: '9px 18px', fontSize: 13, cursor: 'not-allowed' }}>
+          {syncMessage && <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{syncMessage}</span>}
+          <button
+            className={`ws-btn ${project?.jiraConnected && canEdit(project?.myRole) ? 'ws-btn-secondary' : 'ws-btn-disabled'}`}
+            disabled={!project?.jiraConnected || !canEdit(project?.myRole) || syncing}
+            onClick={handleSync}
+            title={
+              !canEdit(project?.myRole)
+                ? 'Your role does not allow syncing tickets.'
+                : !project?.jiraConnected
+                  ? 'Connect Jira in Settings to start syncing tickets.'
+                  : 'Checks every ticket against Jira and (re)creates any that are missing or were deleted.'
+            }
+            style={{ padding: '9px 18px', fontSize: 13, cursor: project?.jiraConnected && canEdit(project?.myRole) ? 'pointer' : 'not-allowed' }}
+          >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 1.5v3h-3" /></svg>
-            Sync with Jira
+            {syncing ? 'Syncing…' : 'Sync with Jira'}
           </button>
         </div>
       </div>
@@ -128,16 +168,36 @@ export default function Tickets() {
                   </div>
                   <div className="tickets-kanban-cards">
                     {col.cards.map((t) => (
-                      <div key={t.id} className="tickets-kanban-card">
+                      <div
+                        key={t.id}
+                        className="tickets-kanban-card"
+                        style={{ cursor: t.jiraIssueUrl ? 'pointer' : 'default' }}
+                        onClick={() => t.jiraIssueUrl && window.open(t.jiraIssueUrl, '_blank', 'noopener,noreferrer')}
+                        title={t.jiraIssueUrl ? `Open ${t.jiraIssueKey} in Jira` : undefined}
+                      >
                         <div className="tickets-kanban-card-top">
-                          <span className="ws-mono tickets-kanban-card-key">{t.key}</span>
+                          <span className="ws-mono tickets-kanban-card-key" style={t.jiraIssueKey ? { color: 'var(--color-blue)', textDecoration: 'underline' } : undefined}>
+                            {t.jiraIssueKey ?? t.key}
+                          </span>
                           <span className={sevBadgeClass(t.severity)} style={{ padding: '2.5px 9px', fontSize: 10.5 }}>{t.severity}</span>
                         </div>
                         <div className="tickets-kanban-card-title">{t.title}</div>
                         <div className="tickets-kanban-card-meta">
                           {t.service}
                           {t.findingExternalId && (
-                            <> · <Link to={`/workspace/${project?.id}/triage`} className="tickets-kanban-card-cvit">{t.findingExternalId}</Link></>
+                            <>
+                              {' · '}
+                              <Link
+                                to={`/workspace/${project?.id}/triage`}
+                                className="tickets-kanban-card-cvit"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {t.findingExternalId}
+                              </Link>
+                            </>
+                          )}
+                          {t.jiraSyncError && (
+                            <span style={{ color: '#B91C1C' }} title={t.jiraSyncError}> · Jira sync failed</span>
                           )}
                         </div>
                         <div className="tickets-kanban-card-footer">
@@ -161,9 +221,21 @@ export default function Tickets() {
               {filtered.map((t) => {
                 const sc = statusColor(t.status);
                 return (
-                  <div key={t.id} className="ws-table-row tickets-grid">
-                    <span className="ws-mono tickets-table-key">{t.key}</span>
-                    <span className="tickets-table-title">{t.title}</span>
+                  <div
+                    key={t.id}
+                    className={`ws-table-row tickets-grid ${t.jiraIssueUrl ? 'ws-table-row--clickable' : ''}`}
+                    onClick={() => t.jiraIssueUrl && window.open(t.jiraIssueUrl, '_blank', 'noopener,noreferrer')}
+                    title={t.jiraIssueUrl ? `Open ${t.jiraIssueKey} in Jira` : undefined}
+                  >
+                    <span className="ws-mono tickets-table-key" style={t.jiraIssueKey ? { color: 'var(--color-blue)', textDecoration: 'underline' } : undefined}>
+                      {t.jiraIssueKey ?? t.key}
+                    </span>
+                    <span className="tickets-table-title">
+                      {t.title}
+                      {t.jiraSyncError && (
+                        <span style={{ color: '#B91C1C', fontSize: 11 }} title={t.jiraSyncError}> · Jira sync failed</span>
+                      )}
+                    </span>
                     <span className="tickets-table-service">{t.service}</span>
                     <span><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
                     <span className="ws-mono tickets-table-cvit">{t.findingExternalId ?? '—'}</span>

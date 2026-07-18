@@ -36,7 +36,7 @@ export async function getOverview(req: Request, res: Response): Promise<void> {
   }
 
   const open = (findingsRes.data ?? []).filter((f) => f.bucket !== "Resolved");
-  const withSla = open.map((f) => ({ ...f, slaStatus: computeSlaStatus(f.severity as Severity, f.sla_due_date) }));
+  const withSla = open.map((f) => ({ ...f, slaStatus: computeSlaStatus(f.severity as Severity, f.sla_due_date, req.project!.slaPolicyDays) }));
 
   const totalCvits = open.length;
   const missed = withSla.filter((f) => f.slaStatus === "Missed").length;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
+import InviteBell from '../components/InviteBell';
 import { listProjects, logout, type Project } from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
 import './TopBar.css';
@@ -57,6 +58,7 @@ export default function Projects() {
           <img src={bankaiWordmark} alt="BANKAI" className="topbar-brand-wordmark" />
         </Link>
         <div className="topbar-user">
+          <InviteBell />
           <div className="avatar-ring" style={getAvatarStyle(user)}>{getInitials(user)}</div>
           <div>
             <div className="topbar-user-name">{getDisplayName(user)}</div>

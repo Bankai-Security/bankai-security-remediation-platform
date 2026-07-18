@@ -73,11 +73,24 @@ export function changePassword(input: { currentPassword: string; newPassword: st
   return apiFetch("/auth/password", { method: "PATCH", body: JSON.stringify(input) });
 }
 
+export function deleteAccount(password: string): Promise<void> {
+  return apiFetch("/auth/account", { method: "DELETE", body: JSON.stringify({ password }) });
+}
+
 export interface ProjectStats {
   totalCvits: number;
   slaBreachedPct: number;
   openTickets: number;
 }
+
+export interface SlaPolicyDays {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export type ProjectRole = "owner" | "admin" | "editor" | "viewer";
 
 export interface Project {
   id: string;
@@ -87,6 +100,9 @@ export interface Project {
   services: string[];
   jiraSite: string | null;
   jiraKey: string | null;
+  jiraConnected: boolean;
+  slaPolicyDays: SlaPolicyDays;
+  myRole: ProjectRole;
   stats: ProjectStats;
   lastIntakeAt: string | null;
   createdAt: string;
@@ -104,10 +120,47 @@ export function createProject(input: {
   name: string;
   description?: string;
   services?: string[];
-  jiraSite?: string;
-  jiraKey?: string;
 }): Promise<{ project: Project }> {
   return apiFetch("/projects", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function deleteProject(id: string, confirmName: string): Promise<void> {
+  return apiFetch(`/projects/${id}`, { method: "DELETE", body: JSON.stringify({ confirmName }) });
+}
+
+// ---------------------------------------------------------------------
+// Jira connection
+// ---------------------------------------------------------------------
+
+export interface JiraConnection {
+  connected: boolean;
+  site: string | null;
+  projectKey: string | null;
+  email: string | null;
+  connectedAt: string | null;
+}
+
+export function getJiraConnection(projectId: string): Promise<JiraConnection> {
+  return apiFetch(`/projects/${projectId}/jira`, { method: "GET" });
+}
+
+export function connectJira(
+  projectId: string,
+  input: { site: string; email: string; apiToken: string; projectKey: string },
+): Promise<JiraConnection> {
+  return apiFetch(`/projects/${projectId}/jira/connect`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function disconnectJira(projectId: string): Promise<JiraConnection> {
+  return apiFetch(`/projects/${projectId}/jira/disconnect`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------------
+// SLA policy
+// ---------------------------------------------------------------------
+
+export function updateSlaPolicy(projectId: string, input: SlaPolicyDays): Promise<SlaPolicyDays> {
+  return apiFetch(`/projects/${projectId}/sla`, { method: "PATCH", body: JSON.stringify(input) });
 }
 
 // ---------------------------------------------------------------------
@@ -212,6 +265,9 @@ export interface Ticket {
   overdue: boolean;
   findingId: string;
   findingExternalId: string | null;
+  jiraIssueKey: string | null;
+  jiraIssueUrl: string | null;
+  jiraSyncError: string | null;
   createdAt: string;
 }
 
@@ -232,6 +288,10 @@ export function createTickets(projectId: string, findingIds: string[]): Promise<
 
 export function updateTicketStatus(projectId: string, ticketId: string, status: TicketStatus): Promise<{ ticket: Ticket }> {
   return apiFetch(`/projects/${projectId}/tickets/${ticketId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
+export function syncTicketsToJira(projectId: string): Promise<{ synced: number; failed: number; statusPulled: number; removed: number }> {
+  return apiFetch(`/projects/${projectId}/tickets/sync`, { method: "POST" });
 }
 
 // ---------------------------------------------------------------------
@@ -278,4 +338,83 @@ export interface ActivityFilters {
 
 export function listActivity(projectId: string, filters: ActivityFilters = {}): Promise<{ activity: ActivityEvent[] }> {
   return apiFetch(`/projects/${projectId}/activity${toQueryString(filters)}`, { method: "GET" });
+}
+
+// ---------------------------------------------------------------------
+// Members and invites
+// ---------------------------------------------------------------------
+
+export type MemberRole = "owner" | "admin" | "editor" | "viewer";
+
+export interface ProjectMember {
+  id: string;
+  userId: string;
+  name: string;
+  email: string | null;
+  role: MemberRole;
+}
+
+export interface PendingProjectInvite {
+  id: string;
+  token: string;
+  email: string;
+  role: Exclude<MemberRole, "owner">;
+  createdAt: string;
+}
+
+export function listMembers(projectId: string): Promise<{ members: ProjectMember[]; invites: PendingProjectInvite[] }> {
+  return apiFetch(`/projects/${projectId}/members`, { method: "GET" });
+}
+
+export function inviteMember(
+  projectId: string,
+  input: { email: string; role: Exclude<MemberRole, "owner"> },
+): Promise<{ invite: PendingProjectInvite; inviteUrl: string }> {
+  return apiFetch(`/projects/${projectId}/members/invite`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateMemberRole(projectId: string, memberId: string, role: Exclude<MemberRole, "owner">): Promise<void> {
+  return apiFetch(`/projects/${projectId}/members/${memberId}`, { method: "PATCH", body: JSON.stringify({ role }) });
+}
+
+export function removeMember(projectId: string, memberId: string): Promise<void> {
+  return apiFetch(`/projects/${projectId}/members/${memberId}`, { method: "DELETE" });
+}
+
+export function revokeInvite(projectId: string, inviteId: string): Promise<void> {
+  return apiFetch(`/projects/${projectId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+export interface MyInvite {
+  id: string;
+  token: string;
+  projectId: string | null;
+  projectName: string;
+  role: Exclude<MemberRole, "owner">;
+  createdAt: string;
+}
+
+export function listMyInvites(): Promise<{ invites: MyInvite[] }> {
+  return apiFetch("/invites", { method: "GET" });
+}
+
+export interface InviteDetails {
+  id: string;
+  projectId: string | null;
+  projectName: string;
+  role: Exclude<MemberRole, "owner">;
+  status: string;
+  createdAt: string;
+}
+
+export function getInviteByToken(token: string): Promise<InviteDetails> {
+  return apiFetch(`/invites/${token}`, { method: "GET" });
+}
+
+export function acceptInvite(token: string): Promise<{ projectId: string }> {
+  return apiFetch(`/invites/${token}/accept`, { method: "POST" });
+}
+
+export function declineInvite(token: string): Promise<void> {
+  return apiFetch(`/invites/${token}/decline`, { method: "POST" });
 }

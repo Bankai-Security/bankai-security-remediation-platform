@@ -10,6 +10,10 @@ const envSchema = z.object({
 
   ARCJET_KEY: z.string().min(1),
 
+  // Base64 of 32 random bytes — encrypts Jira API tokens at rest.
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  JIRA_TOKEN_ENC_KEY: z.string().min(1),
+
   FRONTEND_ORIGIN: z.url(),
 
   COOKIE_DOMAIN: z.string().optional(),

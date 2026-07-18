@@ -12,6 +12,8 @@ const options: LoggerOptions = {
       "*.refreshToken",
       "*.access_token",
       "*.refresh_token",
+      "*.apiToken",
+      "*.jira_api_token_enc",
     ],
     censor: "[redacted]",
   },

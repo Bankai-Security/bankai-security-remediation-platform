@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AccountSettings from './pages/AccountSettings';
+import InviteAccept from './pages/InviteAccept';
 import Login from './pages/Login';
 import SignUp from './pages/SignUp';
 import Onboarding from './pages/Onboarding';
@@ -29,6 +30,7 @@ export default function App() {
       <Route path="/projects" element={<Projects />} />
       <Route path="/projects/new" element={<NewProject />} />
       <Route path="/settings" element={<AccountSettings />} />
+      <Route path="/invites/:token" element={<InviteAccept />} />
 
       <Route path="/workspace/:projectId" element={<Workspace />}>
         <Route index element={<Navigate to="workflow" replace />} />

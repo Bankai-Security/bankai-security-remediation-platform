@@ -54,9 +54,18 @@ export const loginArcjet = arcjet({
   ],
 });
 
-/** Shield-only protection for authenticated, low-abuse-risk routes. */
+/**
+ * Shield-only protection for authenticated, low-abuse-risk routes. Keyed by
+ * ip.src, so this one bucket is shared across every /api/projects/* route
+ * (including all its nested resources) AND /api/invites/* — and across
+ * every concurrently logged-in account on the same network, since they all
+ * share one public IP. A SPA page load alone fires several parallel calls
+ * (sidebar, page content, overview KPIs, the invite notification bell,
+ * etc.), so 30/min was too tight for real multi-tab/multi-account usage,
+ * not just abuse.
+ */
 export const baselineArcjet = arcjet({
   key: env.ARCJET_KEY,
   characteristics: ["ip.src"],
-  rules: [shield({ mode: "LIVE" }), slidingWindow({ mode: "LIVE", interval: "1m", max: 30 })],
+  rules: [shield({ mode: "LIVE" }), slidingWindow({ mode: "LIVE", interval: "1m", max: 120 })],
 });
