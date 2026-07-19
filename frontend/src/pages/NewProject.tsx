@@ -1,8 +1,18 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
-import { ApiError, connectGithub, connectJira, createProject } from '../lib/api';
+import RepoPicker from '../components/RepoPicker';
+import {
+  ApiError,
+  connectGithub,
+  connectGithubFromAccount,
+  connectJira,
+  createProject,
+  getGithubAccountStatus,
+  githubAuthorizeUrl,
+  type GithubAccountStatus,
+} from '../lib/api';
 import { getAvatarStyle, getInitials, useCurrentUser } from '../lib/auth-context';
 import './NewProject.css';
 
@@ -43,6 +53,17 @@ export default function NewProject() {
   const [githubError, setGithubError] = useState<string | null>(null);
   const [githubFieldErrors, setGithubFieldErrors] = useState<Record<string, string>>({});
 
+  const [githubAccount, setGithubAccount] = useState<GithubAccountStatus | null>(null);
+  const [useManualPat, setUseManualPat] = useState(false);
+
+  useEffect(() => {
+    getGithubAccountStatus()
+      .then(setGithubAccount)
+      .catch(() => {});
+  }, []);
+
+  const usingRepoPicker = !!githubAccount?.connected && !useManualPat;
+
   const addServiceValue = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
@@ -71,7 +92,7 @@ export default function NewProject() {
   );
 
   const jiraFieldsFilled = site.trim() && email.trim() && apiToken.trim() && projectKey.trim();
-  const githubFieldsFilled = repo.trim() && token.trim();
+  const githubFieldsFilled = usingRepoPicker ? !!repo.trim() : repo.trim() && token.trim();
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,7 +137,11 @@ export default function NewProject() {
 
       if (githubFieldsFilled) {
         try {
-          await connectGithub(projectId, { repo, token, baseBranch: baseBranch.trim() || undefined });
+          if (usingRepoPicker) {
+            await connectGithubFromAccount(projectId, { repo, baseBranch: baseBranch.trim() || undefined });
+          } else {
+            await connectGithub(projectId, { repo, token, baseBranch: baseBranch.trim() || undefined });
+          }
         } catch (err) {
           if (err instanceof ApiError && err.fieldErrors?.length) {
             setGithubFieldErrors(Object.fromEntries(err.fieldErrors.map((f) => [f.path, f.message])));
@@ -338,53 +363,101 @@ export default function NewProject() {
               Connect GitHub <span className="new-project-optional">(optional)</span>
             </h2>
             <div className="new-project-section-hint">
-              Fill this in to have Bankai open a remediation branch automatically whenever a Jira ticket is created.
-              You can skip this and connect GitHub later from Settings instead.
-            </div>
-            <div className="new-project-section-hint">
-              Generate a{' '}
-              <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer">personal access token</a>{' '}
-              with contents read/write access to the repo.
+              Fill this in to have Bankai scan the repo with AI, populate AI Triage, and open a remediation branch
+              per finding. You can skip this and connect GitHub later from Settings instead.
             </div>
             {githubError && <div className="new-project-error" role="alert">{githubError}</div>}
-            <div className="new-project-jira-grid">
-              <div className="new-project-field">
-                <label htmlFor="github-repo">Repository</label>
-                <input
-                  id="github-repo"
-                  type="text"
-                  placeholder="owner/repo"
-                  className="new-project-input"
-                  value={repo}
-                  onChange={(e) => setRepo(e.target.value)}
-                />
+
+            {usingRepoPicker ? (
+              <>
+                <div className="new-project-section-hint">
+                  Picking from your connected GitHub account (@{githubAccount!.login}).
+                </div>
+                <div className="new-project-field" style={{ marginBottom: 12 }}>
+                  <label htmlFor="github-base-branch">Base branch (optional)</label>
+                  <input
+                    id="github-base-branch"
+                    type="text"
+                    placeholder="main"
+                    className="new-project-input"
+                    value={baseBranch}
+                    onChange={(e) => setBaseBranch(e.target.value)}
+                  />
+                  {githubFieldErrors.baseBranch && <div className="new-project-field-error">{githubFieldErrors.baseBranch}</div>}
+                </div>
+                <RepoPicker onSelect={(picked) => setRepo(picked.fullName)} selectedFullName={repo || null} />
+                {repo && <div className="new-project-section-hint" style={{ marginTop: 8 }}>Selected: <strong>{repo}</strong></div>}
                 {githubFieldErrors.repo && <div className="new-project-field-error">{githubFieldErrors.repo}</div>}
-              </div>
-              <div className="new-project-field">
-                <label htmlFor="github-base-branch">Base branch (optional)</label>
-                <input
-                  id="github-base-branch"
-                  type="text"
-                  placeholder="main"
-                  className="new-project-input"
-                  value={baseBranch}
-                  onChange={(e) => setBaseBranch(e.target.value)}
-                />
-                {githubFieldErrors.baseBranch && <div className="new-project-field-error">{githubFieldErrors.baseBranch}</div>}
-              </div>
-              <div className="new-project-field">
-                <label htmlFor="github-token">Personal access token</label>
-                <input
-                  id="github-token"
-                  type="password"
-                  placeholder="Paste your GitHub token"
-                  className="new-project-input"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-                {githubFieldErrors.token && <div className="new-project-field-error">{githubFieldErrors.token}</div>}
-              </div>
-            </div>
+                <button
+                  type="button"
+                  className="new-project-cancel-link"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', marginTop: 10, padding: 0 }}
+                  onClick={() => {
+                    setUseManualPat(true);
+                    setRepo('');
+                  }}
+                >
+                  Use a personal access token instead
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="new-project-section-hint">
+                  Generate a{' '}
+                  <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer">personal access token</a>{' '}
+                  with contents read/write access to the repo, or{' '}
+                  <a href={githubAuthorizeUrl()}>connect your GitHub account</a> to pick from a list instead.
+                </div>
+                <div className="new-project-jira-grid">
+                  <div className="new-project-field">
+                    <label htmlFor="github-repo">Repository</label>
+                    <input
+                      id="github-repo"
+                      type="text"
+                      placeholder="owner/repo"
+                      className="new-project-input"
+                      value={repo}
+                      onChange={(e) => setRepo(e.target.value)}
+                    />
+                    {githubFieldErrors.repo && <div className="new-project-field-error">{githubFieldErrors.repo}</div>}
+                  </div>
+                  <div className="new-project-field">
+                    <label htmlFor="github-base-branch">Base branch (optional)</label>
+                    <input
+                      id="github-base-branch"
+                      type="text"
+                      placeholder="main"
+                      className="new-project-input"
+                      value={baseBranch}
+                      onChange={(e) => setBaseBranch(e.target.value)}
+                    />
+                    {githubFieldErrors.baseBranch && <div className="new-project-field-error">{githubFieldErrors.baseBranch}</div>}
+                  </div>
+                  <div className="new-project-field">
+                    <label htmlFor="github-token">Personal access token</label>
+                    <input
+                      id="github-token"
+                      type="password"
+                      placeholder="Paste your GitHub token"
+                      className="new-project-input"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                    />
+                    {githubFieldErrors.token && <div className="new-project-field-error">{githubFieldErrors.token}</div>}
+                  </div>
+                </div>
+                {githubAccount?.connected && (
+                  <button
+                    type="button"
+                    className="new-project-cancel-link"
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', marginTop: 10, padding: 0 }}
+                    onClick={() => setUseManualPat(false)}
+                  >
+                    Pick from your GitHub repos instead
+                  </button>
+                )}
+              </>
+            )}
           </section>
 
           <div className="new-project-actions">

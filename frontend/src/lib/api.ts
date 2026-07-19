@@ -164,6 +164,12 @@ export interface GithubConnection {
   repo: string | null;
   defaultBranch: string | null;
   connectedAt: string | null;
+  webhookRegistered: boolean;
+  webhookUrl: string | null;
+  // Only ever present in the response right after connectGithub() — shown
+  // once, like the PAT itself, when auto-registration wasn't possible and
+  // the user needs to paste it into GitHub's "Add webhook" form manually.
+  webhookSecret?: string;
 }
 
 export function getGithubConnection(projectId: string): Promise<GithubConnection> {
@@ -181,6 +187,53 @@ export function disconnectGithub(projectId: string): Promise<GithubConnection> {
   return apiFetch(`/projects/${projectId}/github/disconnect`, { method: "POST" });
 }
 
+export function scanGithubRepo(projectId: string): Promise<{ scan: Scan }> {
+  return apiFetch(`/projects/${projectId}/github/scan`, { method: "POST" });
+}
+
+export function connectGithubFromAccount(
+  projectId: string,
+  input: { repo: string; baseBranch?: string },
+): Promise<GithubConnection> {
+  return apiFetch(`/projects/${projectId}/github/connect-account`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// ---------------------------------------------------------------------
+// GitHub account connection (per-user OAuth grant, reused by the repo
+// picker across every project) — distinct from the per-project connection
+// above, which stays available as a manual PAT fallback.
+// ---------------------------------------------------------------------
+
+export interface GithubAccountStatus {
+  connected: boolean;
+  login: string | null;
+}
+
+export function getGithubAccountStatus(): Promise<GithubAccountStatus> {
+  return apiFetch("/auth/github/status", { method: "GET" });
+}
+
+export function disconnectGithubAccount(): Promise<GithubAccountStatus> {
+  return apiFetch("/auth/github/disconnect", { method: "POST" });
+}
+
+export interface GithubUserRepo {
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+  pushedAt: string | null;
+}
+
+export function listMyGithubRepos(): Promise<{ repos: GithubUserRepo[] }> {
+  return apiFetch("/auth/github/repos", { method: "GET" });
+}
+
+// A real browser navigation (GitHub's OAuth flow redirects the whole page),
+// not a fetch — callers should do `window.location.href = githubAuthorizeUrl()`.
+export function githubAuthorizeUrl(): string {
+  return `${API_BASE_URL}/api/auth/github/authorize`;
+}
+
 // ---------------------------------------------------------------------
 // SLA policy
 // ---------------------------------------------------------------------
@@ -195,7 +248,7 @@ export function updateSlaPolicy(projectId: string, input: SlaPolicyDays): Promis
 
 export interface Scan {
   id: string;
-  filename: string;
+  filename: string | null;
   fileSizeBytes: number;
   rowCount: number;
   serviceCount: number;
@@ -203,13 +256,23 @@ export interface Scan {
   changedCount: number;
   inProgressCount: number;
   resolvedCount: number;
-  status: "Done" | "Failed";
+  status: "Queued" | "Processing" | "Done" | "Failed";
   errorMessage: string | null;
+  source: "csv" | "github_ai";
+  triggerType: "manual" | "webhook" | null;
+  commitSha: string | null;
+  baseCommitSha: string | null;
+  branch: string | null;
+  findingCount: number | null;
   createdAt: string;
 }
 
 export function listScans(projectId: string): Promise<{ scans: Scan[] }> {
   return apiFetch(`/projects/${projectId}/scans`, { method: "GET" });
+}
+
+export function getScan(projectId: string, scanId: string): Promise<{ scan: Scan }> {
+  return apiFetch(`/projects/${projectId}/scans/${scanId}`, { method: "GET" });
 }
 
 export function uploadScan(projectId: string, file: File): Promise<{ scan: Scan }> {
@@ -247,6 +310,11 @@ export interface Finding {
   sourceUrl: string | null;
   ticketKey: string | null;
   createdAt: string;
+  source: "csv" | "github_ai";
+  remediationGuidance: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  commitSha: string | null;
 }
 
 export interface FindingFilters {

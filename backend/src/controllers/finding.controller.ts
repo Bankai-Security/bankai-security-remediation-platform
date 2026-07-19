@@ -31,6 +31,11 @@ interface FindingRow {
   sla_due_date: string | null;
   first_seen_at: string;
   created_at: string;
+  source: "csv" | "github_ai";
+  remediation_guidance: string | null;
+  line_start: number | null;
+  line_end: number | null;
+  commit_sha: string | null;
   tickets: { id: string; key: string }[] | { id: string; key: string } | null;
 }
 
@@ -66,11 +71,16 @@ function toPublicFinding(row: FindingRow, policyDays: SlaPolicyDays) {
     sourceUrl: row.source_url,
     ticketKey: ticket?.key ?? null,
     createdAt: row.created_at,
+    source: row.source,
+    remediationGuidance: row.remediation_guidance,
+    lineStart: row.line_start,
+    lineEnd: row.line_end,
+    commitSha: row.commit_sha,
   };
 }
 
 const SELECT_FINDING =
-  "id, external_id, title, service, severity, cvss_score, cwe, component, file_path, finding_type, bucket, confidence, rationale, description, fix_available, source_url, date_found, sla_due_date, first_seen_at, created_at, tickets ( id, key )";
+  "id, external_id, title, service, severity, cvss_score, cwe, component, file_path, finding_type, bucket, confidence, rationale, description, fix_available, source_url, date_found, sla_due_date, first_seen_at, created_at, source, remediation_guidance, line_start, line_end, commit_sha, tickets ( id, key )";
 
 export async function listFindings(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);

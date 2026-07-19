@@ -1,0 +1,76 @@
+
+> bankai-backend@0.0.0 worker
+> tsx watch --env-file-if-exists=.env src/worker.ts
+
+[07:59:01.471] [32mINFO[39m (11444): [36mRepo scan worker listening on queue "repo-scan"[39m
+[08:01:31.514] [32mINFO[39m (11444): [36mRepo scan job completed[39m
+    [35mjobId[39m: "manual-25aeb442-e4f6-4806-a8f8-8123d4041c27"
+    [35mdata[39m: {
+      "scanId": "25aeb442-e4f6-4806-a8f8-8123d4041c27",
+      "projectId": "efa8e86c-add1-4a47-9820-3f10913905ad",
+      "triggerType": "manual",
+      "baseSha": null,
+      "headSha": null
+    }
+8:18:01 am [tsx] change in ./src\lib\repo-scan.ts Restarting...
+[08:18:03.271] [32mINFO[39m (6780): [36mRepo scan worker listening on queue "repo-scan"[39m
+8:18:10 am [tsx] change in ./src\lib\repo-scan.ts Restarting...
+[08:18:11.490] [32mINFO[39m (5692): [36mRepo scan worker listening on queue "repo-scan"[39m
+8:18:20 am [tsx] change in ./src\lib\repo-scan.ts Restarting...
+[08:18:21.527] [32mINFO[39m (25372): [36mRepo scan worker listening on queue "repo-scan"[39m
+8:18:45 am [tsx] change in ./src\jobs\repo-scan.job.ts Restarting...
+[08:18:47.137] [32mINFO[39m (19804): [36mRepo scan worker listening on queue "repo-scan"[39m
+8:18:55 am [tsx] change in ./src\jobs\repo-scan.job.ts Restarting...
+[08:18:57.170] [32mINFO[39m (20048): [36mRepo scan worker listening on queue "repo-scan"[39m
+[08:36:26.332] [32mINFO[39m (20048): [36mRepo scan job completed[39m
+    [35mjobId[39m: "manual-298148e9-7f23-48ce-aa6c-0a6a07d40d1e"
+    [35mdata[39m: {
+      "scanId": "298148e9-7f23-48ce-aa6c-0a6a07d40d1e",
+      "projectId": "bc8e58b4-160a-42c0-99d7-cd0d3b8ad039",
+      "triggerType": "manual",
+      "baseSha": null,
+      "headSha": null
+    }
+[12:34:22.618] [32mINFO[39m (20048): [36mRepo scan job completed[39m
+    [35mjobId[39m: "manual-b821c75d-386b-4608-92a9-76e407457f0e"
+    [35mdata[39m: {
+      "scanId": "b821c75d-386b-4608-92a9-76e407457f0e",
+      "projectId": "bc8e58b4-160a-42c0-99d7-cd0d3b8ad039",
+      "triggerType": "manual",
+      "baseSha": null,
+      "headSha": null
+    }
+12:42:33 pm [tsx] change in ./src\lib\gemini.ts Restarting...
+[12:42:35.498] [32mINFO[39m (25848): [36mRepo scan worker listening on queue "repo-scan"[39m
+12:42:45 pm [tsx] change in ./src\lib\csv-ingest.ts Restarting...
+[12:42:46.719] [32mINFO[39m (8004): [36mRepo scan worker listening on queue "repo-scan"[39m
+12:42:55 pm [tsx] change in ./src\lib\repo-scan.ts Restarting...
+[12:42:56.997] [32mINFO[39m (15508): [36mRepo scan worker listening on queue "repo-scan"[39m
+12:43:18 pm [tsx] change in ./src\lib\github.ts Restarting...
+[12:43:20.390] [32mINFO[39m (22460): [36mRepo scan worker listening on queue "repo-scan"[39m
+[12:48:19.519] [32mINFO[39m (22460): [36mRepo scan job completed[39m
+    [35mjobId[39m: "manual-d71b43b4-87cb-4ee5-a415-d7ec7bceabaf"
+    [35mdata[39m: {
+      "scanId": "d71b43b4-87cb-4ee5-a415-d7ec7bceabaf",
+      "projectId": "2e308fe4-5f48-4fb9-be3c-c4c07efb065f",
+      "triggerType": "manual",
+      "baseSha": null,
+      "headSha": null
+    }
+[12:54:34.137] [32mINFO[39m (22460): [36mRepo scan job completed[39m
+    [35mjobId[39m: "manual-4edc5f2c-4a97-402e-a759-06c368bfe049"
+    [35mdata[39m: {
+      "scanId": "4edc5f2c-4a97-402e-a759-06c368bfe049",
+      "projectId": "2e308fe4-5f48-4fb9-be3c-c4c07efb065f",
+      "triggerType": "manual",
+      "baseSha": null,
+      "headSha": null
+    }
+1:09:44 pm [tsx] change in ./src\lib\ticketing.ts Restarting...
+[13:09:46.387] [32mINFO[39m (26832): [36mRepo scan worker listening on queue "repo-scan"[39m
+1:10:06 pm [tsx] change in ./src\lib\ticketing.ts Restarting...
+[13:10:08.262] [32mINFO[39m (25512): [36mRepo scan worker listening on queue "repo-scan"[39m
+1:10:47 pm [tsx] change in ./src\lib\repo-scan.ts Restarting...
+[13:10:48.885] [32mINFO[39m (19156): [36mRepo scan worker listening on queue "repo-scan"[39m
+1:10:55 pm [tsx] change in ./src\lib\repo-scan.ts Restarting...
+[13:10:56.469] [32mINFO[39m (4988): [36mRepo scan worker listening on queue "repo-scan"[39m

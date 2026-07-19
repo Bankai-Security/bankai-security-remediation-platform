@@ -59,7 +59,7 @@ export default function RemediationWorkflow() {
   const hasTickets = (overview?.kpis.openTickets ?? 0) > 0;
 
   const steps = [
-    { n: 1, to: 'workflow/intake-triage', title: 'Intake & Triage', sub: 'CSV to XLS, split by service', done: hasFindings },
+    { n: 1, to: 'workflow/intake-triage', title: 'Intake & Triage', sub: 'AI repo scan, split by service', done: hasFindings },
     // No separate "defect" grouping stage is modeled — tickets are created
     // directly from accepted findings, so this reuses the intake signal.
     { n: 2, to: 'workflow/defect-generation', title: 'Defect Generation', sub: 'Findings clustered per service', done: hasFindings },
@@ -159,8 +159,10 @@ export default function RemediationWorkflow() {
           <div className="workflow-section-header">
             <div>
               <div className="ws-card-eyebrow">Latest Scan</div>
-              <h2 className="workflow-section-title">Triage Snapshot — {latestScan.filename}</h2>
-              <div className="workflow-section-sub">Rows from this intake are eligible for Jira ticket creation once accepted.</div>
+              <h2 className="workflow-section-title">
+                Triage Snapshot — {latestScan.source === 'github_ai' ? (latestScan.branch ?? 'GitHub scan') : (latestScan.filename ?? 'CSV upload')}
+              </h2>
+              <div className="workflow-section-sub">Findings from this scan are eligible for Jira ticket creation once accepted.</div>
             </div>
             <span className="workflow-pink-badge">{latestScan.newDeltaCount} new delta row(s)</span>
           </div>
@@ -179,25 +181,6 @@ export default function RemediationWorkflow() {
           </div>
         </section>
       )}
-
-      <section className="ws-card">
-        <h2 className="workflow-intake-title">Report Intake &amp; Triage</h2>
-        <div className="workflow-intake-sub">
-          Upload your vulnerability scan CSV. Bankai parses it, diffs it against this project&apos;s existing findings, and splits results by service.
-        </div>
-        <div className="ws-dropzone">
-          <svg width="64" height="52" viewBox="0 0 64 52" fill="none" stroke="var(--color-text-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 40h-4.5C8 40 3.5 35.5 3.5 30c0-5 3.7-9.1 8.5-9.9C13.3 12.6 19.9 6.5 28 6.5c7 0 13 4.5 15.2 10.8 6.6 0.3 11.8 5.7 11.8 12.3 0 5.8-4.1 9.7-9.5 10.4" />
-            <circle cx="32" cy="38" r="10.5" fill="var(--color-bg)" />
-            <path d="M27.5 38.5 30.8 41.8 36.8 34.8" />
-          </svg>
-          <div className="ws-dropzone-title">Drag and drop your files here or choose files</div>
-          <div className="ws-dropzone-body">
-            Upload your vulnerability scan CSV. Bankai parses it, diffs it against this project&apos;s existing findings, and splits results by service.
-          </div>
-          <Link to={`/workspace/${project?.id}/intake`} className="ws-btn ws-btn-primary" style={{ marginTop: 20 }}>Browse File</Link>
-        </div>
-      </section>
     </main>
   );
 }

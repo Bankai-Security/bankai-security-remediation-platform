@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { decrypt } from "../lib/crypto.js";
+import { deleteBranch, deleteWebhook, type GithubCredentials } from "../lib/github.js";
 import { HttpError } from "../lib/http-error.js";
 import { deleteIssue, type JiraCredentials } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
@@ -175,7 +176,9 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
 
   const { data: project, error: fetchError } = await supabase
     .from("projects")
-    .select("id, name, owner_id, jira_site, jira_email, jira_api_token_enc, jira_connected_at")
+    .select(
+      "id, name, owner_id, jira_site, jira_email, jira_api_token_enc, jira_connected_at, github_repo, github_token_enc, github_connected_at, github_webhook_id",
+    )
     .eq("id", req.params.id)
     .maybeSingle();
 
@@ -193,20 +196,28 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   }
 
   // Gathered before the delete below (which cascades and removes these rows)
-  // so the linked Jira issues can still be cleaned up afterward.
+  // so the linked Jira issues and GitHub remediation branches can still be
+  // cleaned up afterward.
   const jiraCreds: JiraCredentials | null =
     project.jira_connected_at && project.jira_site && project.jira_email && project.jira_api_token_enc
       ? { site: project.jira_site, email: project.jira_email, apiToken: decrypt(project.jira_api_token_enc) }
       : null;
+  const githubCreds: GithubCredentials | null =
+    project.github_connected_at && project.github_repo && project.github_token_enc
+      ? { repo: project.github_repo, token: decrypt(project.github_token_enc) }
+      : null;
 
   let jiraIssueKeys: string[] = [];
-  if (jiraCreds) {
+  let githubBranchNames: string[] = [];
+  if (jiraCreds || githubCreds) {
     const { data: ticketRows } = await supabase
       .from("tickets")
-      .select("jira_issue_key")
-      .eq("project_id", project.id)
-      .not("jira_issue_key", "is", null);
-    jiraIssueKeys = (ticketRows ?? []).map((t) => t.jira_issue_key as string);
+      .select("jira_issue_key, github_branch_name")
+      .eq("project_id", project.id);
+    for (const t of ticketRows ?? []) {
+      if (jiraCreds && t.jira_issue_key) jiraIssueKeys.push(t.jira_issue_key);
+      if (githubCreds && t.github_branch_name) githubBranchNames.push(t.github_branch_name);
+    }
   }
 
   const { error, count } = await supabase.from("projects").delete({ count: "exact" }).eq("id", project.id);
@@ -226,6 +237,22 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
     const failed = results.filter((r) => r.status === "rejected" || !r.value).length;
     if (failed > 0) {
       logger.error({ projectId: project.id, failed, total: jiraIssueKeys.length }, "Could not delete some Jira issues for a deleted project");
+    }
+  }
+
+  // Same best-effort contract as the Jira cleanup above.
+  if (githubCreds && githubBranchNames.length > 0) {
+    const results = await Promise.allSettled(githubBranchNames.map((name) => deleteBranch(githubCreds, name)));
+    const failed = results.filter((r) => r.status === "rejected" || !r.value).length;
+    if (failed > 0) {
+      logger.error({ projectId: project.id, failed, total: githubBranchNames.length }, "Could not delete some GitHub branches for a deleted project");
+    }
+  }
+  if (githubCreds && project.github_webhook_id) {
+    try {
+      await deleteWebhook(githubCreds, project.github_webhook_id);
+    } catch (err) {
+      logger.warn({ err, projectId: project.id }, "Could not remove the GitHub webhook for a deleted project");
     }
   }
 

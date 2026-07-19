@@ -3,43 +3,13 @@ import { recordActivity } from "../lib/activity.js";
 import { CsvIngestError, parseFindingsCsv, planIngest, type ExistingFinding } from "../lib/csv-ingest.js";
 import { HttpError } from "../lib/http-error.js";
 import { requireRole } from "../lib/roles.js";
+import { SCAN_SELECT, toPublicScan, type ScanRow } from "../lib/scans.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
+import { closeTicketsForResolvedFindings, loadJiraCreds } from "../lib/ticketing.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 
 function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
-}
-
-interface ScanRow {
-  id: string;
-  filename: string;
-  file_size_bytes: number;
-  row_count: number;
-  service_count: number;
-  new_delta_count: number;
-  changed_count: number;
-  in_progress_count: number;
-  resolved_count: number;
-  status: "Done" | "Failed";
-  error_message: string | null;
-  created_at: string;
-}
-
-function toPublicScan(row: ScanRow) {
-  return {
-    id: row.id,
-    filename: row.filename,
-    fileSizeBytes: row.file_size_bytes,
-    rowCount: row.row_count,
-    serviceCount: row.service_count,
-    newDeltaCount: row.new_delta_count,
-    changedCount: row.changed_count,
-    inProgressCount: row.in_progress_count,
-    resolvedCount: row.resolved_count,
-    status: row.status,
-    errorMessage: row.error_message,
-    createdAt: row.created_at,
-  };
 }
 
 export async function uploadScan(req: Request, res: Response): Promise<void> {
@@ -127,14 +97,21 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
   }
 
   if (plan.resolvedFingerprints.length > 0) {
-    const { error: resolveError } = await supabase
+    const { data: resolvedRows, error: resolveError } = await supabase
       .from("findings")
       .update({ bucket: "Resolved", rationale: "Present in a previous scan but not found in this intake — marked resolved." })
       .eq("project_id", project.id)
-      .in("fingerprint", plan.resolvedFingerprints);
+      .in("fingerprint", plan.resolvedFingerprints)
+      .select("id");
     if (resolveError) {
       throw new HttpError(500, "Could not update resolved findings.");
     }
+    const jira = await loadJiraCreds(supabase, project.id);
+    await closeTicketsForResolvedFindings(supabase, {
+      projectId: project.id,
+      resolvedFindingIds: (resolvedRows ?? []).map((r) => r.id),
+      jira: jira?.creds ?? null,
+    });
   }
 
   const serviceCount = new Set(plan.upsertRows.map((r) => r.service).filter((s): s is string => !!s)).size;
@@ -193,6 +170,12 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
       resolved_count: plan.counts.resolved,
       status: "Done",
       error_message: null,
+      source: "csv",
+      trigger_type: null,
+      commit_sha: null,
+      base_commit_sha: null,
+      branch: null,
+      finding_count: rows.length,
       created_at: scan.created_at,
     }),
   });
@@ -202,9 +185,7 @@ export async function listScans(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
   const { data, error } = await supabase
     .from("scans")
-    .select(
-      "id, filename, file_size_bytes, row_count, service_count, new_delta_count, changed_count, in_progress_count, resolved_count, status, error_message, created_at",
-    )
+    .select(SCAN_SELECT)
     .eq("project_id", req.project!.id)
     .order("created_at", { ascending: false });
 
@@ -213,4 +194,26 @@ export async function listScans(req: Request, res: Response): Promise<void> {
   }
 
   res.status(200).json({ scans: (data as ScanRow[]).map(toPublicScan) });
+}
+
+// Cheap single-row fetch for the frontend to poll a GitHub-AI scan's
+// Queued -> Processing -> Done/Failed lifecycle without re-fetching the
+// whole scan history each time.
+export async function getScan(req: Request, res: Response): Promise<void> {
+  const supabase = userScopedClient(req);
+  const { data, error } = await supabase
+    .from("scans")
+    .select(SCAN_SELECT)
+    .eq("project_id", req.project!.id)
+    .eq("id", req.params.scanId)
+    .maybeSingle();
+
+  if (error) {
+    throw new HttpError(500, "Could not load this scan.");
+  }
+  if (!data) {
+    throw new HttpError(404, "Scan not found");
+  }
+
+  res.status(200).json({ scan: toPublicScan(data as ScanRow) });
 }

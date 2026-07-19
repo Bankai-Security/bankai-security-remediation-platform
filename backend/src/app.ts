@@ -10,6 +10,7 @@ import { originCheck } from "./middleware/origin-check.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { inviteRouter } from "./routes/invite.routes.js";
 import { projectRouter } from "./routes/project.routes.js";
+import { webhookRouter } from "./routes/webhook.routes.js";
 
 export function createApp(): Express {
   const app = express();
@@ -25,6 +26,14 @@ export function createApp(): Express {
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     }),
   );
+  // Mounted before the app-wide express.json() below, with its own
+  // express.raw() internally — GitHub's HMAC signature is computed over the
+  // exact request bytes, which express.json() would otherwise have already
+  // parsed and discarded by the time a webhook route saw them. Everything
+  // else (auth, project routes) is unaffected: this only intercepts
+  // /api/webhooks/*.
+  app.use("/api/webhooks", webhookRouter);
+
   app.use(express.json({ limit: "16kb" }));
   app.use(cookieParser());
   app.use(

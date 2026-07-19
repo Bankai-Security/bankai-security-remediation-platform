@@ -1,10 +1,7 @@
 import type { Request, Response } from "express";
 import { recordActivity } from "../lib/activity.js";
-import { decrypt } from "../lib/crypto.js";
-import { buildBranchName, createBranch, GithubApiError, type GithubCredentials } from "../lib/github.js";
 import { HttpError } from "../lib/http-error.js";
 import {
-  addBranchComment,
   addIssueToSprint,
   buildFindingDescription,
   createIssue,
@@ -12,157 +9,27 @@ import {
   getIssueSnapshot,
   JiraApiError,
   transitionIssue,
-  type JiraCredentials,
 } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
-import type { Severity, TicketStatus } from "../lib/pipeline-types.js";
+import type { Severity } from "../lib/pipeline-types.js";
+import {
+  attemptBranchCreation,
+  closeTicketsForResolvedFindings,
+  createTicketForFinding,
+  loadGithubCreds,
+  loadJiraCreds,
+  SELECT_TICKET,
+  toPublicTicket,
+  type FindingForTicket,
+  type TicketRow,
+} from "../lib/ticketing.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 import type { CreateTicketsInput, UpdateTicketInput } from "../schemas/ticket.schema.js";
 
 function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
-}
-
-interface TicketRow {
-  id: string;
-  key: string;
-  title: string;
-  service: string | null;
-  severity: Severity;
-  status: TicketStatus;
-  due_date: string | null;
-  finding_id: string;
-  created_at: string;
-  jira_issue_key: string | null;
-  jira_issue_url: string | null;
-  jira_sync_error: string | null;
-  github_branch_name: string | null;
-  github_branch_url: string | null;
-  github_branch_error: string | null;
-  // Only present when selected via SELECT_TICKET's join — absent on rows
-  // returned directly from the create_project_ticket RPC.
-  findings?: { external_id: string | null } | { external_id: string | null }[] | null;
-}
-
-function toPublicTicket(row: TicketRow) {
-  const overdue = row.status !== "Done" && !!row.due_date && new Date(`${row.due_date}T00:00:00Z`) < new Date();
-  const findingRel = Array.isArray(row.findings) ? row.findings[0] : row.findings;
-  return {
-    id: row.id,
-    key: row.key,
-    title: row.title,
-    service: row.service ?? "Unassigned",
-    severity: row.severity,
-    status: row.status,
-    dueDate: row.due_date,
-    overdue,
-    findingId: row.finding_id,
-    findingExternalId: findingRel?.external_id ?? null,
-    jiraIssueKey: row.jira_issue_key ?? null,
-    jiraIssueUrl: row.jira_issue_url ?? null,
-    jiraSyncError: row.jira_sync_error ?? null,
-    githubBranchName: row.github_branch_name ?? null,
-    githubBranchUrl: row.github_branch_url ?? null,
-    githubBranchError: row.github_branch_error ?? null,
-    createdAt: row.created_at,
-  };
-}
-
-const SELECT_TICKET =
-  "id, key, title, service, severity, status, due_date, finding_id, created_at, jira_issue_key, jira_issue_url, jira_sync_error, github_branch_name, github_branch_url, github_branch_error, findings ( external_id )";
-
-interface ProjectJiraRow {
-  jira_site: string | null;
-  jira_key: string | null;
-  jira_email: string | null;
-  jira_api_token_enc: string | null;
-  jira_connected_at: string | null;
-}
-
-async function loadJiraCreds(
-  supabase: ReturnType<typeof createUserScopedSupabaseClient>,
-  projectId: string,
-): Promise<{ creds: JiraCredentials; projectKey: string } | null> {
-  const { data } = await supabase
-    .from("projects")
-    .select("jira_site, jira_key, jira_email, jira_api_token_enc, jira_connected_at")
-    .eq("id", projectId)
-    .single();
-
-  const row = data as ProjectJiraRow | null;
-  if (!row?.jira_connected_at || !row.jira_site || !row.jira_key || !row.jira_email || !row.jira_api_token_enc) {
-    return null;
-  }
-
-  return {
-    creds: { site: row.jira_site, email: row.jira_email, apiToken: decrypt(row.jira_api_token_enc) },
-    projectKey: row.jira_key,
-  };
-}
-
-interface ProjectGithubRow {
-  github_repo: string | null;
-  github_token_enc: string | null;
-  github_default_branch: string | null;
-  github_connected_at: string | null;
-}
-
-async function loadGithubCreds(
-  supabase: ReturnType<typeof createUserScopedSupabaseClient>,
-  projectId: string,
-): Promise<{ creds: GithubCredentials; defaultBranch: string } | null> {
-  const { data } = await supabase
-    .from("projects")
-    .select("github_repo, github_token_enc, github_default_branch, github_connected_at")
-    .eq("id", projectId)
-    .single();
-
-  const row = data as ProjectGithubRow | null;
-  if (!row?.github_connected_at || !row.github_repo || !row.github_token_enc || !row.github_default_branch) {
-    return null;
-  }
-
-  return {
-    creds: { repo: row.github_repo, token: decrypt(row.github_token_enc) },
-    defaultBranch: row.github_default_branch,
-  };
-}
-
-// Best-effort, same contract as Jira issue creation: a remediation branch is
-// a convenience, not something that should fail ticket creation/sync if
-// GitHub is unreachable or misconfigured. Returns the columns to fold into
-// the caller's own `tickets` update — never throws. On success, also posts a
-// best-effort comment on the linked Jira issue so the branch is visible from
-// Jira itself, not just Bankai.
-async function attemptBranchCreation(
-  github: { creds: GithubCredentials; defaultBranch: string } | null,
-  jiraCreds: JiraCredentials,
-  issueKey: string,
-  ticketKey: string,
-  title: string,
-  ticketId: string,
-): Promise<{ github_branch_name: string | null; github_branch_url: string | null; github_branch_error: string | null } | null> {
-  if (!github) return null;
-  try {
-    const name = buildBranchName(ticketKey, title);
-    const branch = await createBranch(github.creds, { baseBranch: github.defaultBranch, branchName: name });
-
-    const comment = await addBranchComment(jiraCreds, issueKey, branch);
-    if (!comment.ok) {
-      logger.error(
-        { ticketId, issueKey, status: comment.status, message: comment.message },
-        "Could not post the remediation branch link as a Jira comment",
-      );
-    }
-
-    return { github_branch_name: branch.name, github_branch_url: branch.url, github_branch_error: null };
-  } catch (err) {
-    const message = err instanceof GithubApiError ? err.message : "Could not create a remediation branch.";
-    logger.error({ err, ticketId }, "GitHub branch creation failed");
-    return { github_branch_name: null, github_branch_url: null, github_branch_error: message };
-  }
 }
 
 export async function listTickets(req: Request, res: Response): Promise<void> {
@@ -200,8 +67,9 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
     throw new HttpError(500, "Could not load the selected findings.");
   }
 
-  const jira = await loadJiraCreds(supabase, project.id);
-  const activeSprintId = jira ? await getActiveSprintId(jira.creds, jira.projectKey) : null;
+  const jiraCreds = await loadJiraCreds(supabase, project.id);
+  const activeSprintId = jiraCreds ? await getActiveSprintId(jiraCreds.creds, jiraCreds.projectKey) : null;
+  const jira = jiraCreds ? { ...jiraCreds, activeSprintId } : null;
   const github = await loadGithubCreds(supabase, project.id);
 
   const created: ReturnType<typeof toPublicTicket>[] = [];
@@ -215,100 +83,15 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
       continue;
     }
 
-    const { data: ticket, error: rpcError } = await supabase.rpc("create_project_ticket", {
-      p_project_id: project.id,
-      p_finding_id: finding.id,
-      p_title: finding.title,
-      p_service: finding.service,
-      p_severity: finding.severity,
-      p_due_date: finding.sla_due_date,
-    });
-
-    if (rpcError || !ticket) {
-      if (rpcError?.code === "42501") {
-        throw new HttpError(403, "You do not have permission to create tickets in this project.");
-      }
-      if (rpcError?.code === "P0002") {
-        throw new HttpError(404, "Project not found");
-      }
-      throw new HttpError(500, `Could not create a ticket for "${finding.title}".`);
-    }
-
-    let ticketRow = ticket as TicketRow;
-
-    // Best-effort: a Jira outage or misconfiguration must not fail ticket
-    // creation in Bankai — the internal ticket already exists either way.
-    if (jira) {
-      try {
-        const summary = `[${finding.service ?? "Unassigned"}] ${finding.title}`;
-        const description = buildFindingDescription({
-          id: finding.id,
-          externalId: finding.external_id,
-          title: finding.title,
-          severity: finding.severity as Severity,
-          cvssScore: finding.cvss_score,
-          cwe: finding.cwe,
-          component: finding.component,
-          filePath: finding.file_path,
-          findingType: finding.finding_type,
-          sourceStatus: finding.source_status,
-          dateFound: finding.date_found,
-          description: finding.description ?? finding.rationale,
-          fixAvailable: finding.fix_available,
-          sourceUrl: finding.source_url,
-        });
-
-        const issue = await createIssue(jira.creds, {
-          projectKey: jira.projectKey,
-          title: summary,
-          description,
-          severity: finding.severity as Severity,
-          dueDate: finding.sla_due_date,
-        });
-        if (activeSprintId) {
-          void addIssueToSprint(jira.creds, activeSprintId, issue.key);
-        }
-
-        const branchColumns = await attemptBranchCreation(github, jira.creds, issue.key, ticketRow.key, finding.title, ticketRow.id);
-
-        const { data: updated } = await supabase
-          .from("tickets")
-          .update({
-            jira_issue_key: issue.key,
-            jira_issue_url: issue.url,
-            jira_sync_error: null,
-            ...(branchColumns ?? {}),
-          })
-          .eq("id", ticketRow.id)
-          .select(SELECT_TICKET)
-          .single();
-        if (updated) ticketRow = updated as TicketRow;
-      } catch (err) {
-        const message = err instanceof JiraApiError ? err.message : "Could not create a Jira issue for this ticket.";
-        logger.error({ err, ticketId: ticketRow.id }, "Jira issue creation failed");
-        const { data: updated } = await supabase
-          .from("tickets")
-          .update({ jira_sync_error: message })
-          .eq("id", ticketRow.id)
-          .select(SELECT_TICKET)
-          .single();
-        if (updated) ticketRow = updated as TicketRow;
-      }
-    }
-
-    const publicTicket = toPublicTicket(ticketRow);
-    created.push(publicTicket);
-
-    await recordActivity(supabase, {
+    const { ticket } = await createTicketForFinding(supabase, {
       projectId: project.id,
-      actorId: req.user!.id,
-      actorLabel,
-      eventType: "ticket",
-      summary: "created",
-      linkLabel: publicTicket.key,
-      linkTo: "tickets",
-      meta: `${finding.title} · from a marked-for-Jira finding`,
+      finding: finding as FindingForTicket,
+      jira,
+      github,
+      actor: { id: req.user!.id, label: actorLabel },
+      rpcName: "create_project_ticket",
     });
+    created.push(ticket);
   }
 
   res.status(201).json({ tickets: created, skipped });
@@ -335,6 +118,22 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   if (!jira) {
     throw new HttpError(422, "Connect Jira in Settings before syncing tickets.");
   }
+
+  // Catches tickets whose finding was resolved before this fix existed (or
+  // any other drift) — same close logic a scan now runs automatically. A
+  // ticket this closes will just be re-checked as a harmless no-op by the
+  // per-ticket loop below (already "Done", its Jira issue already transitioned).
+  const { data: resolvedFindings } = await supabase
+    .from("findings")
+    .select("id")
+    .eq("project_id", project.id)
+    .eq("bucket", "Resolved");
+  await closeTicketsForResolvedFindings(supabase, {
+    projectId: project.id,
+    resolvedFindingIds: (resolvedFindings ?? []).map((f) => f.id),
+    jira: jira.creds,
+  });
+
   const activeSprintId = await getActiveSprintId(jira.creds, jira.projectKey);
   const github = await loadGithubCreds(supabase, project.id);
 

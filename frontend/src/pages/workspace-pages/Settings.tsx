@@ -1,26 +1,35 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import GithubIcon from '../../components/GithubIcon';
+import RepoPicker from '../../components/RepoPicker';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
 import {
   ApiError,
   connectGithub,
+  connectGithubFromAccount,
   connectJira,
   deleteProject,
   disconnectGithub,
   disconnectJira,
+  getGithubAccountStatus,
   getGithubConnection,
   getJiraConnection,
+  getScan,
   inviteMember,
   listMembers,
   removeMember,
   revokeInvite,
+  scanGithubRepo,
   updateMemberRole,
   updateSlaPolicy,
+  type GithubAccountStatus,
   type GithubConnection,
+  type GithubUserRepo,
   type JiraConnection,
   type MemberRole,
   type PendingProjectInvite,
   type ProjectMember,
+  type Scan,
   type SlaPolicyDays,
 } from '../../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../../lib/auth-context';
@@ -111,6 +120,21 @@ export default function Settings() {
   const [repo, setRepo] = useState('');
   const [token, setToken] = useState('');
   const [baseBranch, setBaseBranch] = useState('');
+  const [justConnectedWebhookSecret, setJustConnectedWebhookSecret] = useState<string | null>(null);
+
+  const [scan, setScan] = useState<Scan | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  // Read-only here — connecting/disconnecting the account-level GitHub
+  // OAuth grant lives in AccountSettings.tsx (it's a per-user setting, not
+  // a per-project one). This project's GitHub card only needs to know
+  // whether one exists, to decide whether to default to the repo picker.
+  const [githubAccount, setGithubAccount] = useState<GithubAccountStatus | null>(null);
+  const [useManualPat, setUseManualPat] = useState(false);
+  const [pickerBaseBranch, setPickerBaseBranch] = useState('');
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project) return;
@@ -125,10 +149,34 @@ export default function Settings() {
         if (!cancelled) setGithub(conn);
       })
       .catch(() => {});
+    getGithubAccountStatus()
+      .then((status) => {
+        if (!cancelled) setGithubAccount(status);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [project?.id]);
+
+  const handlePickRepo = async (picked: GithubUserRepo) => {
+    if (!project) return;
+    setPickerError(null);
+    setPickerBusy(true);
+    try {
+      const conn = await connectGithubFromAccount(project.id, {
+        repo: picked.fullName,
+        baseBranch: pickerBaseBranch || undefined,
+      });
+      setGithub(conn);
+      setJustConnectedWebhookSecret(conn.webhookSecret ?? null);
+      setPickerBaseBranch('');
+    } catch (err) {
+      setPickerError(err instanceof ApiError ? err.message : 'Could not connect this repository. Please try again.');
+    } finally {
+      setPickerBusy(false);
+    }
+  };
 
   const loadMembers = () => {
     if (!project) return;
@@ -240,6 +288,7 @@ export default function Settings() {
     try {
       const conn = await connectGithub(project.id, { repo, token, baseBranch: baseBranch || undefined });
       setGithub(conn);
+      setJustConnectedWebhookSecret(conn.webhookSecret ?? null);
       setRepo('');
       setToken('');
       setBaseBranch('');
@@ -262,10 +311,38 @@ export default function Settings() {
     try {
       const conn = await disconnectGithub(project.id);
       setGithub(conn);
+      setJustConnectedWebhookSecret(null);
+      setScan(null);
     } finally {
       setGithubLoading(false);
     }
   };
+
+  const handleScanRepo = async () => {
+    if (!project) return;
+    setScanError(null);
+    setScanBusy(true);
+    try {
+      const { scan: created } = await scanGithubRepo(project.id);
+      setScan(created);
+    } catch (err) {
+      setScanError(err instanceof ApiError ? err.message : 'Could not start the scan. Please try again.');
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
+  // Polls the just-triggered scan until it leaves Queued/Processing, so the
+  // user gets feedback here without needing to jump to Report Intake.
+  useEffect(() => {
+    if (!project || !scan || (scan.status !== 'Queued' && scan.status !== 'Processing')) return;
+    const timer = setTimeout(() => {
+      getScan(project.id, scan.id)
+        .then(({ scan: updated }) => setScan(updated))
+        .catch(() => {});
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [project, scan]);
 
   const startEditingSla = () => {
     if (!project) return;
@@ -442,7 +519,10 @@ export default function Settings() {
         <div className="settings-section-header">
           <div>
             <div className="ws-card-eyebrow">Integration</div>
-            <h2 className="settings-h2">GitHub</h2>
+            <h2 className="settings-h2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <GithubIcon size={18} />
+              GitHub
+            </h2>
           </div>
           {github && (
             <span className="ws-dot-status" style={{ color: github.connected ? '#15803D' : '#B91C1C' }}>
@@ -464,7 +544,40 @@ export default function Settings() {
                 <div className="settings-field-value ws-mono">{github.defaultBranch}</div>
               </div>
             </div>
-            <div className="settings-jira-actions">
+
+            {github.webhookRegistered ? (
+              <div className="ws-card-hint" style={{ marginTop: 12 }}>
+                <span className="ws-dot" style={{ background: '#22C55E', marginRight: 6 }} />
+                Auto-rescans on push: enabled — every push to {github.defaultBranch} triggers a new AI scan automatically.
+              </div>
+            ) : github.webhookUrl ? (
+              <div className="settings-jira-error" style={{ marginTop: 12, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
+                Auto-rescan on push isn't set up — this token couldn't create a webhook automatically. Add one manually in
+                the repo's Settings → Webhooks: payload URL <code>{github.webhookUrl}</code>, content type{' '}
+                <code>application/json</code>, event <code>push</code>
+                {justConnectedWebhookSecret ? (
+                  <>
+                    , and secret <code>{justConnectedWebhookSecret}</code> (shown once — reconnect GitHub to generate a
+                    new one if you lose it).
+                  </>
+                ) : (
+                  <>
+                    , and the secret shown when you connected (reconnect GitHub if you need a new one).
+                  </>
+                )}
+              </div>
+            ) : null}
+
+            <div className="settings-jira-actions" style={{ marginTop: 12 }}>
+              {project && canManageProject(project.myRole) && (
+                <button
+                  className="ws-btn ws-btn-secondary"
+                  onClick={handleScanRepo}
+                  disabled={scanBusy || scan?.status === 'Queued' || scan?.status === 'Processing'}
+                >
+                  {scan?.status === 'Queued' || scan?.status === 'Processing' ? 'Scanning…' : 'Scan repository now'}
+                </button>
+              )}
               {project && canManageProject(project.myRole) && (
                 <button className="ws-btn ws-btn-danger-outline" onClick={handleDisconnectGithub} disabled={githubLoading}>
                   Disconnect
@@ -474,18 +587,66 @@ export default function Settings() {
                 <span className="settings-jira-synced">Connected since {formatConnectedAt(github.connectedAt)}</span>
               )}
             </div>
+
+            {scanError && <div className="settings-jira-error" role="alert" style={{ marginTop: 12 }}>{scanError}</div>}
+            {scan && (
+              <div className="ws-card-hint" style={{ marginTop: 12 }}>
+                {scan.status === 'Queued' && 'Scan queued — waiting for the next available worker…'}
+                {scan.status === 'Processing' && 'Scanning the repository with AI — this can take a few minutes for larger repos…'}
+                {scan.status === 'Done' &&
+                  `Scan complete: ${scan.findingCount ?? 0} finding(s) · ${scan.newDeltaCount} new · ${scan.changedCount} changed · ${scan.resolvedCount} resolved.`}
+                {scan.status === 'Failed' && `Scan failed: ${scan.errorMessage ?? 'Unknown error.'}`}
+              </div>
+            )}
           </>
         ) : project && !canManageProject(project.myRole) ? (
           <div className="ws-card-hint">Only admins can connect GitHub for this project.</div>
+        ) : githubAccount?.connected && !useManualPat ? (
+          <div>
+            <div className="ws-card-hint" style={{ marginBottom: 16 }}>
+              Pick a repository from your connected GitHub account (@{githubAccount.login}). Bankai will scan it with
+              AI, populate AI Triage with findings and detailed remediation guidance, and open a remediation branch
+              for each one.
+            </div>
+            {pickerError && <div className="settings-jira-error" role="alert" style={{ marginBottom: 12 }}>{pickerError}</div>}
+            <div className="settings-jira-field" style={{ marginBottom: 12 }}>
+              <label htmlFor="picker-base-branch" className="settings-field-label">Base branch (optional)</label>
+              <input
+                id="picker-base-branch"
+                className="settings-jira-input"
+                placeholder="main"
+                value={pickerBaseBranch}
+                onChange={(e) => setPickerBaseBranch(e.target.value)}
+                disabled={pickerBusy}
+              />
+            </div>
+            <RepoPicker onSelect={(picked) => void handlePickRepo(picked)} selectedFullName={null} />
+            {pickerBusy && <div className="ws-card-hint" style={{ marginTop: 10 }}>Connecting…</div>}
+            <button
+              type="button"
+              className="settings-jira-toggle-link"
+              style={{ marginTop: 14 }}
+              onClick={() => setUseManualPat(true)}
+            >
+              Use a personal access token instead
+            </button>
+          </div>
         ) : (
           <form onSubmit={handleConnectGithub}>
             {githubError && <div className="settings-jira-error" role="alert">{githubError}</div>}
             <div className="ws-card-hint" style={{ marginBottom: 16 }}>
-              Connect a repository so Bankai can open a remediation branch off its default branch whenever a Jira
-              ticket is created. Generate a{' '}
+              Connect a repository so Bankai can scan it with AI, populate AI Triage with findings and detailed
+              remediation guidance, and open a remediation branch for each one. If a webhook can be set up, new
+              pushes are scanned automatically. Generate a{' '}
               <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer">personal access token</a>{' '}
-              with contents read/write access to the repo.
+              with contents read/write access to the repo (and webhooks read/write, to enable auto-rescans).
             </div>
+            {!githubAccount?.connected && (
+              <div className="ws-card-hint" style={{ marginBottom: 16 }}>
+                Or <Link to="/settings">connect your GitHub account</Link> once to pick from a list of your
+                repositories here instead of typing one in.
+              </div>
+            )}
             <div className="settings-jira-grid">
               <div className="settings-jira-field">
                 <label htmlFor="github-repo" className="settings-field-label">Repository</label>
@@ -528,6 +689,11 @@ export default function Settings() {
               <button type="submit" className="ws-btn ws-btn-primary" disabled={githubLoading}>
                 {githubLoading ? 'Connecting…' : 'Connect'}
               </button>
+              {githubAccount?.connected && (
+                <button type="button" className="settings-jira-toggle-link" onClick={() => setUseManualPat(false)}>
+                  Pick from your GitHub repos instead
+                </button>
+              )}
             </div>
           </form>
         )}

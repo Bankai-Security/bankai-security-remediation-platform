@@ -310,6 +310,7 @@
 
 .ws-badge--pill-green { background: #DCFCE7; color: #15803D; }
 .ws-badge--pill-red { background: #FEE2E2; color: #B91C1C; }
+.ws-badge--pill-blue { background: #DBEAFE; color: #1D4ED8; }
 .ws-badge--pill-neutral { background: var(--color-fill); color: var(--color-text-subtle); }
 
 .ws-dot-status {

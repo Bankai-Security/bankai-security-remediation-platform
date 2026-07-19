@@ -5,7 +5,11 @@ const ACCESS_TOKEN_COOKIE = "bankai_at";
 const REFRESH_TOKEN_COOKIE = "bankai_rt";
 const REFRESH_TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-function baseCookieOptions(): CookieOptions {
+// Exported so other short-lived, httpOnly, first-party cookies (e.g. the
+// GitHub OAuth `state` cookie in github-oauth.controller.ts) share the same
+// secure/sameSite/domain behavior as the session cookies, instead of a
+// second slightly-different cookie-options implementation drifting in.
+export function baseCookieOptions(): CookieOptions {
   const options: CookieOptions = {
     httpOnly: true,
     secure: env.NODE_ENV === "production" || env.COOKIE_SAMESITE === "none",

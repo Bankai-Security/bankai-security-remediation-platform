@@ -20,6 +20,14 @@ export interface NormalizedFinding {
   fixAvailable: string | null;
   sourceUrl: string | null;
   service: string | null;
+  // Populated only for AI-sourced findings (see lib/gemini.ts); left
+  // undefined for CSV rows, so planIngest stays source-agnostic and this
+  // interface stays backward compatible with the CSV path.
+  remediationGuidance?: string | null;
+  lineStart?: number | null;
+  lineEnd?: number | null;
+  commitSha?: string | null;
+  source?: "csv" | "github_ai";
 }
 
 // Scanner exports don't agree on column names, so each canonical field
@@ -112,6 +120,24 @@ function computeFingerprint(row: { externalId: string | null; title: string; com
   return `sig:${normalizeForFingerprint(row.title)}|${normalizeForFingerprint(row.component)}|${normalizeForFingerprint(row.filePath)}`;
 }
 
+const AI_FINGERPRINT_LINE_BUCKET = 10;
+
+// Analogous to computeFingerprint above, for AI-sourced findings (lib/gemini.ts).
+// Unlike a CSV row's externalId, there's no stable tool-generated identity
+// here — Gemini's title text is not reproducible across separate scans of
+// identical code (no temperature/seed setting fully guarantees that), so
+// title is deliberately excluded from identity entirely, not just unused.
+// filePath + cwe (categorical, stable) + a coarse line bucket (tolerant of
+// the vulnerable line drifting a few lines between scans) is what actually
+// stays stable when the same scan is re-run on unchanged code. Tradeoff:
+// two distinct vulnerabilities of the same CWE within ~10 lines of each
+// other in the same file will collide into one fingerprint — accepted as
+// rarer and less disruptive than the title-drift false-splits this replaces.
+export function computeAiFingerprint(row: { filePath: string | null; lineStart: number | null; cwe: string | null }): string {
+  const lineBucket = row.lineStart != null ? Math.floor(row.lineStart / AI_FINGERPRINT_LINE_BUCKET) : "";
+  return `sig:${normalizeForFingerprint(row.filePath)}|${normalizeForFingerprint(row.cwe)}|${lineBucket}`;
+}
+
 export function parseFindingsCsv(buffer: Buffer): NormalizedFinding[] {
   let records: Record<string, string>[];
   try {
@@ -180,6 +206,12 @@ export interface ExistingFinding {
   severity: Severity;
   cvssScore: number | null;
   bucket: Bucket;
+  // Only needed by incremental (webhook-triggered) repo scans, which must
+  // scope planIngest's "not seen in this batch => resolved" logic to just
+  // the files a push actually touched — see lib/repo-scan.ts. Left
+  // undefined/unused by the CSV path, which always submits the complete
+  // finding set and so has no need to scope it.
+  filePath?: string | null;
 }
 
 export interface FindingUpsertRow {
@@ -205,6 +237,11 @@ export interface FindingUpsertRow {
   rationale: string;
   sla_due_date: string;
   last_seen_at: string;
+  remediation_guidance: string | null;
+  line_start: number | null;
+  line_end: number | null;
+  commit_sha: string | null;
+  source: "csv" | "github_ai";
 }
 
 export interface IngestCounts {
@@ -298,6 +335,11 @@ export function planIngest(
       rationale,
       sla_due_date: computeSlaDueDate(row.severity, dueFrom, policyDays),
       last_seen_at: now.toISOString(),
+      remediation_guidance: row.remediationGuidance ?? null,
+      line_start: row.lineStart ?? null,
+      line_end: row.lineEnd ?? null,
+      commit_sha: row.commitSha ?? null,
+      source: row.source ?? "csv",
     });
   }
 

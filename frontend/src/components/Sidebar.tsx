@@ -5,7 +5,6 @@ import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import { logout } from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
 import { useProject } from '../lib/project-context';
-import InviteBell from './InviteBell';
 import './Sidebar.css';
 
 const ICONS: Record<string, ReactElement> = {
@@ -142,7 +141,6 @@ export default function Sidebar() {
         </div>
 
         <div className={`sidebar-user ${expanded ? '' : 'sidebar-user--collapsed'}`}>
-          {expanded && <InviteBell />}
           <div className="avatar-ring" style={getAvatarStyle(user)}>{getInitials(user)}</div>
           {expanded && (
             <>

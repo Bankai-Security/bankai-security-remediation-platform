@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
-import { ApiError, changePassword, deleteAccount, listProjects, updateProfile, type Project } from '../lib/api';
+import GithubIcon from '../components/GithubIcon';
+import {
+  ApiError,
+  changePassword,
+  deleteAccount,
+  disconnectGithubAccount,
+  getGithubAccountStatus,
+  githubAuthorizeUrl,
+  listProjects,
+  updateProfile,
+  type GithubAccountStatus,
+  type Project,
+} from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
 import './AccountSettings.css';
 import './NewProject.css';
@@ -35,6 +47,42 @@ export default function AccountSettings() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+
+  const [githubAccount, setGithubAccount] = useState<GithubAccountStatus | null>(null);
+  const [githubAccountBusy, setGithubAccountBusy] = useState(false);
+  const [githubAccountBanner, setGithubAccountBanner] = useState<'connected' | 'error' | null>(null);
+
+  // The GitHub OAuth callback (backend/src/controllers/github-oauth.controller.ts)
+  // redirects the whole page back here with ?github_account=connected|error —
+  // pick that up once, show a banner, refresh the account status, then strip
+  // the query param so a refresh doesn't re-show it.
+  useEffect(() => {
+    getGithubAccountStatus()
+      .then(setGithubAccount)
+      .catch(() => {});
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('github_account');
+    if (status === 'connected' || status === 'error') {
+      setGithubAccountBanner(status);
+      params.delete('github_account');
+      const rest = params.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    }
+  }, []);
+
+  const handleConnectGithubAccount = () => {
+    window.location.href = githubAuthorizeUrl();
+  };
+
+  const handleDisconnectGithubAccount = async () => {
+    setGithubAccountBusy(true);
+    try {
+      const status = await disconnectGithubAccount();
+      setGithubAccount(status);
+    } finally {
+      setGithubAccountBusy(false);
+    }
+  };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -219,6 +267,48 @@ export default function AccountSettings() {
             <Link to="/projects" className="new-project-cancel-link">Back to projects</Link>
           </div>
         </form>
+
+        <section className="new-project-section" style={{ marginTop: 28 }}>
+          <h2 className="new-project-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <GithubIcon size={18} />
+            GitHub Account
+          </h2>
+          <div className="account-settings-hint">
+            Connect your GitHub account once to pick any of your repositories (private or public) from a list when
+            connecting a project to Bankai, instead of typing one in by hand. This is separate from any one
+            project&apos;s own GitHub connection, which stays available as a fallback.
+          </div>
+
+          {githubAccountBanner === 'connected' && (
+            <div className="account-settings-success" role="status" style={{ marginTop: 12 }}>GitHub account connected.</div>
+          )}
+          {githubAccountBanner === 'error' && (
+            <div className="new-project-error" role="alert" style={{ marginTop: 12 }}>
+              Could not connect your GitHub account. Please try again.
+            </div>
+          )}
+
+          {githubAccount?.connected ? (
+            <div className="new-project-actions" style={{ marginTop: 16 }}>
+              <span className="account-settings-profile-name" style={{ fontSize: 14 }}>@{githubAccount.login}</span>
+              <button
+                type="button"
+                className="new-project-create-btn"
+                style={{ background: 'var(--color-red)' }}
+                onClick={() => void handleDisconnectGithubAccount()}
+                disabled={githubAccountBusy}
+              >
+                {githubAccountBusy ? 'Disconnecting…' : 'Disconnect account'}
+              </button>
+            </div>
+          ) : (
+            <div className="new-project-actions" style={{ marginTop: 16 }}>
+              <button type="button" className="new-project-create-btn" onClick={handleConnectGithubAccount}>
+                Connect GitHub account
+              </button>
+            </div>
+          )}
+        </section>
 
         <section
           className="new-project-section"

@@ -54,7 +54,7 @@ export default function AITriage() {
   const [fBucket, setFBucket] = useState('all');
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<'severity' | 'confidence' | null>(null);
+  const [sortKey, setSortKey] = useState<'severity' | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [reassigning, setReassigning] = useState(false);
   const [reassigningService, setReassigningService] = useState(false);
@@ -97,7 +97,6 @@ export default function AITriage() {
         (fBucket === 'all' || r.bucket === fBucket),
     );
     if (sortKey === 'severity') list = [...list].sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) * sortDir);
-    if (sortKey === 'confidence') list = [...list].sort((a, b) => (a.confidence - b.confidence) * sortDir);
     return list;
   }, [findings, fService, fSeverity, fSla, fBucket, sortKey, sortDir]);
 
@@ -114,7 +113,7 @@ export default function AITriage() {
     setSelected((prev) => ({ ...prev, [row.id]: !prev[row.id] }));
   };
 
-  const toggleSort = (key: 'severity' | 'confidence') => {
+  const toggleSort = (key: 'severity') => {
     if (sortKey === key) setSortDir((d) => (d === -1 ? 1 : -1));
     else {
       setSortKey(key);
@@ -122,7 +121,7 @@ export default function AITriage() {
     }
   };
 
-  const arrow = (key: 'severity' | 'confidence') => (sortKey === key ? (sortDir === -1 ? '↓' : '↑') : '↕');
+  const arrow = (key: 'severity') => (sortKey === key ? (sortDir === -1 ? '↓' : '↑') : '↕');
 
   const handleReassign = async (bucket: Bucket) => {
     if (!project || !openRow) return;
@@ -260,7 +259,6 @@ export default function AITriage() {
             <button className="triage-sort-btn" onClick={() => toggleSort('severity')}>Severity {arrow('severity')}</button>
             <span>SLA status</span>
             <span>AI bucket</span>
-            <button className="triage-sort-btn" onClick={() => toggleSort('confidence')}>Confidence {arrow('confidence')}</button>
             <span className="ws-col-right">Action</span>
           </div>
           {filtered.map((r) => {
@@ -301,10 +299,6 @@ export default function AITriage() {
                 <span><span className={sevBadgeClass(r.severity)}>{r.severity}</span></span>
                 <span className="ws-dot-status" style={{ color: sla.color }}><span className="ws-dot" style={{ background: sla.dot }} />{r.sla}</span>
                 <span><span className={bucketBadgeClass(r.bucket)}>{r.bucket}</span></span>
-                <span className="triage-confidence-cell">
-                  <span className="triage-confidence-track"><span className="triage-confidence-fill" style={{ width: `${r.confidence}%` }} /></span>
-                  <span className="triage-confidence-pct">{r.confidence}%</span>
-                </span>
                 <span className="ws-col-right triage-review-link">{r.ticketKey ?? 'Review'}</span>
               </div>
             );
@@ -322,6 +316,9 @@ export default function AITriage() {
                 <div className="triage-drawer-tags">
                   <span className="ws-mono triage-drawer-id">{openRow.externalId ?? openRow.id.slice(0, 8)}</span>
                   <span className={sevBadgeClass(openRow.severity)} style={{ padding: '3px 9px', fontSize: 10.5 }}>{openRow.severity}</span>
+                  <span className={`ws-badge ${openRow.source === 'github_ai' ? 'ws-badge--pill-blue' : 'ws-badge--pill-neutral'}`}>
+                    {openRow.source === 'github_ai' ? 'GitHub AI' : 'CSV'}
+                  </span>
                   <span className="ws-dot-status" style={{ color: slaColor(openRow.sla).color, fontSize: 11.5 }}>
                     <span className="ws-dot" style={{ width: 6, height: 6, background: slaColor(openRow.sla).dot }} />{openRow.sla}
                   </span>
@@ -345,14 +342,20 @@ export default function AITriage() {
                   <div className="triage-drawer-evidence">{openRow.evidence}</div>
                 </div>
               )}
+              {openRow.remediationGuidance && (
+                <div>
+                  <div className="triage-drawer-label">REMEDIATION GUIDANCE</div>
+                  <div className="triage-drawer-desc" style={{ whiteSpace: 'pre-wrap' }}>{openRow.remediationGuidance}</div>
+                  {openRow.source === 'github_ai' && openRow.sourceUrl && (
+                    <a href={openRow.sourceUrl} target="_blank" rel="noreferrer" className="ws-btn ws-btn-outline-blue" style={{ marginTop: 10, display: 'inline-flex' }}>
+                      View file on GitHub{openRow.lineStart ? ` (line ${openRow.lineStart}${openRow.lineEnd && openRow.lineEnd !== openRow.lineStart ? `–${openRow.lineEnd}` : ''})` : ''}
+                    </a>
+                  )}
+                </div>
+              )}
               <div>
                 <div className="triage-drawer-label">TRIAGE RATIONALE</div>
                 <div className="triage-drawer-rationale">{openRow.rationale}</div>
-                <div className="triage-drawer-confidence-row">
-                  <span className="triage-drawer-confidence-label">Confidence</span>
-                  <span className="triage-confidence-track"><span className="triage-confidence-fill" style={{ width: `${openRow.confidence}%` }} /></span>
-                  <span className="triage-drawer-confidence-value">{openRow.confidence}%</span>
-                </div>
               </div>
               <div className="triage-drawer-meta-grid">
                 <div className="triage-drawer-meta-tile">
