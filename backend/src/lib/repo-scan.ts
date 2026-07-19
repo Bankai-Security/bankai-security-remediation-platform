@@ -6,7 +6,7 @@ import { compareCommits, getBlobs, getBranchHeadSha, getTree, type GithubCredent
 import { logger } from "./logger.js";
 import { filterScannableFiles, isScannablePath } from "./repo-file-filter.js";
 import type { SlaPolicyDays } from "./sla.js";
-import { closeTicketsForResolvedFindings, loadJiraCreds } from "./ticketing.js";
+import { closeTicketsForResolvedFindings, loadJiraCreds, updateTicketsForChangedFindings } from "./ticketing.js";
 
 // The repo-scan pipeline: fetch code -> Gemini analysis -> diff against
 // existing findings -> upsert into `findings`, same as the CSV path.
@@ -170,9 +170,21 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
 
   const plan = planIngest(projectId, scanId, existing, rows, new Date(), slaPolicyDays, defaultService);
 
+  // Loaded once, reused below for both change-propagation and resolved
+  // findings — previously only loaded inside the resolved-findings branch.
+  const jiraCreds = await loadJiraCreds(supabase, projectId);
+
   if (plan.upsertRows.length > 0) {
-    const { error } = await supabase.from("findings").upsert(plan.upsertRows, { onConflict: "project_id,fingerprint" });
+    const { data: upsertedRows, error } = await supabase
+      .from("findings")
+      .upsert(plan.upsertRows, { onConflict: "project_id,fingerprint" })
+      .select("id");
     if (error) throw new Error("Could not save findings from this scan.");
+    await updateTicketsForChangedFindings(supabase, {
+      projectId,
+      findingIds: (upsertedRows ?? []).map((r) => r.id),
+      jira: jiraCreds?.creds ?? null,
+    });
   }
 
   if (plan.resolvedFingerprints.length > 0) {
@@ -184,7 +196,6 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
       .select("id");
     if (error) throw new Error("Could not update resolved findings.");
 
-    const jiraCreds = await loadJiraCreds(supabase, projectId);
     await closeTicketsForResolvedFindings(supabase, {
       projectId,
       resolvedFindingIds: (resolvedRows ?? []).map((r) => r.id),

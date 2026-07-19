@@ -89,7 +89,7 @@ function resolveHeaderMap(sampleRow: Record<string, string>): Partial<Record<str
   return resolved;
 }
 
-function normalizeSeverity(raw: string | undefined, cvss: number | null): Severity {
+export function normalizeSeverity(raw: string | undefined, cvss: number | null): Severity {
   const key = (raw ?? "").trim().toLowerCase();
   if (SEVERITY_ALIASES[key]) return SEVERITY_ALIASES[key];
 
@@ -104,7 +104,7 @@ function normalizeSeverity(raw: string | undefined, cvss: number | null): Severi
   return "Medium";
 }
 
-function normalizeDate(raw: string | undefined): string | null {
+export function normalizeDate(raw: string | undefined): string | null {
   if (!raw?.trim()) return null;
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return null;
@@ -216,7 +216,9 @@ export interface ExistingFinding {
 
 export interface FindingUpsertRow {
   project_id: string;
-  scan_id: string;
+  // null only for findings imported straight from a Jira issue with no
+  // originating Bankai scan (reconcileJiraTickets() in ticketing.ts).
+  scan_id: string | null;
   fingerprint: string;
   external_id: string | null;
   title: string;
@@ -241,7 +243,7 @@ export interface FindingUpsertRow {
   line_start: number | null;
   line_end: number | null;
   commit_sha: string | null;
-  source: "csv" | "github_ai";
+  source: "csv" | "github_ai" | "jira_import";
 }
 
 export interface IngestCounts {

@@ -61,9 +61,11 @@ export default function Tickets() {
     setSyncing(true);
     setSyncMessage(null);
     try {
-      const { synced, failed, statusPulled, removed } = await syncTicketsToJira(project.id);
+      const { synced, failed, statusPulled, removed, reconciled, imported } = await syncTicketsToJira(project.id);
       const parts = [
         synced > 0 && `${synced} created`,
+        reconciled > 0 && `${reconciled} linked to existing Jira issue(s)`,
+        imported > 0 && `${imported} imported from another project's Jira issue(s)`,
         statusPulled > 0 && `${statusPulled} status update(s) pulled`,
         removed > 0 && `${removed} removed (deleted in Jira)`,
         failed > 0 && `${failed} failed`,

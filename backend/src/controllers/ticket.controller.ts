@@ -20,6 +20,7 @@ import {
   createTicketForFinding,
   loadGithubCreds,
   loadJiraCreds,
+  reconcileJiraTickets,
   SELECT_TICKET,
   toPublicTicket,
   type FindingForTicket,
@@ -58,7 +59,7 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
   const { data: findings, error: findingsError } = await supabase
     .from("findings")
     .select(
-      "id, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, tickets ( id )",
+      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, tickets ( id )",
     )
     .eq("project_id", project.id)
     .in("id", findingIds);
@@ -119,6 +120,8 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
     throw new HttpError(422, "Connect Jira in Settings before syncing tickets.");
   }
 
+  const actorLabel = displayNameFromUser(req.user!);
+
   // Catches tickets whose finding was resolved before this fix existed (or
   // any other drift) — same close logic a scan now runs automatically. A
   // ticket this closes will just be re-checked as a harmless no-op by the
@@ -134,13 +137,26 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
     jira: jira.creds,
   });
 
+  // Best-effort: catches Jira issues that already exist for findings this
+  // project knows about (e.g. created by a different Bankai project/account
+  // pointed at this same Jira project) but have no Bankai ticket yet, so
+  // syncing repeatedly over time keeps picking up new matches as this
+  // project accumulates findings — not just at initial connect time.
+  const { reconciled, imported } = await reconcileJiraTickets(supabase, {
+    projectId: project.id,
+    jira: { creds: jira.creds, projectKey: jira.projectKey },
+    actor: { id: req.user!.id, label: actorLabel },
+    rpcName: "create_project_ticket",
+    slaPolicyDays: project.slaPolicyDays,
+  });
+
   const activeSprintId = await getActiveSprintId(jira.creds, jira.projectKey);
   const github = await loadGithubCreds(supabase, project.id);
 
   const { data: rows, error } = await supabase
     .from("tickets")
     .select(
-      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, finding_id, findings ( external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url )",
+      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url )",
     )
     .eq("project_id", project.id);
 
@@ -152,7 +168,6 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   let failed = 0;
   let statusPulled = 0;
   let removed = 0;
-  const actorLabel = displayNameFromUser(req.user!);
 
   for (const row of rows ?? []) {
     if (row.jira_issue_key) {
@@ -198,9 +213,15 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
     }
 
     const findingRel = Array.isArray(row.findings) ? row.findings[0] : row.findings;
+    if (!findingRel) {
+      logger.error({ ticketId: row.id, findingId: row.finding_id }, "Ticket's finding relation missing during Jira sync");
+      failed++;
+      continue;
+    }
     const summary = `[${row.service ?? "Unassigned"}] ${row.title}`;
     const description = buildFindingDescription({
       id: row.finding_id,
+      fingerprint: findingRel.fingerprint,
       externalId: findingRel?.external_id ?? null,
       title: row.title,
       severity: row.severity as Severity,
@@ -257,7 +278,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
     });
   }
 
-  res.status(200).json({ synced, failed, statusPulled, removed });
+  res.status(200).json({ synced, failed, statusPulled, removed, reconciled, imported });
 }
 
 export async function updateTicket(req: Request, res: Response): Promise<void> {

@@ -317,7 +317,7 @@ export default function AITriage() {
                   <span className="ws-mono triage-drawer-id">{openRow.externalId ?? openRow.id.slice(0, 8)}</span>
                   <span className={sevBadgeClass(openRow.severity)} style={{ padding: '3px 9px', fontSize: 10.5 }}>{openRow.severity}</span>
                   <span className={`ws-badge ${openRow.source === 'github_ai' ? 'ws-badge--pill-blue' : 'ws-badge--pill-neutral'}`}>
-                    {openRow.source === 'github_ai' ? 'GitHub AI' : 'CSV'}
+                    {openRow.source === 'github_ai' ? 'GitHub AI' : openRow.source === 'jira_import' ? 'Jira Import' : 'CSV'}
                   </span>
                   <span className="ws-dot-status" style={{ color: slaColor(openRow.sla).color, fontSize: 11.5 }}>
                     <span className="ws-dot" style={{ width: 6, height: 6, background: slaColor(openRow.sla).dot }} />{openRow.sla}

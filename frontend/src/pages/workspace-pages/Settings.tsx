@@ -107,6 +107,7 @@ export default function Settings() {
   const [jira, setJira] = useState<JiraConnection | null>(null);
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraError, setJiraError] = useState<string | null>(null);
+  const [jiraConnectNote, setJiraConnectNote] = useState<string | null>(null);
   const [jiraFieldErrors, setJiraFieldErrors] = useState<Record<string, string>>({});
   const [site, setSite] = useState('');
   const [email, setEmail] = useState('');
@@ -247,10 +248,18 @@ export default function Settings() {
     if (!project) return;
     setJiraError(null);
     setJiraFieldErrors({});
+    setJiraConnectNote(null);
     setJiraLoading(true);
     try {
       const conn = await connectJira(project.id, { site, email, apiToken, projectKey: projectKey.toUpperCase() });
       setJira(conn);
+      const notes = [
+        conn.reconciled > 0 && `Linked ${conn.reconciled} ticket(s) to existing Jira issue(s) already in this project.`,
+        conn.imported > 0 && `Imported ${conn.imported} finding(s)/ticket(s) from other Jira issue(s) using this connection.`,
+      ].filter(Boolean);
+      if (notes.length > 0) {
+        setJiraConnectNote(notes.join(' '));
+      }
       setSite('');
       setEmail('');
       setApiToken('');
@@ -423,6 +432,7 @@ export default function Settings() {
 
         {jira?.connected ? (
           <>
+            {jiraConnectNote && <div className="settings-jira-synced" role="status">{jiraConnectNote}</div>}
             <div className="settings-jira-grid">
               <div>
                 <div className="settings-field-label">Site</div>

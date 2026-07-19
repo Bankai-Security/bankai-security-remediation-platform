@@ -159,7 +159,7 @@ export function getJiraConnection(projectId: string): Promise<JiraConnection> {
 export function connectJira(
   projectId: string,
   input: { site: string; email: string; apiToken: string; projectKey: string },
-): Promise<JiraConnection> {
+): Promise<JiraConnection & { reconciled: number; imported: number }> {
   return apiFetch(`/projects/${projectId}/jira/connect`, { method: "POST", body: JSON.stringify(input) });
 }
 
@@ -322,7 +322,7 @@ export interface Finding {
   sourceUrl: string | null;
   ticketKey: string | null;
   createdAt: string;
-  source: "csv" | "github_ai";
+  source: "csv" | "github_ai" | "jira_import";
   remediationGuidance: string | null;
   lineStart: number | null;
   lineEnd: number | null;
@@ -403,7 +403,9 @@ export function updateTicketStatus(projectId: string, ticketId: string, status: 
   return apiFetch(`/projects/${projectId}/tickets/${ticketId}`, { method: "PATCH", body: JSON.stringify({ status }) });
 }
 
-export function syncTicketsToJira(projectId: string): Promise<{ synced: number; failed: number; statusPulled: number; removed: number }> {
+export function syncTicketsToJira(
+  projectId: string,
+): Promise<{ synced: number; failed: number; statusPulled: number; removed: number; reconciled: number; imported: number }> {
   return apiFetch(`/projects/${projectId}/tickets/sync`, { method: "POST" });
 }
 

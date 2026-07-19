@@ -5,7 +5,7 @@ import { HttpError } from "../lib/http-error.js";
 import { requireRole } from "../lib/roles.js";
 import { SCAN_SELECT, toPublicScan, type ScanRow } from "../lib/scans.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
-import { closeTicketsForResolvedFindings, loadJiraCreds } from "../lib/ticketing.js";
+import { closeTicketsForResolvedFindings, loadJiraCreds, updateTicketsForChangedFindings } from "../lib/ticketing.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 
 function userScopedClient(req: Request) {
@@ -87,13 +87,23 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
 
   const plan = planIngest(project.id, scan.id, existing, rows, new Date(), project.slaPolicyDays, defaultService);
 
+  // Loaded once, reused below for both change-propagation and resolved
+  // findings — previously only loaded inside the resolved-findings branch.
+  const jira = await loadJiraCreds(supabase, project.id);
+
   if (plan.upsertRows.length > 0) {
-    const { error: upsertError } = await supabase
+    const { data: upsertedRows, error: upsertError } = await supabase
       .from("findings")
-      .upsert(plan.upsertRows, { onConflict: "project_id,fingerprint" });
+      .upsert(plan.upsertRows, { onConflict: "project_id,fingerprint" })
+      .select("id");
     if (upsertError) {
       throw new HttpError(500, "Could not save findings from this scan.");
     }
+    await updateTicketsForChangedFindings(supabase, {
+      projectId: project.id,
+      findingIds: (upsertedRows ?? []).map((r) => r.id),
+      jira: jira?.creds ?? null,
+    });
   }
 
   if (plan.resolvedFingerprints.length > 0) {
@@ -106,7 +116,6 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
     if (resolveError) {
       throw new HttpError(500, "Could not update resolved findings.");
     }
-    const jira = await loadJiraCreds(supabase, project.id);
     await closeTicketsForResolvedFindings(supabase, {
       projectId: project.id,
       resolvedFindingIds: (resolvedRows ?? []).map((r) => r.id),

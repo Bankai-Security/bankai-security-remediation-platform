@@ -5,6 +5,7 @@ import { HttpError } from "../lib/http-error.js";
 import { JiraApiError, verifyConnection } from "../lib/jira.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
+import { reconcileJiraTickets } from "../lib/ticketing.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 import type { ConnectJiraInput } from "../schemas/jira.schema.js";
 
@@ -87,7 +88,21 @@ export async function connectJira(req: Request, res: Response): Promise<void> {
     meta: site,
   });
 
-  res.status(200).json(toPublicConnection(data as JiraConnectionRow));
+  // Best-effort: if another Bankai project (this account or a different
+  // one) already created Jira issues in this same Jira project for
+  // findings this project also knows about, link to them instead of
+  // leaving this project to create duplicates the first time it creates
+  // tickets. Uses the credentials just submitted/verified above rather
+  // than round-tripping through loadJiraCreds/decrypt.
+  const { reconciled, imported } = await reconcileJiraTickets(supabase, {
+    projectId: project.id,
+    jira: { creds: { site, email, apiToken }, projectKey },
+    actor: { id: req.user!.id, label: displayNameFromUser(req.user!) },
+    rpcName: "create_project_ticket",
+    slaPolicyDays: project.slaPolicyDays,
+  });
+
+  res.status(200).json({ ...toPublicConnection(data as JiraConnectionRow), reconciled, imported });
 }
 
 export async function disconnectJira(req: Request, res: Response): Promise<void> {
