@@ -141,7 +141,7 @@ export default function AccountSettings() {
 
     setDeleteBusy(true);
     try {
-      await deleteAccount(deletePassword);
+      await deleteAccount(user?.hasPassword ? deletePassword : undefined);
       setUser(null);
       navigate('/login');
     } catch (err) {
@@ -214,59 +214,71 @@ export default function AccountSettings() {
           </div>
         </form>
 
-        <form onSubmit={handleChangePassword}>
+        {user?.hasPassword ? (
+          <form onSubmit={handleChangePassword}>
+            <section className="new-project-section" style={{ marginTop: 28 }}>
+              <h2 className="new-project-section-title">Password</h2>
+
+              {passwordError && <div className="new-project-error" role="alert">{passwordError}</div>}
+              {passwordSuccess && <div className="account-settings-success" role="status">Password changed.</div>}
+
+              <div className="new-project-field-stack">
+                <div className="new-project-field">
+                  <label htmlFor="current-password">Current password</label>
+                  <input
+                    id="current-password"
+                    type="password"
+                    className="new-project-input"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="new-project-field">
+                  <label htmlFor="new-password">New password</label>
+                  <input
+                    id="new-password"
+                    type="password"
+                    className="new-project-input"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    minLength={10}
+                    required
+                  />
+                </div>
+                <div className="new-project-field">
+                  <label htmlFor="confirm-password">Confirm new password</label>
+                  <input
+                    id="confirm-password"
+                    type="password"
+                    className="new-project-input"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    minLength={10}
+                    required
+                  />
+                </div>
+              </div>
+            </section>
+
+            <div className="new-project-actions">
+              <button type="submit" className="new-project-create-btn" disabled={savingPassword}>
+                {savingPassword ? 'Updating…' : 'Change password'}
+              </button>
+              <Link to="/projects" className="new-project-cancel-link">Back to projects</Link>
+            </div>
+          </form>
+        ) : (
           <section className="new-project-section" style={{ marginTop: 28 }}>
             <h2 className="new-project-section-title">Password</h2>
-
-            {passwordError && <div className="new-project-error" role="alert">{passwordError}</div>}
-            {passwordSuccess && <div className="account-settings-success" role="status">Password changed.</div>}
-
-            <div className="new-project-field-stack">
-              <div className="new-project-field">
-                <label htmlFor="current-password">Current password</label>
-                <input
-                  id="current-password"
-                  type="password"
-                  className="new-project-input"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="new-project-field">
-                <label htmlFor="new-password">New password</label>
-                <input
-                  id="new-password"
-                  type="password"
-                  className="new-project-input"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  minLength={10}
-                  required
-                />
-              </div>
-              <div className="new-project-field">
-                <label htmlFor="confirm-password">Confirm new password</label>
-                <input
-                  id="confirm-password"
-                  type="password"
-                  className="new-project-input"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  minLength={10}
-                  required
-                />
-              </div>
+            <div className="account-settings-hint">
+              You signed in with Google or GitHub, so there&apos;s no Bankai password to manage here.
+            </div>
+            <div className="new-project-actions" style={{ marginTop: 16 }}>
+              <Link to="/projects" className="new-project-cancel-link">Back to projects</Link>
             </div>
           </section>
-
-          <div className="new-project-actions">
-            <button type="submit" className="new-project-create-btn" disabled={savingPassword}>
-              {savingPassword ? 'Updating…' : 'Change password'}
-            </button>
-            <Link to="/projects" className="new-project-cancel-link">Back to projects</Link>
-          </div>
-        </form>
+        )}
 
         <section className="new-project-section" style={{ marginTop: 28 }}>
           <h2 className="new-project-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -362,17 +374,19 @@ export default function AccountSettings() {
                     required
                   />
                 </div>
-                <div className="new-project-field">
-                  <label htmlFor="delete-password">Password</label>
-                  <input
-                    id="delete-password"
-                    type="password"
-                    className="new-project-input"
-                    value={deletePassword}
-                    onChange={(e) => setDeletePassword(e.target.value)}
-                    required
-                  />
-                </div>
+                {user?.hasPassword && (
+                  <div className="new-project-field">
+                    <label htmlFor="delete-password">Password</label>
+                    <input
+                      id="delete-password"
+                      type="password"
+                      className="new-project-input"
+                      value={deletePassword}
+                      onChange={(e) => setDeletePassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
               </div>
               <div className="new-project-actions" style={{ marginTop: 16 }}>
                 <button

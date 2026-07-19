@@ -43,7 +43,10 @@ export const changePasswordSchema = z.object({
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
 export const deleteAccountSchema = z.object({
-  password: z.string().min(1, "Password is required").max(128, "Password is too long"),
+  // Optional: SSO-only accounts have no password to confirm with (see
+  // auth.controller.ts's deleteAccount, which requires it only when the
+  // account actually has a password identity).
+  password: z.string().max(128, "Password is too long").optional(),
 });
 
 export type DeleteAccountInput = z.infer<typeof deleteAccountSchema>;

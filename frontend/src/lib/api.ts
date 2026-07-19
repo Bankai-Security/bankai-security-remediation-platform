@@ -43,6 +43,10 @@ export interface PublicUser {
   id: string;
   email: string | null;
   fullName: string | null;
+  // False for accounts created via Google/GitHub SSO that never set a
+  // Bankai password — gates whether password-based UI (change password,
+  // the delete-account password confirmation) should even be shown.
+  hasPassword: boolean;
 }
 
 export type SignupResult =
@@ -61,6 +65,14 @@ export function logout(): Promise<void> {
   return apiFetch("/auth/logout", { method: "POST" });
 }
 
+// A real browser navigation (the provider's consent screen redirects the
+// whole page), not a fetch — callers should do
+// `window.location.href = ssoAuthorizeUrl('google')`. Works for both
+// login and signup: Supabase creates the account on first use.
+export function ssoAuthorizeUrl(provider: 'google' | 'github'): string {
+  return `${API_BASE_URL}/api/auth/sso/${provider}`;
+}
+
 export function getSession(): Promise<{ user: PublicUser }> {
   return apiFetch("/auth/session", { method: "GET" });
 }
@@ -73,7 +85,7 @@ export function changePassword(input: { currentPassword: string; newPassword: st
   return apiFetch("/auth/password", { method: "PATCH", body: JSON.stringify(input) });
 }
 
-export function deleteAccount(password: string): Promise<void> {
+export function deleteAccount(password?: string): Promise<void> {
   return apiFetch("/auth/account", { method: "DELETE", body: JSON.stringify({ password }) });
 }
 

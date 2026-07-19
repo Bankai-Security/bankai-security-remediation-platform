@@ -8,11 +8,20 @@ import { HttpError } from "../lib/http-error.js";
 import { createRequestSupabaseClient, createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
 import type { ChangePasswordInput, DeleteAccountInput, LoginInput, SignupInput, UpdateProfileInput } from "../schemas/auth.schema.js";
 
+// SSO-only accounts (Google/GitHub) never set a Bankai password — surfaced
+// so the frontend can hide password-based flows (change password, the
+// delete-account password confirmation) that would otherwise always fail
+// "incorrect password" for them with nothing they can do about it.
+function hasPasswordIdentity(user: User): boolean {
+  return user.identities?.some((identity) => identity.provider === "email") ?? false;
+}
+
 function toPublicUser(user: User) {
   return {
     id: user.id,
     email: user.email,
     fullName: typeof user.user_metadata["full_name"] === "string" ? user.user_metadata["full_name"] : null,
+    hasPassword: hasPasswordIdentity(user),
   };
 }
 
@@ -137,9 +146,14 @@ export function me(req: Request, res: Response): void {
 
 export async function updateProfile(req: Request, res: Response): Promise<void> {
   const { fullName } = req.body as UpdateProfileInput;
-  const supabase = createUserScopedSupabaseClient(req.accessToken as string);
 
-  const { data, error } = await supabase.auth.updateUser({ data: { full_name: fullName } });
+  // Not createUserScopedSupabaseClient().auth.updateUser(...): that client
+  // only carries an Authorization header, it never calls setSession(), and
+  // GoTrue's updateUser goes through _useSession() internally regardless of
+  // the header — so it always throws "Auth session missing!" no matter who's
+  // calling it. The admin API updates by id directly and has no such
+  // dependency, which is why it's used here instead.
+  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(req.user!.id, { user_metadata: { full_name: fullName } });
   if (error || !data.user) {
     throw new HttpError(400, error?.message ?? "Could not update your profile.");
   }
@@ -147,6 +161,7 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
   // profiles.full_name is only kept in sync by a trigger on insert — mirror
   // the change explicitly here so anything reading from profiles (not
   // auth.users) doesn't see stale data.
+  const supabase = createUserScopedSupabaseClient(req.accessToken as string);
   await supabase.from("profiles").update({ full_name: fullName }).eq("id", req.user!.id);
 
   res.status(200).json({ user: toPublicUser(data.user) });
@@ -169,8 +184,10 @@ export async function changePassword(req: Request, res: Response): Promise<void>
     throw new HttpError(401, "Current password is incorrect.");
   }
 
-  const supabase = createUserScopedSupabaseClient(req.accessToken as string);
-  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  // Same reason as updateProfile: the user-scoped client's auth.updateUser
+  // would throw "Auth session missing!" regardless of who calls it, since
+  // it never has a real GoTrue session, only a manually-set header.
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(req.user!.id, { password: newPassword });
   if (error) {
     throw new HttpError(400, error.message);
   }
@@ -185,7 +202,12 @@ export async function changePassword(req: Request, res: Response): Promise<void>
 // own project_members rows in anyone else's projects. This is strictly
 // more destructive than deleting a single project, so it requires the
 // same re-verify-current-password step as changePassword, just for an
-// irreversible action instead of a sensitive one.
+// irreversible action instead of a sensitive one — except for SSO-only
+// accounts, which have no password to verify: their already-authenticated
+// session (requireAuth) plus the exact-email-match confirmation the
+// frontend requires before submitting is the only proof of intent
+// available, same bar every other authenticated-but-unverified mutation
+// in this app relies on.
 export async function deleteAccount(req: Request, res: Response): Promise<void> {
   const { password } = req.body as DeleteAccountInput;
   const email = req.user!.email;
@@ -194,10 +216,15 @@ export async function deleteAccount(req: Request, res: Response): Promise<void> 
     throw new HttpError(400, "This account has no email on file.");
   }
 
-  const verifyClient = createRequestSupabaseClient();
-  const { error: verifyError } = await verifyClient.auth.signInWithPassword({ email, password });
-  if (verifyError) {
-    throw new HttpError(401, "Password is incorrect.");
+  if (hasPasswordIdentity(req.user!)) {
+    if (!password) {
+      throw new HttpError(401, "Password is incorrect.");
+    }
+    const verifyClient = createRequestSupabaseClient();
+    const { error: verifyError } = await verifyClient.auth.signInWithPassword({ email, password });
+    if (verifyError) {
+      throw new HttpError(401, "Password is incorrect.");
+    }
   }
 
   const { error } = await supabaseAdmin.auth.admin.deleteUser(req.user!.id);

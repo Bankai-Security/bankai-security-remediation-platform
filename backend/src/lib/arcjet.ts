@@ -55,6 +55,21 @@ export const loginArcjet = arcjet({
 });
 
 /**
+ * SSO authorize protection: shield + a per-IP sliding-window rate limit,
+ * deliberately without detectBot. Unlike the password login form (a fetch()
+ * POST with an Origin header and standard XHR fingerprint), this route is
+ * hit via a top-level `window.location` navigation — a fundamentally
+ * different header shape (Sec-Fetch-Mode: navigate, no Origin, no
+ * X-Requested-With) that loginArcjet's bot rule was never tuned for and
+ * produced false positives against, blocking real browser clicks.
+ */
+export const ssoArcjet = arcjet({
+  key: env.ARCJET_KEY,
+  characteristics: ["ip.src"],
+  rules: [shield({ mode: "LIVE" }), slidingWindow({ mode: "LIVE", interval: "10m", max: 15 })],
+});
+
+/**
  * Shield-only protection for authenticated, low-abuse-risk routes. Keyed by
  * ip.src, so this one bucket is shared across every /api/projects/* route
  * (including all its nested resources) AND /api/invites/* — and across
