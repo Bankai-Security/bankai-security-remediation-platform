@@ -147,6 +147,12 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
       fixAvailable: null,
       sourceUrl: `https://github.com/${github.creds.repo}/blob/${commitSha}/${finding.filePath}${anchor}`,
       service: null,
+      environment: null,
+      cves: null,
+      affectedPackages: null,
+      currentVersions: null,
+      fixedVersions: null,
+      recommendations: null,
       remediationGuidance: finding.remediationGuidance,
       lineStart: finding.lineStart,
       lineEnd: finding.lineEnd,
@@ -201,6 +207,7 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
       projectId,
       findingIds: (upsertedRows ?? []).map((r) => r.id),
       jira: jiraCreds?.creds ?? null,
+      slaPolicyDays,
     });
   }
 

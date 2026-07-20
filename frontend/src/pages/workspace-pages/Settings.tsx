@@ -21,6 +21,7 @@ import {
   revokeInvite,
   scanGithubRepo,
   updateMemberRole,
+  updateProjectSettings,
   updateSlaPolicy,
   type GithubAccountStatus,
   type GithubConnection,
@@ -103,6 +104,11 @@ export default function Settings() {
   const [slaDraft, setSlaDraft] = useState<SlaPolicyDays | null>(null);
   const [slaSaving, setSlaSaving] = useState(false);
   const [slaError, setSlaError] = useState<string | null>(null);
+
+  const [editingTeam, setEditingTeam] = useState(false);
+  const [teamDraft, setTeamDraft] = useState('');
+  const [teamSaving, setTeamSaving] = useState(false);
+  const [teamError, setTeamError] = useState<string | null>(null);
 
   const [jira, setJira] = useState<JiraConnection | null>(null);
   const [jiraLoading, setJiraLoading] = useState(false);
@@ -383,6 +389,35 @@ export default function Settings() {
     }
   };
 
+  const startEditingTeam = () => {
+    if (!project) return;
+    setTeamDraft(project.teamName ?? '');
+    setTeamError(null);
+    setEditingTeam(true);
+  };
+
+  const cancelEditingTeam = () => {
+    setEditingTeam(false);
+    setTeamDraft('');
+    setTeamError(null);
+  };
+
+  const handleSaveTeam = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!project) return;
+    setTeamSaving(true);
+    setTeamError(null);
+    try {
+      await updateProjectSettings(project.id, { teamName: teamDraft.trim() });
+      refreshProject();
+      setEditingTeam(false);
+    } catch (err) {
+      setTeamError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Could not save the team name.');
+    } finally {
+      setTeamSaving(false);
+    }
+  };
+
   const handleDeleteProject = async (e: FormEvent) => {
     e.preventDefault();
     if (!project) return;
@@ -414,6 +449,54 @@ export default function Settings() {
           {project && <span className="settings-role-badge" style={{ textTransform: 'capitalize' }}>{project.myRole}</span>}
           <Link to="/settings" className="ws-btn ws-btn-secondary">Edit profile</Link>
         </div>
+      </section>
+
+      <section className="ws-card settings-section">
+        <div className="ws-card-eyebrow">Project</div>
+        <h2 className="settings-h2" style={{ marginBottom: 6 }}>General</h2>
+        <div className="ws-card-hint">The team name shown on Jira tickets Bankai creates from this project&rsquo;s findings.</div>
+
+        {editingTeam ? (
+          <form onSubmit={handleSaveTeam}>
+            {teamError && <div className="settings-jira-error" role="alert">{teamError}</div>}
+            <div className="settings-jira-field" style={{ marginTop: 12 }}>
+              <label htmlFor="team-name" className="settings-field-label">Team name</label>
+              <input
+                id="team-name"
+                type="text"
+                className="settings-jira-input"
+                value={teamDraft}
+                onChange={(e) => setTeamDraft(e.target.value)}
+                maxLength={120}
+                placeholder="e.g. Identity Platform"
+              />
+            </div>
+            <div className="settings-jira-actions" style={{ marginTop: 16 }}>
+              <button type="submit" className="ws-btn ws-btn-primary" disabled={teamSaving}>
+                {teamSaving ? 'Saving…' : 'Save'}
+              </button>
+              <button type="button" className="ws-btn ws-btn-secondary" onClick={cancelEditingTeam} disabled={teamSaving}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <div style={{ marginTop: 12 }}>
+              <div className="settings-field-label">Team name</div>
+              <div className="settings-field-value">{project?.teamName || '—'}</div>
+            </div>
+            <button
+              className="ws-btn ws-btn-secondary"
+              style={{ marginTop: 16 }}
+              onClick={startEditingTeam}
+              disabled={!project || !canManageProject(project.myRole)}
+              title={project && !canManageProject(project.myRole) ? 'Only admins can edit the team name.' : undefined}
+            >
+              Edit team name
+            </button>
+          </>
+        )}
       </section>
 
       <section className="ws-card settings-section">
@@ -558,13 +641,14 @@ export default function Settings() {
             {github.webhookRegistered ? (
               <div className="ws-card-hint" style={{ marginTop: 12 }}>
                 <span className="ws-dot" style={{ background: '#22C55E', marginRight: 6 }} />
-                Auto-rescans on push: enabled — every push to {github.defaultBranch} triggers a new AI scan automatically.
+                Auto-rescans on push and PR-merge ticket updates: enabled — every push to {github.defaultBranch} triggers a
+                new AI scan, and merging an AI fix's pull request automatically moves its ticket to Done.
               </div>
             ) : github.webhookUrl ? (
               <div className="settings-jira-error" style={{ marginTop: 12, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
-                Auto-rescan on push isn't set up — this token couldn't create a webhook automatically. Add one manually in
-                the repo's Settings → Webhooks: payload URL <code>{github.webhookUrl}</code>, content type{' '}
-                <code>application/json</code>, event <code>push</code>
+                Auto-rescan on push and PR-merge ticket updates aren't set up — this token couldn't create a webhook
+                automatically. Add one manually in the repo's Settings → Webhooks: payload URL <code>{github.webhookUrl}</code>,
+                content type <code>application/json</code>, events <code>push</code> and <code>pull_request</code>
                 {justConnectedWebhookSecret ? (
                   <>
                     , and secret <code>{justConnectedWebhookSecret}</code> (shown once — reconnect GitHub to generate a

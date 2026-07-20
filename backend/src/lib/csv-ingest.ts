@@ -20,6 +20,12 @@ export interface NormalizedFinding {
   fixAvailable: string | null;
   sourceUrl: string | null;
   service: string | null;
+  environment: string | null;
+  cves: string | null;
+  affectedPackages: string | null;
+  currentVersions: string | null;
+  fixedVersions: string | null;
+  recommendations: string | null;
   // Populated only for AI-sourced findings (see lib/gemini.ts); left
   // undefined for CSV rows, so planIngest stays source-agnostic and this
   // interface stays backward compatible with the CSV path.
@@ -50,6 +56,15 @@ const HEADER_ALIASES: Record<string, string[]> = {
   // No CSV in the wild is guaranteed to have this — rows without a
   // recognized service column land in "Unassigned" until reassigned.
   service: ["service", "service_tag", "service_name", "team"],
+  // Container/package-vulnerability-scan-style fields (e.g. Trivy/Grype
+  // exports) — each rendered as a free-text block in the Jira ticket
+  // description, same as `description` itself.
+  environment: ["environment", "env"],
+  cves: ["cves", "cve", "cve_ids"],
+  affectedPackages: ["affected_packages", "packages"],
+  currentVersions: ["current_versions"],
+  fixedVersions: ["fixed_versions"],
+  recommendations: ["recommendations", "recommendation"],
 };
 
 const SEVERITY_ALIASES: Record<string, Severity> = {
@@ -197,6 +212,12 @@ export function parseFindingsCsv(buffer: Buffer): NormalizedFinding[] {
       fixAvailable: get("fixAvailable")?.trim() || null,
       sourceUrl: get("sourceUrl")?.trim() || null,
       service: get("service")?.trim() || null,
+      environment: get("environment")?.trim() || null,
+      cves: get("cves")?.trim() || null,
+      affectedPackages: get("affectedPackages")?.trim() || null,
+      currentVersions: get("currentVersions")?.trim() || null,
+      fixedVersions: get("fixedVersions")?.trim() || null,
+      recommendations: get("recommendations")?.trim() || null,
     };
   });
 }
@@ -234,6 +255,12 @@ export interface FindingUpsertRow {
   fix_available: string | null;
   source_url: string | null;
   service: string | null;
+  environment: string | null;
+  cves: string | null;
+  affected_packages: string | null;
+  current_versions: string | null;
+  fixed_versions: string | null;
+  recommendations: string | null;
   bucket: Bucket;
   confidence: number;
   rationale: string;
@@ -332,6 +359,12 @@ export function planIngest(
       fix_available: row.fixAvailable,
       source_url: row.sourceUrl,
       service: row.service ?? defaultService,
+      environment: row.environment,
+      cves: row.cves,
+      affected_packages: row.affectedPackages,
+      current_versions: row.currentVersions,
+      fixed_versions: row.fixedVersions,
+      recommendations: row.recommendations,
       bucket,
       confidence: computeConfidence(bucket, row),
       rationale,

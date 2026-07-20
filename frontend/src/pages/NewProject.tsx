@@ -34,6 +34,7 @@ export default function NewProject() {
   const { user } = useCurrentUser();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [teamName, setTeamName] = useState('');
   const [services, setServices] = useState<string[]>([]);
   const [newService, setNewService] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +115,7 @@ export default function NewProject() {
         const { project } = await createProject({
           name,
           description: description.trim() || undefined,
+          teamName: teamName.trim() || undefined,
           services,
         });
         projectId = project.id;
@@ -227,6 +229,21 @@ export default function NewProject() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   disabled={!!createdProjectId}
+                />
+              </div>
+              <div className="new-project-field">
+                <label htmlFor="project-team-name">
+                  Team name <span className="new-project-optional">(optional)</span>
+                </label>
+                <input
+                  id="project-team-name"
+                  type="text"
+                  placeholder="e.g. Identity Platform"
+                  className="new-project-input"
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                  disabled={!!createdProjectId}
+                  maxLength={120}
                 />
               </div>
             </div>

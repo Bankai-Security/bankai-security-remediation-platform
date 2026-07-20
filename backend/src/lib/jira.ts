@@ -68,6 +68,13 @@ const SEVERITY_TO_PRIORITY: Record<Severity, string> = {
   Low: "Low",
 };
 
+// Exported so callers can render an explicit "Priority: …" line in the
+// description (buildFindingDescription below), not just set Jira's native
+// priority field with it.
+export function severityToPriority(severity: Severity): string {
+  return SEVERITY_TO_PRIORITY[severity];
+}
+
 export interface FindingSummary {
   id: string;
   fingerprint: string;
@@ -84,35 +91,158 @@ export interface FindingSummary {
   description: string | null;
   fixAvailable: string | null;
   sourceUrl: string | null;
+  commitSha: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  // The org-facing fields below drive the standardized ticket format — see
+  // buildFindingDescription. teamName/repository come from the project
+  // (Settings.tsx's "Team name" field and the connected GitHub repo,
+  // respectively); the rest come from the finding. findingCount/ttrStatus
+  // are computed by the caller (ticketing.ts) rather than stored.
+  teamName: string | null;
+  service: string | null;
+  environment: string | null;
+  findingCount: number;
+  ttrStatus: string;
+  cves: string | null;
+  repository: string | null;
+  affectedPackages: string | null;
+  currentVersions: string | null;
+  fixedVersions: string | null;
+  recommendations: string | null;
 }
+
+// Renders "Label: value", or null (meaning: omit this line entirely) when
+// there's nothing to show — sections below drop empty lines rather than
+// printing a placeholder like "—", so a ticket only ever shows fields that
+// actually have data.
+function line(label: string, value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  return str ? `${label}: ${str}` : null;
+}
+
+// A stored free-text block (e.g. `cves`, `affectedPackages`) may hold
+// several newline-separated items, rendered as-is so each item lands on its
+// own line — or null (section omitted) when there's nothing stored.
+function block(value: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+// Same as block(), but bullets each non-empty line — used for
+// Recommendations specifically, which should read as an action list. Lines
+// that already start with "•" (e.g. a CSV column authored with bullets
+// already in it) are left alone rather than double-bulleted.
+function bulletBlock(value: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const bulleted = trimmed
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => (l.startsWith("•") ? l : `• ${l}`))
+    .join("\n");
+  return bulleted || null;
+}
+
+// A titled group of lines — e.g. "Technical Details\n\nTitle: …\nSeverity: …".
+// Returns null (section omitted entirely) when every line in it was null,
+// so a section with nothing to say doesn't leave a bare heading behind.
+function section(title: string, lines: (string | null)[]): string | null {
+  const body = lines.filter((l): l is string => l !== null);
+  if (body.length === 0) return null;
+  return [title, "", ...body].join("\n");
+}
+
+function shortSha(sha: string | null): string | null {
+  return sha ? sha.slice(0, 8) : null;
+}
+
+function lineRange(start: number | null, end: number | null): string | null {
+  if (start === null) return null;
+  return end !== null && end !== start ? `${start}–${end}` : String(start);
+}
+
+// Section headers this function can produce, in render order — also used by
+// parseSectionBody (below) to know where a section's body text ends.
+export const DESCRIPTION_SECTION_HEADERS = [
+  "Overview",
+  "CVEs",
+  "Affected Packages",
+  "Current Versions",
+  "Fixed Versions",
+  "Recommendations",
+  "Technical Details",
+  "Description",
+  "Source",
+] as const;
 
 // Builds a self-contained issue description so the finding can be
 // remediated from the Jira ticket alone, without needing to cross-reference
-// Bankai — every column shown in the findings/AI Triage table is included.
-// The Fingerprint line is a portable identity marker: unlike `ID`, which is
-// a UUID scoped to one Bankai project's `findings` table, `fingerprint` is
-// content-derived (title/component/file, or CWE/file/line-bucket) so the
-// *same* underlying vulnerability scanned into a different Bankai project
-// pointed at this same Jira project produces the same value — that's what
-// lets reconcileJiraTickets() (ticketing.ts) recognize and reuse this issue
-// instead of creating a duplicate.
+// Bankai. Grouped into titled sections (Overview, CVEs, Affected Packages,
+// Current Versions, Fixed Versions, Recommendations, Technical Details,
+// Description, Source) — each section, and each line within it, is only
+// included when there's real data for it, so nothing renders as a bare "—"
+// placeholder.
+//
+// Fingerprint (in Technical Details) is a portable identity marker: unlike
+// `ID`, which is a UUID scoped to one Bankai project's `findings` table,
+// `fingerprint` is content-derived (title/component/file, or
+// CWE/file/line-bucket) so the *same* underlying vulnerability scanned into
+// a different Bankai project pointed at this same Jira project produces the
+// same value — that's what lets reconcileJiraTickets() (ticketing.ts)
+// recognize and reuse this issue instead of creating a duplicate. Title,
+// Severity, and Fingerprint always have a value, so Technical Details (and
+// the Fingerprint line specifically) is never omitted. Every label here
+// must keep its exact text — parseFindingFieldsFromDescription below parses
+// it back out.
 export function buildFindingDescription(f: FindingSummary): string {
-  return [
-    `ID: ${f.externalId ?? f.id}`,
-    `Fingerprint: ${f.fingerprint}`,
-    `Title: ${f.title}`,
-    `Severity: ${f.severity}`,
-    `CVSS Score: ${f.cvssScore ?? "—"}`,
-    `CWE: ${f.cwe ?? "—"}`,
-    `Component: ${f.component ?? "—"}`,
-    `File Path: ${f.filePath ?? "—"}`,
-    `Type: ${f.findingType ?? "—"}`,
-    `Status: ${f.sourceStatus ?? "—"}`,
-    `Date Found: ${f.dateFound ?? "—"}`,
-    `Fix Available: ${f.fixAvailable ?? "—"}`,
-    `Source: ${f.sourceUrl ?? "—"}`,
-    `Description: ${f.description ?? "—"}`,
-  ].join("\n");
+  const sections = [
+    section("Overview", [
+      line("Team", f.teamName),
+      line("Service", f.service ?? "Unassigned"),
+      line("Environment", f.environment),
+      line("Priority", severityToPriority(f.severity)),
+      line("Finding Count", f.findingCount),
+      line("TTR Status", f.ttrStatus),
+      line("Repository", f.repository),
+    ]),
+    section("CVEs", [block(f.cves)]),
+    section("Affected Packages", [block(f.affectedPackages)]),
+    section("Current Versions", [block(f.currentVersions)]),
+    section("Fixed Versions", [block(f.fixedVersions)]),
+    section("Recommendations", [bulletBlock(f.recommendations)]),
+    section("Technical Details", [
+      line("Title", f.title),
+      line("Severity", f.severity),
+      line("CVSS Score", f.cvssScore),
+      line("CWE", f.cwe),
+      line("Component", f.component),
+      line("Scanner", f.findingType),
+      line("File", f.filePath),
+      line("Status", f.sourceStatus),
+      line("Date Found", f.dateFound),
+      line("Fix Available", f.fixAvailable),
+      line("Fingerprint", f.fingerprint),
+      line("ID", f.externalId ?? f.id),
+    ]),
+    section("Description", [block(f.description)]),
+    // Repository alone would just duplicate the Overview line for no added
+    // value — only worth its own Source section alongside at least one of
+    // commit/file/lines/link, the detail Overview doesn't already show.
+    ...(() => {
+      const detail = [
+        line("Commit", shortSha(f.commitSha)),
+        line("File", f.filePath),
+        line("Lines", lineRange(f.lineStart, f.lineEnd)),
+        line("GitHub", f.sourceUrl),
+      ].filter((l): l is string => l !== null);
+      return detail.length > 0 ? [section("Source", [line("Repository", f.repository), ...detail])] : [];
+    })(),
+  ].filter((s): s is string => s !== null);
+
+  return sections.join("\n\n");
 }
 
 export interface CreateIssueInput {
@@ -393,15 +523,25 @@ function parseLabelLine(text: string, label: string): string | null {
   return value === "" || value === EM_DASH ? null : value;
 }
 
-// Description is always the last field buildFindingDescription() writes, and
-// may itself contain embedded newlines (each became its own ADF paragraph,
-// indistinguishable from a new "line" once adfToPlainText rejoins them) — so
-// unlike every other label this one must capture to end-of-string, not
-// end-of-line, or everything after the first line would be lost.
-function parseDescriptionLine(text: string): string | null {
-  const match = /^Description:\s*([\s\S]*)$/m.exec(text);
-  if (!match) return null;
-  const value = match[1]!.trim();
+// Description is its own section (a bare "Description" heading followed by
+// body text) rather than a "Label: value" line, and its body may itself
+// contain embedded newlines (each became its own ADF paragraph,
+// indistinguishable from a new "line" once adfToPlainText rejoins them) —
+// so this captures everything between the "Description" heading and the
+// next known section heading (or end of string), rather than to end of line.
+function parseSectionBody(text: string, header: string): string | null {
+  const headerMatch = new RegExp(`^${header}$`, "m").exec(text);
+  if (!headerMatch) return null;
+
+  const rest = text.slice(headerMatch.index + headerMatch[0].length);
+  let end = rest.length;
+  for (const otherHeader of DESCRIPTION_SECTION_HEADERS) {
+    if (otherHeader === header) continue;
+    const otherMatch = new RegExp(`^${otherHeader}$`, "m").exec(rest);
+    if (otherMatch && otherMatch.index < end) end = otherMatch.index;
+  }
+
+  const value = rest.slice(0, end).trim();
   return value === "" || value === EM_DASH ? null : value;
 }
 
@@ -433,13 +573,13 @@ function parseFindingFieldsFromDescription(text: string): ParsedFindingFields {
     cvssScore: Number.isFinite(cvssParsed) ? cvssParsed : null,
     cwe: parseLabelLine(text, "CWE"),
     component: parseLabelLine(text, "Component"),
-    filePath: parseLabelLine(text, "File Path"),
-    findingType: parseLabelLine(text, "Type"),
+    filePath: parseLabelLine(text, "File"),
+    findingType: parseLabelLine(text, "Scanner"),
     sourceStatus: parseLabelLine(text, "Status"),
     dateFound: parseLabelLine(text, "Date Found"),
-    description: parseDescriptionLine(text),
+    description: parseSectionBody(text, "Description"),
     fixAvailable: parseLabelLine(text, "Fix Available"),
-    sourceUrl: parseLabelLine(text, "Source"),
+    sourceUrl: parseLabelLine(text, "GitHub"),
   };
 }
 

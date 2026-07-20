@@ -8,16 +8,18 @@ import { deleteIssue, type JiraCredentials } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { computeProjectStats } from "../lib/project-stats.js";
 import type { ProjectRole } from "../lib/roles.js";
+import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
-import type { CreateProjectInput, DeleteProjectInput } from "../schemas/project.schema.js";
+import type { CreateProjectInput, DeleteProjectInput, UpdateProjectSettingsInput } from "../schemas/project.schema.js";
 
 const PROJECT_COLUMNS =
-  "id, name, description, jira_site, jira_key, jira_connected_at, sla_critical_days, sla_high_days, sla_medium_days, sla_low_days, status, created_at";
+  "id, name, description, team_name, jira_site, jira_key, jira_connected_at, sla_critical_days, sla_high_days, sla_medium_days, sla_low_days, status, created_at";
 
 interface ProjectRow {
   id: string;
   name: string;
   description: string | null;
+  team_name: string | null;
   jira_site: string | null;
   jira_key: string | null;
   jira_connected_at: string | null;
@@ -45,6 +47,7 @@ async function toPublicProject(supabase: SupabaseClient, row: ProjectRow) {
     id: row.id,
     name: row.name,
     description: row.description,
+    teamName: row.team_name,
     status: row.status,
     services: row.project_services.map((s) => s.name),
     jiraSite: row.jira_site,
@@ -113,8 +116,31 @@ export async function getProject(req: Request, res: Response): Promise<void> {
   res.status(200).json({ project: await toPublicProject(supabase, data as ProjectRow) });
 }
 
+// PATCH /projects/:projectId — general project settings that don't warrant
+// their own sub-router (unlike Jira/GitHub/SLA/members). Mounted on the
+// already-loadProject-scoped router, so req.project.myRole is available the
+// same way updateSlaPolicy uses it.
+export async function updateProjectSettings(req: Request, res: Response): Promise<void> {
+  requireRole(req.project!.myRole, ["owner", "admin"]);
+  const { teamName } = req.body as UpdateProjectSettingsInput;
+  const supabase = userScopedClient(req);
+
+  const { data, error } = await supabase
+    .from("projects")
+    .update({ team_name: teamName || null })
+    .eq("id", req.project!.id)
+    .select("team_name")
+    .single();
+
+  if (error || !data) {
+    throw new HttpError(500, "Could not save the team name.");
+  }
+
+  res.status(200).json({ teamName: data.team_name });
+}
+
 export async function createProject(req: Request, res: Response): Promise<void> {
-  const { name, description, services } = req.body as CreateProjectInput;
+  const { name, description, teamName, services } = req.body as CreateProjectInput;
   const supabase = userScopedClient(req);
 
   // Insert without chaining .select(): PostgREST would turn that into
@@ -131,6 +157,7 @@ export async function createProject(req: Request, res: Response): Promise<void> 
     owner_id: req.user!.id,
     name,
     description: description || null,
+    team_name: teamName || null,
     key_prefix: deriveKeyPrefix(name),
   });
 

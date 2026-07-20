@@ -120,6 +120,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
       projectId: project.id,
       findingIds: (upsertedRows ?? []).map((r) => r.id),
       jira: jira?.creds ?? null,
+      slaPolicyDays: project.slaPolicyDays,
     });
   }
 

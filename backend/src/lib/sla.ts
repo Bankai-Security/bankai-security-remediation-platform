@@ -23,3 +23,16 @@ export function computeSlaStatus(severity: Severity, dueDate: string | null, pol
   if (daysRemaining <= totalDays * 0.2) return "Approaching";
   return "On track";
 }
+
+// Ticket-facing label for the "TTR Status" line in the Jira description
+// (buildFindingDescription in jira.ts) — same statuses computeSlaStatus
+// already reports, just phrased for the ticket rather than the UI badge.
+const TTR_STATUS_LABELS: Record<SlaStatus, string> = {
+  Missed: "Target Missed",
+  Approaching: "Approaching Target",
+  "On track": "On Track",
+};
+
+export function ttrStatusLabel(status: SlaStatus): string {
+  return TTR_STATUS_LABELS[status];
+}

@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { createProject, deleteProject, getProject, listProjects } from "../controllers/project.controller.js";
+import { createProject, deleteProject, getProject, listProjects, updateProjectSettings } from "../controllers/project.controller.js";
 import { baselineProtect } from "../middleware/baseline-arcjet.js";
 import { loadProject } from "../middleware/load-project.js";
 import { requireAuth } from "../middleware/require-auth.js";
 import { validateBody } from "../middleware/validate-body.js";
-import { createProjectSchema, deleteProjectSchema } from "../schemas/project.schema.js";
+import { createProjectSchema, deleteProjectSchema, updateProjectSettingsSchema } from "../schemas/project.schema.js";
 import { activityRouter } from "./activity.routes.js";
 import { findingRouter } from "./finding.routes.js";
 import { githubRouter } from "./github.routes.js";
@@ -29,6 +29,7 @@ projectRouter.delete("/:id", validateBody(deleteProjectSchema), deleteProject);
 // and 404s here if the caller doesn't own it, before any nested route runs.
 const projectScoped = Router({ mergeParams: true });
 projectScoped.use(loadProject);
+projectScoped.patch("/", validateBody(updateProjectSettingsSchema), updateProjectSettings);
 projectScoped.use("/scans", scanRouter);
 projectScoped.use("/findings", findingRouter);
 projectScoped.use("/tickets", ticketRouter);
