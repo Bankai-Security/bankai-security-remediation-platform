@@ -1,12 +1,18 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
-import { CI_BOOTSTRAP_BRANCH, CI_WORKFLOW_FILE } from "../lib/ci-template.js";
+import { CI_BOOTSTRAP_BRANCH, CI_WORKFLOW_FILE, CI_WORKFLOW_PATH, PLACEHOLDER_MARKER } from "../lib/ci-template.js";
 import { decrypt } from "../lib/crypto.js";
-import { createPullRequestComment, getWorkflowRunJobs, type WorkflowRunJob } from "../lib/github.js";
+import {
+  createPullRequestComment,
+  getRepoFileContent,
+  getWorkflowRunJobs,
+  type GithubCredentials,
+  type WorkflowRunJob,
+} from "../lib/github.js";
 import { addPipelineEvidenceComment } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { PIPELINE_STAGE_LABELS, type PipelineStageName } from "../lib/pipeline-types.js";
-import { enqueueFixRetry, enqueuePipelineRetry, enqueueRepoScan } from "../lib/queue.js";
+import { enqueueFixPrResume, enqueueFixRetry, enqueuePipelineRetry, enqueueRepoScan } from "../lib/queue.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import {
   loadGithubCreds,
@@ -192,17 +198,23 @@ async function handlePullRequestEvent(projectId: string, rawBody: Buffer, res: R
   // ci_bootstrap_status, not a ticket's status.
   if (payload.pull_request?.head?.ref === CI_BOOTSTRAP_BRANCH) {
     if (payload.pull_request.merged) {
-      const pendingTicketIds = await markBootstrapPrMerged(supabaseAdmin, projectId);
-      for (const ticketId of pendingTicketIds) {
+      const pendingTickets = await markBootstrapPrMerged(supabaseAdmin, projectId);
+      for (const ticket of pendingTickets) {
         // enqueuePipelineRetry, not enqueuePipelineVerification: every
         // pending ticket here already ran its pipeline job once (that run
         // is what left it at 'pending_setup' in the first place), so it
         // already occupies the `ci-pipeline-${ticketId}` id. Re-adding under
         // that same id would silently no-op — this needs a fresh id, same
         // as the ticket-level "Retry CI" action.
-        enqueuePipelineRetry({ ticketId, projectId }).catch((err) => {
-          logger.error({ err, ticketId, projectId }, "Could not re-enqueue pipeline verification after CI bootstrap merge");
-        });
+        if (ticket.github_branch_name && ticket.github_pr_number != null) {
+          enqueuePipelineRetry({ ticketId: ticket.id, projectId }).catch((err) => {
+            logger.error({ err, ticketId: ticket.id, projectId }, "Could not re-enqueue pipeline verification after CI bootstrap merge");
+          });
+        } else {
+          enqueueFixPrResume({ ticketId: ticket.id, projectId }).catch((err) => {
+            logger.error({ err, ticketId: ticket.id, projectId }, "Could not re-enqueue fix PR creation after CI bootstrap merge");
+          });
+        }
       }
     } else {
       // Closed without merge — reset to 'none' so a future ticket's
@@ -232,7 +244,67 @@ async function handlePullRequestEvent(projectId: string, rawBody: Buffer, res: R
 // Kept in sync with fix-retry.job.ts's own MAX_FIX_ATTEMPTS — both cap the
 // same counter (tickets.ci_fix_attempt), just from either side of the loop.
 const MAX_FIX_ATTEMPTS = 3;
-const RETRYABLE_STAGES: PipelineStageName[] = ["build", "functional-test", "integration-test"];
+const INFRA_DENYLIST_STAGES: string[] = ["image", "deploy-dev"];
+
+function isStageRetryable(stageName: string): boolean {
+  return !INFRA_DENYLIST_STAGES.includes(stageName);
+}
+
+// Extracts one job's body text out of a bankai-verify.yml document by
+// indentation — the line matching `<indent>{jobName}:` starts it, the next
+// line at the same-or-shallower indentation ends it. Works for Bankai's own
+// generated format and for a human-edited one (GitHub Actions requires
+// sibling job keys to share indentation), not just the exact 2-space layout
+// ci-template.ts emits.
+function extractJobBody(yaml: string, jobName: string): string | null {
+  const lines = yaml.split("\n");
+  const jobLineRe = new RegExp(`^(\\s*)${jobName}:\\s*$`);
+
+  let startIndex = -1;
+  let indent = "";
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i]!.match(jobLineRe);
+    if (match) {
+      startIndex = i;
+      indent = match[1] ?? "";
+      break;
+    }
+  }
+  if (startIndex === -1) return null;
+
+  const bodyLines: string[] = [];
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.trim() === "") {
+      bodyLines.push(line);
+      continue;
+    }
+    const lineIndent = line.match(/^(\s*)/)?.[1] ?? "";
+    if (lineIndent.length <= indent.length) break;
+    bodyLines.push(line);
+  }
+  return bodyLines.join("\n");
+}
+
+// Content-based half of the retry denylist: a job that's still exactly the
+// unedited scaffold placeholder (image/deploy-dev by default, or any custom
+// job a human left as a stub) can never be fixed by regenerating source
+// code — the `echo "TODO..."` line isn't a real check, so no amount of
+// retrying the vulnerable file will change its outcome. Best-effort: on any
+// fetch/parse failure this returns false (not a placeholder) so a transient
+// GitHub API hiccup degrades to "attempt the retry" rather than silently
+// blocking one, consistent with this codebase's fail-open bias elsewhere.
+async function isPlaceholderStage(creds: GithubCredentials, ref: string, stageName: string): Promise<boolean> {
+  try {
+    const yaml = await getRepoFileContent(creds, CI_WORKFLOW_PATH, ref);
+    if (!yaml) return false;
+    const body = extractJobBody(yaml, stageName);
+    return body != null && body.includes(PLACEHOLDER_MARKER);
+  } catch (err) {
+    logger.warn({ err, ref, stageName }, "Could not check whether a failing stage is still an unedited placeholder");
+    return false;
+  }
+}
 
 function stageIcon(conclusion: string | null): string {
   if (conclusion === "success") return "✅";
@@ -377,13 +449,22 @@ async function handleWorkflowRunEvent(projectId: string, rawBody: Buffer, res: R
   const passed = run.conclusion === "success";
   await markTicketPipelineResult(supabaseAdmin, { projectId, ticketId, status: passed ? "passed" : "failed", runUrl: run.html_url });
 
-  // Self-healing retry: only for a code-level failure Gemini can plausibly
-  // fix (build/functional-test/integration-test). image/deploy-dev failures
-  // are infra/placeholder stages Gemini has no ability to affect, and
-  // feeding those back would just waste attempts. Capped at MAX_FIX_ATTEMPTS
-  // total fix attempts (checked again inside fix-retry.job.ts).
+  // Self-healing retry: any code-level job is retryable by default —
+  // including custom jobs a human added to a hand-edited bankai-verify.yml —
+  // except infra jobs Gemini has no ability to affect. That's an
+  // infra-only denylist, not a closed allowlist: image/deploy-dev are always
+  // excluded by name (a container/deploy step can't be fixed by regenerating
+  // source), and any job (default or custom) still exactly the unedited
+  // scaffold placeholder is excluded by content, since an `echo "TODO..."`
+  // step isn't a real check that retrying could ever change the outcome of.
+  // Capped at MAX_FIX_ATTEMPTS total fix attempts (checked again inside
+  // fix-retry.job.ts).
   const failingStage = stages.find((s) => s.conclusion === "failure")?.name as PipelineStageName | undefined;
-  const canSelfHeal = !passed && failingStage != null && RETRYABLE_STAGES.includes(failingStage) && (ticketRow.ci_fix_attempt ?? 1) < MAX_FIX_ATTEMPTS;
+  let stageRetryable = failingStage != null && isStageRetryable(failingStage);
+  if (stageRetryable && github && failingStage != null) {
+    stageRetryable = !(await isPlaceholderStage(github.creds, run.head_branch, failingStage));
+  }
+  const canSelfHeal = !passed && failingStage != null && stageRetryable && (ticketRow.ci_fix_attempt ?? 1) < MAX_FIX_ATTEMPTS;
 
   if (canSelfHeal && failingStage) {
     // No comment posted here — fix-retry.job.ts posts once it has something
@@ -394,7 +475,7 @@ async function handleWorkflowRunEvent(projectId: string, rawBody: Buffer, res: R
     });
   } else {
     const retryNote = !passed
-      ? failingStage != null && !RETRYABLE_STAGES.includes(failingStage)
+      ? failingStage != null && !stageRetryable
         ? "Automatic retry is not applicable to this failure."
         : (ticketRow.ci_fix_attempt ?? 1) >= MAX_FIX_ATTEMPTS
           ? `Bankai already tried ${MAX_FIX_ATTEMPTS} automatic fix attempts — this needs a human.`

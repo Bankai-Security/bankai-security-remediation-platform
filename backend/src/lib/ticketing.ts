@@ -58,6 +58,7 @@ export interface TicketRow {
   ci_status: string | null;
   ci_run_url: string | null;
   ci_error: string | null;
+  source?: "csv" | "github_ai" | "jira_import";
   // Only present when selected via SELECT_TICKET's join — absent on rows
   // returned directly from the create_project_ticket* RPCs.
   findings?: { external_id: string | null } | { external_id: string | null }[] | null;
@@ -255,10 +256,12 @@ export async function attemptBranchCreation(
   cwe: string | null,
   filePath: string | null,
   ticketId: string,
+  projectId: string,
+  ticketKey: string,
 ): Promise<{ github_branch_name: string | null; github_branch_url: string | null; github_branch_error: string | null } | null> {
   if (!github) return null;
   try {
-    const name = buildBranchName(fingerprint, cwe, filePath);
+    const name = buildBranchName(fingerprint, cwe, filePath, { projectId, ticketKey });
     const branch = await createBranch(github.creds, { baseBranch: github.defaultBranch, branchName: name });
 
     const comment = await addBranchComment(jiraCreds, issueKey, branch);
@@ -284,11 +287,11 @@ export async function attemptBranchCreation(
 // unreachable) must not fail ticket/branch creation, same best-effort
 // contract as everything else in this file — logged and swallowed.
 export function maybeEnqueueFixPrJob(
-  branchColumns: { github_branch_name: string | null } | null,
   ticketId: string,
   projectId: string,
+  findingSource?: "csv" | "github_ai" | "jira_import" | null,
 ): void {
-  if (!branchColumns?.github_branch_name) return;
+  if (findingSource === "jira_import") return;
   enqueueFixPr({ ticketId, projectId }).catch((err) => {
     logger.error({ err, ticketId, projectId }, "Could not enqueue the fix-pr job");
   });
@@ -323,6 +326,7 @@ export interface FindingForTicket {
   commit_sha: string | null;
   line_start: number | null;
   line_end: number | null;
+  source: "csv" | "github_ai" | "jira_import";
 }
 
 export interface TicketingActor {
@@ -333,7 +337,7 @@ export interface TicketingActor {
 export interface CreateTicketForFindingInput {
   projectId: string;
   finding: FindingForTicket;
-  jira: { creds: JiraCredentials; projectKey: string; activeSprintId: number | null } | null;
+  jira: { creds: JiraCredentials; projectKey: string; targetSprintId: number | null } | null;
   github: { creds: GithubCredentials; defaultBranch: string } | null;
   actor: TicketingActor;
   // create_project_ticket (RLS/project_role()-gated, for an interactive user
@@ -357,7 +361,7 @@ export async function createTicketForFinding(
   supabase: SupabaseClient,
   input: CreateTicketForFindingInput,
 ): Promise<{ ticket: ReturnType<typeof toPublicTicket> }> {
-  const { projectId, finding, jira, github, actor, rpcName, formatContext, slaPolicyDays } = input;
+  const { projectId, finding, jira, actor, rpcName, formatContext, slaPolicyDays } = input;
 
   const { data: ticket, error: rpcError } = await supabase.rpc(rpcName, {
     p_project_id: projectId,
@@ -426,19 +430,15 @@ export async function createTicketForFinding(
         severity: finding.severity,
         dueDate: finding.sla_due_date,
       });
-      if (jira.activeSprintId) {
-        void addIssueToSprint(jira.creds, jira.activeSprintId, issue.key);
+      if (jira.targetSprintId) {
+        const sprintResult = await addIssueToSprint(jira.creds, jira.targetSprintId, issue.key);
+        if (!sprintResult.ok) {
+          logger.error(
+            { status: sprintResult.status, message: sprintResult.message, ticketId: ticketRow.id, issueKey: issue.key, sprintId: jira.targetSprintId },
+            "Jira issue was created but could not be added to the target sprint",
+          );
+        }
       }
-
-      const branchColumns = await attemptBranchCreation(
-        github,
-        jira.creds,
-        issue.key,
-        finding.fingerprint,
-        finding.cwe,
-        finding.file_path,
-        ticketRow.id,
-      );
 
       const { data: updated } = await supabase
         .from("tickets")
@@ -446,13 +446,12 @@ export async function createTicketForFinding(
           jira_issue_key: issue.key,
           jira_issue_url: issue.url,
           jira_sync_error: null,
-          ...(branchColumns ?? {}),
         })
         .eq("id", ticketRow.id)
         .select(SELECT_TICKET)
         .single();
       if (updated) ticketRow = updated as TicketRow;
-      maybeEnqueueFixPrJob(branchColumns, ticketRow.id, projectId);
+      maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source);
     } catch (err) {
       const message = err instanceof JiraApiError ? err.message : "Could not create a Jira issue for this ticket.";
       logger.error({ err, ticketId: ticketRow.id }, "Jira issue creation failed");
@@ -640,7 +639,13 @@ export async function markTicketPipelineResult(
 // merged. Flips the project to 'ready' and returns every ticket that was
 // left at ci_status='pending_setup' waiting on this, so the caller can
 // re-enqueue their pipeline verification now that dispatch will work.
-export async function markBootstrapPrMerged(supabase: SupabaseClient, projectId: string): Promise<string[]> {
+export interface PendingBootstrapTicket {
+  id: string;
+  github_branch_name: string | null;
+  github_pr_number: number | null;
+}
+
+export async function markBootstrapPrMerged(supabase: SupabaseClient, projectId: string): Promise<PendingBootstrapTicket[]> {
   const { error: projectError } = await supabase
     .from("projects")
     .update({ ci_bootstrap_status: "ready" })
@@ -652,7 +657,7 @@ export async function markBootstrapPrMerged(supabase: SupabaseClient, projectId:
 
   const { data: pending, error: pendingError } = await supabase
     .from("tickets")
-    .select("id")
+    .select("id, github_branch_name, github_pr_number")
     .eq("project_id", projectId)
     .eq("ci_status", "pending_setup");
   if (pendingError) {
@@ -660,7 +665,7 @@ export async function markBootstrapPrMerged(supabase: SupabaseClient, projectId:
     return [];
   }
 
-  return (pending ?? []).map((t) => t.id as string);
+  return (pending ?? []) as PendingBootstrapTicket[];
 }
 
 export interface ReconcileJiraTicketsInput {

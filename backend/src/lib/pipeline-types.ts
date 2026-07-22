@@ -8,9 +8,10 @@ export type CiStatus = "pending_setup" | "queued" | "running" | "passed" | "fail
 // both the YAML generator (ci-template.ts) and the evidence renderers
 // (webhook.controller.ts, jira.ts) so job keys, needs: order, and display
 // labels can never drift apart.
-export type PipelineStageName = "build" | "image" | "deploy-dev" | "functional-test" | "integration-test";
+export type KnownPipelineStageName = "build" | "image" | "deploy-dev" | "functional-test" | "integration-test";
+export type PipelineStageName = string;
 
-export const PIPELINE_STAGE_ORDER: PipelineStageName[] = [
+export const PIPELINE_STAGE_ORDER: KnownPipelineStageName[] = [
   "build",
   "image",
   "deploy-dev",
@@ -18,7 +19,7 @@ export const PIPELINE_STAGE_ORDER: PipelineStageName[] = [
   "integration-test",
 ];
 
-export const PIPELINE_STAGE_LABELS: Record<PipelineStageName, string> = {
+export const PIPELINE_STAGE_LABELS: Record<string, string> = {
   "build": "Build (CI)",
   "image": "Image",
   "deploy-dev": "Deploy Dev (CD)",

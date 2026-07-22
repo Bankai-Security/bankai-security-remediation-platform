@@ -258,6 +258,45 @@ export interface CreatedIssue {
   url: string;
 }
 
+interface JiraBoard {
+  id: number;
+}
+
+interface JiraSprint {
+  id: number;
+  name: string;
+}
+
+interface JiraWriteResult {
+  ok: boolean;
+  status?: number | undefined;
+  message?: string | undefined;
+}
+
+async function readJiraError(res: Response, fallback: string): Promise<string> {
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const reason =
+    (Array.isArray(body.errorMessages) ? body.errorMessages[0] : undefined) ??
+    (body.errors && typeof body.errors === "object" ? Object.values(body.errors as Record<string, unknown>)[0] : undefined);
+  return typeof reason === "string" ? reason : fallback;
+}
+
+async function listBoardSprints(creds: JiraCredentials, boardId: number, state: "active" | "future"): Promise<JiraSprint[] | null> {
+  const res = await jiraFetch(creds, `/rest/agile/1.0/board/${boardId}/sprint?state=${state}`);
+  if (!res.ok) return null;
+  const { values } = (await res.json()) as { values?: JiraSprint[] };
+  return values ?? [];
+}
+
+async function createFutureSprint(creds: JiraCredentials, boardId: number): Promise<JiraSprint | null> {
+  const res = await jiraFetch(creds, "/rest/agile/1.0/sprint", {
+    method: "POST",
+    body: JSON.stringify({ name: "Sprint 1", originBoardId: boardId }),
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as JiraSprint;
+}
+
 export async function createIssue(creds: JiraCredentials, input: CreateIssueInput): Promise<CreatedIssue> {
   const res = await jiraFetch(creds, "/rest/api/3/issue", {
     method: "POST",
@@ -285,39 +324,52 @@ export async function createIssue(creds: JiraCredentials, input: CreateIssueInpu
   return { key: created.key, url: `${baseUrl(creds.site)}/browse/${created.key}` };
 }
 
-// Scrum projects put newly created issues in the Backlog, not the active
-// sprint's Board, until something explicitly moves them there. Kanban
-// projects have no sprints at all. Both are normal — this best-effort
-// lookup finds the active sprint (if any) so callers can add new issues to
-// it; a project with no board/active sprint just returns null and callers
-// skip the move silently.
-export async function getActiveSprintId(creds: JiraCredentials, projectKey: string): Promise<number | null> {
+// Scrum projects put newly created issues in the Backlog until something
+// explicitly moves them into a sprint. Fresh Scrum projects may only have a
+// future Sprint 1, or no sprint yet. Kanban projects have no sprints at all.
+// Both are normal — this best-effort
+// lookup finds a target sprint so callers can add new issues to it. A project
+// with no board/sprint support just returns null and callers skip the move.
+export async function getTargetSprintId(creds: JiraCredentials, projectKey: string): Promise<number | null> {
   try {
     const boardsRes = await jiraFetch(creds, `/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}`);
     if (!boardsRes.ok) return null;
-    const { values: boards } = (await boardsRes.json()) as { values: { id: number }[] };
-    const board = boards[0];
+    const { values: boards } = (await boardsRes.json()) as { values?: JiraBoard[] };
+    const board = boards?.[0];
     if (!board) return null;
 
-    const sprintsRes = await jiraFetch(creds, `/rest/agile/1.0/board/${board.id}/sprint?state=active`);
-    if (!sprintsRes.ok) return null;
-    const { values: sprints } = (await sprintsRes.json()) as { values: { id: number }[] };
-    return sprints[0]?.id ?? null;
+    const activeSprints = await listBoardSprints(creds, board.id, "active");
+    if (activeSprints === null) return null;
+    if (activeSprints[0]) return activeSprints[0].id;
+
+    const futureSprints = await listBoardSprints(creds, board.id, "future");
+    if (futureSprints === null) return null;
+    const sprintOne = futureSprints.find((sprint) => sprint.name.trim().toLowerCase() === "sprint 1");
+    if (sprintOne) return sprintOne.id;
+    if (futureSprints[0]) return futureSprints[0].id;
+
+    const created = await createFutureSprint(creds, board.id);
+    return created?.id ?? null;
   } catch {
     return null;
   }
 }
 
 // Never throws — same best-effort contract as transitionIssue.
-export async function addIssueToSprint(creds: JiraCredentials, sprintId: number, issueKey: string): Promise<boolean> {
+export async function addIssueToSprint(creds: JiraCredentials, sprintId: number, issueKey: string): Promise<JiraWriteResult> {
   try {
     const res = await jiraFetch(creds, `/rest/agile/1.0/sprint/${sprintId}/issue`, {
       method: "POST",
       body: JSON.stringify({ issues: [issueKey] }),
     });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    return {
+      ok: false,
+      status: res.status,
+      message: await readJiraError(res, `Could not add issue to sprint (status ${res.status}).`),
+    };
   } catch {
-    return false;
+    return { ok: false, message: "Could not reach Jira while adding issue to sprint." };
   }
 }
 

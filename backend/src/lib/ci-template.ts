@@ -1,4 +1,4 @@
-import { PIPELINE_STAGE_ORDER, type PipelineStageName } from "./pipeline-types.js";
+import { PIPELINE_STAGE_ORDER, type KnownPipelineStageName } from "./pipeline-types.js";
 
 // Scaffold workflow Bankai commits to a target repo's default branch (via a
 // one-time bootstrap PR — see pipeline.job.ts) when the repo has no
@@ -16,8 +16,15 @@ export const CI_WORKFLOW_PATH = `.github/workflows/${CI_WORKFLOW_FILE}`;
 // recognizes its merge/close events as distinct from a remediation PR's).
 export const CI_BOOTSTRAP_BRANCH = "bankai/ci-bootstrap";
 
+// Common substring of every placeholder `run:` step this generator emits
+// (build/functional-test/integration-test placeholders in stack-detect.ts,
+// image/deploy-dev below) — single source of truth so webhook.controller.ts
+// can detect "this job is still an unedited placeholder" by content, not
+// just by job name, without the two ever drifting apart.
+export const PLACEHOLDER_MARKER = "TODO - add this repo's";
+
 export interface DetectedStack {
-  language: "node" | "python" | "unknown";
+  language: "node" | "python" | "java" | "go" | "rust" | "csharp" | "ruby" | "php" | "cpp" | "unknown";
   installCmd: string;
   buildCmd: string;
   functionalTestCmd: string;
@@ -28,7 +35,7 @@ function composeStep(installCmd: string, cmd: string): string {
   return installCmd ? `${installCmd} && ${cmd}` : cmd;
 }
 
-function jobBody(stage: PipelineStageName, detected: DetectedStack): string {
+function jobBody(stage: KnownPipelineStageName, detected: DetectedStack): string {
   switch (stage) {
     case "build":
       return (
@@ -45,7 +52,7 @@ function jobBody(stage: PipelineStageName, detected: DetectedStack): string {
         `      - uses: actions/checkout@v4\n` +
         `      # TODO: build (and optionally push) a container image, e.g.:\n` +
         `      #   - run: docker build -t my-app:\${{ github.sha }} .\n` +
-        `      - run: echo "TODO - add this repo's image build steps here"\n`
+        `      - run: echo "${PLACEHOLDER_MARKER} image build steps here"\n`
       );
     case "deploy-dev":
       return (
@@ -54,7 +61,7 @@ function jobBody(stage: PipelineStageName, detected: DetectedStack): string {
         `      # TODO: deploy the image to this repo's own dev environment. Bankai\n` +
         `      # does not provision or host this environment — it only waits for this\n` +
         `      # job to report pass/fail.\n` +
-        `      - run: echo "TODO - add this repo's dev-deploy steps here"\n`
+        `      - run: echo "${PLACEHOLDER_MARKER} dev-deploy steps here"\n`
       );
     case "functional-test":
       return (

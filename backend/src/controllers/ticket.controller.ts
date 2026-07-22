@@ -7,19 +7,18 @@ import {
   addIssueToSprint,
   buildFindingDescription,
   createIssue,
-  getActiveSprintId,
+  getTargetSprintId,
   getIssueSnapshot,
   JiraApiError,
   transitionIssue,
 } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
-import { enqueuePipelineRetry } from "../lib/queue.js";
+import { enqueueFixPrResume, enqueuePipelineRetry } from "../lib/queue.js";
 import { requireRole } from "../lib/roles.js";
 import { computeSlaStatus, ttrStatusLabel } from "../lib/sla.js";
 import { createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
 import type { Severity } from "../lib/pipeline-types.js";
 import {
-  attemptBranchCreation,
   closeTicketsForResolvedFindings,
   countOpenFindingsForService,
   createTicketForFinding,
@@ -44,8 +43,14 @@ function userScopedClient(req: Request) {
 }
 
 async function recoverPendingCiSetup(projectId: string, tickets: TicketRow[]): Promise<void> {
-  const hasPendingSetup = tickets.some((ticket) => ticket.ci_status === "pending_setup" && !!ticket.github_branch_name);
-  if (!hasPendingSetup) return;
+  const needsBranchResume = tickets.some(
+    (ticket) =>
+      ticket.ci_status === "pending_setup" ||
+      (!ticket.github_branch_name &&
+        !ticket.github_pr_number &&
+        ticket.github_pr_error === "Waiting for the Bankai CI bootstrap pull request to merge before creating a remediation branch."),
+  );
+  if (!needsBranchResume) return;
 
   try {
     const { data: project, error: projectError } = await supabaseAdmin
@@ -76,17 +81,27 @@ async function recoverPendingCiSetup(projectId: string, tickets: TicketRow[]): P
 
     const { data: pending, error: pendingError } = await supabaseAdmin
       .from("tickets")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("ci_status", "pending_setup")
-      .not("github_branch_name", "is", null);
+      .select("id, github_branch_name, github_pr_number, ci_status, github_pr_error")
+      .eq("project_id", projectId);
     if (pendingError) {
       logger.error({ err: pendingError, projectId }, "Could not load pending CI tickets for recovery");
       return;
     }
 
-    for (const ticket of pending ?? []) {
-      await enqueuePipelineRetry({ ticketId: ticket.id as string, projectId });
+    const resumable = (pending ?? []).filter(
+      (ticket) =>
+        ticket.ci_status === "pending_setup" ||
+        (!ticket.github_branch_name &&
+          !ticket.github_pr_number &&
+          ticket.github_pr_error === "Waiting for the Bankai CI bootstrap pull request to merge before creating a remediation branch."),
+    );
+
+    for (const ticket of resumable) {
+      if (ticket.github_branch_name && ticket.github_pr_number != null) {
+        await enqueuePipelineRetry({ ticketId: ticket.id as string, projectId });
+      } else {
+        await enqueueFixPrResume({ ticketId: ticket.id as string, projectId });
+      }
     }
   } catch (err) {
     logger.error({ err, projectId }, "Could not recover pending CI verification tickets");
@@ -122,7 +137,7 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
   const { data: findings, error: findingsError } = await supabase
     .from("findings")
     .select(
-      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, tickets ( id )",
+      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source, tickets ( id )",
     )
     .eq("project_id", project.id)
     .in("id", findingIds);
@@ -132,8 +147,8 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
   }
 
   const jiraCreds = await loadJiraCreds(supabase, project.id);
-  const activeSprintId = jiraCreds ? await getActiveSprintId(jiraCreds.creds, jiraCreds.projectKey) : null;
-  const jira = jiraCreds ? { ...jiraCreds, activeSprintId } : null;
+  const targetSprintId = jiraCreds ? await getTargetSprintId(jiraCreds.creds, jiraCreds.projectKey) : null;
+  const jira = jiraCreds ? { ...jiraCreds, targetSprintId } : null;
   const github = await loadGithubCreds(supabase, project.id);
   const formatContext = await loadTicketFormatContext(supabase, project.id);
 
@@ -216,7 +231,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
     slaPolicyDays: project.slaPolicyDays,
   });
 
-  const activeSprintId = await getActiveSprintId(jira.creds, jira.projectKey);
+  const targetSprintId = await getTargetSprintId(jira.creds, jira.projectKey);
   const github = await loadGithubCreds(supabase, project.id);
   const formatContext = await loadTicketFormatContext(supabase, project.id);
 
@@ -260,7 +275,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   const { data: rows, error } = await supabase
     .from("tickets")
     .select(
-      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end )",
+      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source )",
     )
     .eq("project_id", project.id);
 
@@ -281,26 +296,16 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
       if (snapshot.exists) {
         const statusColumns =
           snapshot.status && snapshot.status !== row.status ? { status: snapshot.status } : null;
-        const branchColumns =
-          !row.github_branch_name && findingRel
-            ? await attemptBranchCreation(
-                github,
-                jira.creds,
-                row.jira_issue_key,
-                findingRel.fingerprint,
-                findingRel.cwe,
-                findingRel.file_path,
-                row.id,
-              )
-            : null;
         if (statusColumns) statusPulled++;
-        if (statusColumns || branchColumns) {
+        if (statusColumns) {
           await supabase
             .from("tickets")
-            .update({ ...statusColumns, ...branchColumns })
+            .update(statusColumns)
             .eq("id", row.id);
         }
-        maybeEnqueueFixPrJob(branchColumns, row.id, project.id);
+        if (!row.github_branch_name) {
+          maybeEnqueueFixPrJob(row.id, project.id, findingRel?.source ?? null);
+        }
         continue;
       }
 
@@ -380,28 +385,24 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
         severity: row.severity as Severity,
         dueDate: row.due_date,
       });
-      if (activeSprintId) {
-        void addIssueToSprint(jira.creds, activeSprintId, issue.key);
+      if (targetSprintId) {
+        const sprintResult = await addIssueToSprint(jira.creds, targetSprintId, issue.key);
+        if (!sprintResult.ok) {
+          logger.error(
+            { status: sprintResult.status, message: sprintResult.message, ticketId: row.id, issueKey: issue.key, sprintId: targetSprintId },
+            "Jira issue was created but could not be added to the target sprint",
+          );
+        }
       }
-      const branchColumns = await attemptBranchCreation(
-        github,
-        jira.creds,
-        issue.key,
-        findingRel.fingerprint,
-        findingRel.cwe,
-        findingRel.file_path,
-        row.id,
-      );
       await supabase
         .from("tickets")
         .update({
           jira_issue_key: issue.key,
           jira_issue_url: issue.url,
           jira_sync_error: null,
-          ...(branchColumns ?? {}),
         })
         .eq("id", row.id);
-      maybeEnqueueFixPrJob(branchColumns, row.id, project.id);
+      maybeEnqueueFixPrJob(row.id, project.id, findingRel.source);
       synced++;
     } catch (err) {
       const message = err instanceof JiraApiError ? err.message : "Could not create a Jira issue for this ticket.";
@@ -473,7 +474,7 @@ export async function retryTicketPipeline(req: Request, res: Response): Promise<
     .update({ ci_status: null, ci_error: null, ci_run_url: null })
     .eq("id", req.params.ticketId)
     .eq("project_id", req.project!.id)
-    .select("id, github_branch_name")
+    .select("id, github_branch_name, github_pr_number")
     .maybeSingle();
 
   if (error) {
@@ -482,11 +483,11 @@ export async function retryTicketPipeline(req: Request, res: Response): Promise<
   if (!data) {
     throw new HttpError(404, "Ticket not found");
   }
-  if (!data.github_branch_name) {
-    throw new HttpError(422, "This ticket has no remediation branch yet — nothing to verify.");
+  if (data.github_branch_name && data.github_pr_number != null) {
+    await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id });
+  } else {
+    await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id });
   }
-
-  await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id });
 
   res.status(202).json({ queued: true });
 }

@@ -1,6 +1,8 @@
 import type { Job } from "bullmq";
+import { ensureCiBootstrapReady } from "../lib/ci-bootstrap.js";
 import { recordActivity } from "../lib/activity.js";
 import { generateFix, type FixFindingInput } from "../lib/gemini-fix.js";
+import { gatherRepoContext } from "../lib/repo-context.js";
 import {
   commitFileToBranch,
   compareCommits,
@@ -13,11 +15,12 @@ import {
 import { transitionIssue, type JiraCredentials } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { enqueuePipelineVerification, type FixPrJobData } from "../lib/queue.js";
-import { loadGithubCreds, loadJiraCreds } from "../lib/ticketing.js";
+import { attemptBranchCreation, loadGithubCreds, loadJiraCreds } from "../lib/ticketing.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
 interface FixPrTicketRow {
   id: string;
+  key: string;
   status: string;
   github_branch_name: string | null;
   github_pr_number: number | null;
@@ -28,7 +31,9 @@ interface FixPrTicketRow {
 }
 
 interface FixPrFindingRow {
+  fingerprint: string;
   title: string;
+  source: "csv" | "github_ai" | "jira_import";
   cwe: string | null;
   file_path: string | null;
   line_start: number | null;
@@ -39,7 +44,7 @@ interface FixPrFindingRow {
 }
 
 const SELECT_FIX_PR_TICKET =
-  "id, status, github_branch_name, github_pr_number, github_fix_commit_sha, jira_issue_key, finding_id, findings ( title, cwe, file_path, line_start, line_end, description, rationale, remediation_guidance )";
+  "id, key, status, github_branch_name, github_pr_number, github_fix_commit_sha, jira_issue_key, finding_id, findings ( fingerprint, title, source, cwe, file_path, line_start, line_end, description, rationale, remediation_guidance )";
 
 async function setTicketError(ticketId: string, message: string): Promise<void> {
   await supabaseAdmin.from("tickets").update({ github_pr_error: message }).eq("id", ticketId);
@@ -81,8 +86,8 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
   const finding = Array.isArray(ticket.findings) ? ticket.findings[0] : ticket.findings;
 
   if (ticket.status === "Done") return;
-  if (!ticket.github_branch_name) return;
   if (ticket.github_pr_number != null) return;
+  if (finding?.source === "jira_import") return;
   if (!finding || !finding.file_path) return;
 
   const github = await loadGithubCreds(supabase, projectId);
@@ -91,9 +96,56 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     // worker picked it up — a real race, not a bug.
     return;
   }
+
+  try {
+    const bootstrapReady = await ensureCiBootstrapReady(supabase, projectId, github);
+    if (!bootstrapReady) {
+      await supabase
+        .from("tickets")
+        .update({
+          ci_status: "pending_setup",
+          ci_error: null,
+          github_pr_error: "Waiting for the Bankai CI bootstrap pull request to merge before creating a remediation branch.",
+        })
+        .eq("id", ticketId);
+      return;
+    }
+  } catch (err) {
+    const message = err instanceof GithubApiError ? err.message : "Could not prepare the Bankai CI verification workflow.";
+    logger.error({ err, ticketId, projectId }, "CI bootstrap setup failed before fix-pr branch creation");
+    await supabase.from("tickets").update({ ci_status: "failed", ci_error: message }).eq("id", ticketId);
+    return;
+  }
+
   const jira = await loadJiraCreds(supabase, projectId);
 
-  const branch = ticket.github_branch_name;
+  let branch = ticket.github_branch_name;
+  if (!branch) {
+    if (!jira || !ticket.jira_issue_key) return;
+
+    const branchColumns = await attemptBranchCreation(
+      github,
+      jira.creds,
+      ticket.jira_issue_key,
+      finding.fingerprint,
+      finding.cwe,
+      finding.file_path,
+      ticket.id,
+      projectId,
+      ticket.key,
+    );
+    if (!branchColumns?.github_branch_name) {
+      if (branchColumns) {
+        await supabase.from("tickets").update(branchColumns).eq("id", ticketId);
+      }
+      return;
+    }
+    branch = branchColumns.github_branch_name;
+    await supabase
+      .from("tickets")
+      .update({ ...branchColumns, ci_status: null, ci_error: null, github_pr_error: null })
+      .eq("id", ticketId);
+  }
   const findingInput: FixFindingInput = {
     title: finding.title,
     cwe: finding.cwe,
@@ -134,18 +186,29 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       }
       const fileContent = await getBlob(github.creds, entry.sha);
 
-      const fix = await generateFix(findingInput, fileContent);
+      const repoContext = await gatherRepoContext({
+        creds: github.creds,
+        ref: branch,
+        targetFilePath: finding.file_path,
+        vulnerableFileContent: fileContent,
+      });
+
+      const fix = await generateFix(findingInput, fileContent, undefined, repoContext.formattedPromptContext);
       if (!fix || !fix.confident || fix.fixedContent === fileContent) {
         await setTicketError(ticketId, "Could not generate a confident automatic fix for this finding.");
         return;
       }
 
+      // filesToUpdate is model-provided and not guaranteed disjoint from the
+      // main file — the main file's fixedContent always wins on a collision.
+      const extraFiles = (fix.filesToUpdate ?? []).filter((f) => f.filePath !== finding.file_path);
+      const filesToCommit = [{ path: finding.file_path, content: fix.fixedContent }, ...extraFiles.map((f) => ({ path: f.filePath, content: f.fixedContent }))];
+
       const { commitSha } = await commitFileToBranch(github.creds, {
         branch,
         baseSha: headSha,
         message: `fix: ${finding.title}\n\n${fix.summary}\n\nAutomatically generated by Bankai AI for ${finding.cwe ?? "this"} finding.`,
-        path: finding.file_path,
-        content: fix.fixedContent,
+        files: filesToCommit,
       });
 
       await supabase

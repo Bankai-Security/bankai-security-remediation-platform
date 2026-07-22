@@ -23,11 +23,22 @@ export async function createBootstrapPr(creds: GithubCredentials, defaultBranch:
     logger.error({ err, repo: creds.repo }, "Stack detection failed; falling back to placeholder pipeline steps");
   }
 
-  const stackSummary =
-    detected.language === "unknown"
-      ? "No recognizable stack detected; Build/Functional Test/Integration Test steps are placeholders you must fill in."
-      : `Detected stack: ${detected.language === "node" ? "Node.js" : "Python"}; Build/Functional Test/Integration ` +
-        "Test commands were auto-filled from the repo; review and customize as needed.";
+  const languageNames: Record<string, string> = {
+    node: "Node.js",
+    python: "Python",
+    java: "Java",
+    go: "Go",
+    rust: "Rust",
+    csharp: "C# / .NET",
+    ruby: "Ruby",
+    php: "PHP",
+    cpp: "C/C++",
+  };
+  const displayLang = languageNames[detected.language];
+  const stackSummary = !displayLang
+    ? "No recognizable stack detected; Build/Functional Test/Integration Test steps are placeholders you must fill in."
+    : `Detected stack: ${displayLang}; Build/Functional Test/Integration ` +
+      "Test commands were auto-filled from the repo; review and customize as needed.";
 
   try {
     await commitFileToBranch(creds, {
@@ -38,8 +49,7 @@ export async function createBootstrapPr(creds: GithubCredentials, defaultBranch:
         "Adds .github/workflows/bankai-verify.yml so Bankai can dispatch build/image/deploy-dev/functional-test/" +
         "integration-test verification against future remediation branches. Image and deploy-dev are " +
         "placeholders; customize them for this repo's stack before relying on the results.",
-      path: CI_WORKFLOW_PATH,
-      content: buildCiWorkflowYaml(detected),
+      files: [{ path: CI_WORKFLOW_PATH, content: buildCiWorkflowYaml(detected) }],
     });
   } catch (err) {
     if (err instanceof GithubApiError && err.status === 404) {

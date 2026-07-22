@@ -31,7 +31,7 @@ interface FindingRow {
   sla_due_date: string | null;
   first_seen_at: string;
   created_at: string;
-  source: "csv" | "github_ai";
+  source: "csv" | "github_ai" | "jira_import";
   remediation_guidance: string | null;
   line_start: number | null;
   line_end: number | null;
@@ -84,7 +84,11 @@ const SELECT_FINDING =
 
 export async function listFindings(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
-  let query = supabase.from("findings").select(SELECT_FINDING).eq("project_id", req.project!.id);
+  let query = supabase
+    .from("findings")
+    .select(SELECT_FINDING)
+    .eq("project_id", req.project!.id)
+    .neq("source", "jira_import");
 
   const { service, severity, bucket } = req.query;
   if (typeof service === "string" && service !== "all") query = query.eq("service", service);

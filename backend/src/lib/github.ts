@@ -231,13 +231,22 @@ function fingerprintSlug(fingerprint: string): string {
   return createHash("sha256").update(fingerprint).digest("hex").slice(0, 10);
 }
 
-export function buildBranchName(fingerprint: string, cwe: string | null, filePath: string | null): string {
+export function buildBranchName(
+  fingerprint: string,
+  cwe: string | null,
+  filePath: string | null,
+  scope?: { projectId: string; ticketKey: string } | null,
+): string {
   const readable = [cwe, filePath ? filePath.split("/").pop() : null]
     .filter((s): s is string => !!s)
     .map(slug)
     .filter(Boolean)
     .join("-");
-  return `remediation/${fingerprintSlug(fingerprint)}${readable ? `-${readable}` : ""}`;
+  const projectSlug = scope?.projectId ? createHash("sha256").update(scope.projectId).digest("hex").slice(0, 6) : null;
+  const ticketSlug = scope?.ticketKey ? slug(scope.ticketKey).slice(0, 18) : null;
+  const scopedPrefix = [projectSlug, ticketSlug].filter(Boolean).join("-");
+  const identity = [scopedPrefix || null, fingerprintSlug(fingerprint)].filter(Boolean).join("-");
+  return `remediation/${identity}${readable ? `-${readable}` : ""}`;
 }
 
 // Never throws — same best-effort contract as jira.ts's deleteIssue. A 404
@@ -387,21 +396,43 @@ export async function updateBranchRef(creds: GithubCredentials, branch: string, 
   }
 }
 
+// Brings `base` up to date with `head` via a merge commit — used to sync a
+// remediation branch that was created before bankai-verify.yml existed on
+// the default branch (see the comment on dispatchWorkflowRun). A 204 means
+// base already contains head's history; not an error, just nothing to do.
+export async function mergeBranchFromBase(
+  creds: GithubCredentials,
+  input: { base: string; head: string; commitMessage?: string },
+): Promise<{ merged: boolean }> {
+  const res = await githubFetch(creds, `/repos/${creds.repo}/merges`, {
+    method: "POST",
+    body: JSON.stringify({ base: input.base, head: input.head, commit_message: input.commitMessage }),
+  });
+  if (res.status === 204) return { merged: false };
+  if (res.status === 201) return { merged: true };
+  const body = (await res.json().catch(() => ({}))) as { message?: string };
+  throw new GithubApiError(
+    body.message ?? `Could not merge "${input.head}" into "${input.base}" (status ${res.status}).`,
+    res.status,
+  );
+}
+
 export interface CommittedFix {
   commitSha: string;
 }
 
-// Composes the four Git Data API calls above into one commit that changes a
-// single file. Not idempotent by itself — callers that may re-run (the
-// fix-pr job) are expected to check ticket.github_fix_commit_sha against the
-// branch's current head sha first and skip this call entirely if a fix was
-// already committed.
+// Composes Git Data API calls into one commit that changes one or more files.
+// Not idempotent by itself — callers that may re-run (the fix-pr job) are expected
+// to check ticket.github_fix_commit_sha against the branch's current head sha first.
 export async function commitFileToBranch(
   creds: GithubCredentials,
-  input: { branch: string; baseSha: string; message: string; path: string; content: string },
+  input: { branch: string; baseSha: string; message: string; files: TreeContentEntry[] },
 ): Promise<CommittedFix> {
+  if (input.files.length === 0) {
+    throw new Error("commitFileToBranch called with no files.");
+  }
   const { treeSha: baseTreeSha } = await getCommit(creds, input.baseSha);
-  const treeSha = await createTree(creds, baseTreeSha, [{ path: input.path, content: input.content }]);
+  const treeSha = await createTree(creds, baseTreeSha, input.files);
   const commitSha = await createCommit(creds, { message: input.message, treeSha, parentSha: input.baseSha });
   await updateBranchRef(creds, input.branch, commitSha);
   return { commitSha };
@@ -520,8 +551,15 @@ export async function getRepoFileContent(creds: GithubCredentials, path: string,
 
 // workflow_dispatch only works for a workflow file that already exists on
 // the repo's default branch (a GitHub limitation, not a Bankai choice) — see
-// the migration comment on projects.ci_bootstrap_status. `workflowFile` is
-// the filename GitHub uses as the workflow_id (e.g. "bankai-verify.yml").
+// the migration comment on projects.ci_bootstrap_status. GitHub also
+// validates the workflow_dispatch trigger against the *ref* being
+// dispatched, not just the default branch — dispatching against a branch
+// whose own history predates the file 422s with "Workflow does not have
+// 'workflow_dispatch' trigger" even though the default branch has it. Callers
+// dispatching against a non-default ref must ensure that ref already
+// contains the file first (see pipeline.job.ts's use of mergeBranchFromBase).
+// `workflowFile` is the filename GitHub uses as the workflow_id (e.g.
+// "bankai-verify.yml").
 export async function dispatchWorkflowRun(
   creds: GithubCredentials,
   input: { workflowFile: string; ref: string; inputs?: Record<string, string> },

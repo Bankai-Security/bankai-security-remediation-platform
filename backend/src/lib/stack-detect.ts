@@ -1,11 +1,11 @@
 import { getBlob, getTree, type GitTreeEntry, type GithubCredentials } from "./github.js";
-import type { DetectedStack } from "./ci-template.js";
+import { PLACEHOLDER_MARKER, type DetectedStack } from "./ci-template.js";
 import { logger } from "./logger.js";
 
 const PLACEHOLDER = {
-  build: `echo "TODO - add this repo's build steps here"`,
-  functionalTest: `echo "TODO - add this repo's FT test commands here"`,
-  integrationTest: `echo "TODO - add this repo's IT test commands here"`,
+  build: `echo "${PLACEHOLDER_MARKER} build steps here"`,
+  functionalTest: `echo "${PLACEHOLDER_MARKER} FT test commands here"`,
+  integrationTest: `echo "${PLACEHOLDER_MARKER} IT test commands here"`,
 };
 
 // Same wording as bankai-verify.yml's original static placeholders — a repo
@@ -45,6 +45,35 @@ export async function detectRepoStack(creds: GithubCredentials, ref: string): Pr
 
   if (rootFiles.has("requirements.txt") || rootFiles.has("pyproject.toml")) {
     return detectPythonStack(rootFiles);
+  }
+
+  if (rootFiles.has("pom.xml") || rootFiles.has("build.gradle") || rootFiles.has("build.gradle.kts")) {
+    return detectJavaStack(rootFiles);
+  }
+
+  if (rootFiles.has("go.mod")) {
+    return detectGoStack();
+  }
+
+  if (rootFiles.has("Cargo.toml")) {
+    return detectRustStack();
+  }
+
+  const hasCsharp = Array.from(rootFiles.keys()).some((f) => f.endsWith(".csproj") || f.endsWith(".sln"));
+  if (hasCsharp) {
+    return detectCsharpStack();
+  }
+
+  if (rootFiles.has("Gemfile")) {
+    return detectRubyStack();
+  }
+
+  if (rootFiles.has("composer.json")) {
+    return detectPhpStack();
+  }
+
+  if (rootFiles.has("CMakeLists.txt") || rootFiles.has("Makefile")) {
+    return detectCppStack(rootFiles);
   }
 
   return UNKNOWN_STACK;
@@ -99,12 +128,99 @@ function detectPythonStack(rootFiles: Map<string, GitTreeEntry>): DetectedStack 
   return {
     language: "python",
     installCmd: rootFiles.has("requirements.txt") ? "pip install -r requirements.txt" : "pip install .",
-    // Python has no universal build-script convention analogous to `npm run build`.
     buildCmd: `echo "No build step for Python projects — customize if this repo packages artifacts"`,
-    // No scripts-manifest to key differentiated FT/IT commands off — both run
-    // the same generic pytest invocation; customize with -m functional/-m
-    // integration markers once merged.
     functionalTestCmd: "pytest",
     integrationTestCmd: "pytest",
+  };
+}
+
+function detectJavaStack(rootFiles: Map<string, GitTreeEntry>): DetectedStack {
+  const isGradle = rootFiles.has("build.gradle") || rootFiles.has("build.gradle.kts");
+  if (isGradle) {
+    const gradleCmd = rootFiles.has("gradlew") ? "./gradlew" : "gradle";
+    return {
+      language: "java",
+      installCmd: "",
+      buildCmd: `${gradleCmd} build -x test`,
+      functionalTestCmd: `${gradleCmd} test`,
+      integrationTestCmd: `${gradleCmd} test`,
+    };
+  }
+  const mvnCmd = rootFiles.has("mvnw") ? "./mvnw" : "mvn";
+  return {
+    language: "java",
+    installCmd: "",
+    buildCmd: `${mvnCmd} compile`,
+    functionalTestCmd: `${mvnCmd} test`,
+    integrationTestCmd: `${mvnCmd} test`,
+  };
+}
+
+function detectGoStack(): DetectedStack {
+  return {
+    language: "go",
+    installCmd: "go mod download",
+    buildCmd: "go build ./...",
+    functionalTestCmd: "go test ./...",
+    integrationTestCmd: "go test ./...",
+  };
+}
+
+function detectRustStack(): DetectedStack {
+  return {
+    language: "rust",
+    installCmd: "",
+    buildCmd: "cargo build",
+    functionalTestCmd: "cargo test",
+    integrationTestCmd: "cargo test",
+  };
+}
+
+function detectCsharpStack(): DetectedStack {
+  return {
+    language: "csharp",
+    installCmd: "dotnet restore",
+    buildCmd: "dotnet build --no-restore",
+    functionalTestCmd: "dotnet test --no-build",
+    integrationTestCmd: "dotnet test --no-build",
+  };
+}
+
+function detectRubyStack(): DetectedStack {
+  return {
+    language: "ruby",
+    installCmd: "bundle install",
+    buildCmd: `echo "No build step for Ruby projects"`,
+    functionalTestCmd: "bundle exec rake test",
+    integrationTestCmd: "bundle exec rake test",
+  };
+}
+
+function detectPhpStack(): DetectedStack {
+  return {
+    language: "php",
+    installCmd: "composer install --no-interaction",
+    buildCmd: `echo "No build step for PHP projects"`,
+    functionalTestCmd: "./vendor/bin/phpunit",
+    integrationTestCmd: "./vendor/bin/phpunit",
+  };
+}
+
+function detectCppStack(rootFiles: Map<string, GitTreeEntry>): DetectedStack {
+  if (rootFiles.has("CMakeLists.txt")) {
+    return {
+      language: "cpp",
+      installCmd: "",
+      buildCmd: "cmake -B build && cmake --build build",
+      functionalTestCmd: "ctest --test-dir build",
+      integrationTestCmd: "ctest --test-dir build",
+    };
+  }
+  return {
+    language: "cpp",
+    installCmd: "",
+    buildCmd: "make",
+    functionalTestCmd: "make test",
+    integrationTestCmd: "make test",
   };
 }

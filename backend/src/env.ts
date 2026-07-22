@@ -44,6 +44,12 @@ const envSchema = z.object({
   MAX_SCAN_FILE_BYTES: z.coerce.number().int().positive().default(200_000),
   MAX_SCAN_TOTAL_BYTES: z.coerce.number().int().positive().default(20_000_000),
 
+  // Context-assembly budgets for AI fix generation (backend/src/lib/repo-context.ts)
+  MAX_FIX_CONTEXT_FILES: z.coerce.number().int().positive().default(10),
+  MAX_FIX_CONTEXT_BYTES: z.coerce.number().int().positive().default(200_000),
+  MAX_FIX_TEST_FILES: z.coerce.number().int().positive().default(5),
+  MAX_FIX_TREE_DEPTH: z.coerce.number().int().positive().default(3),
+
   // Powers "Connect your GitHub account" (backend/src/lib/github-oauth.ts) —
   // a per-user OAuth grant covering all the user's repos, as an alternative
   // to pasting a PAT per project. Register a GitHub OAuth App at

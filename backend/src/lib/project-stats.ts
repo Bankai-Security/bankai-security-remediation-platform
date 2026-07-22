@@ -11,7 +11,11 @@ export interface ProjectStats {
 
 export async function computeProjectStats(supabase: SupabaseClient, projectId: string, policyDays: SlaPolicyDays): Promise<ProjectStats> {
   const [findingsRes, ticketsRes, scanRes] = await Promise.all([
-    supabase.from("findings").select("severity, bucket, sla_due_date").eq("project_id", projectId),
+    supabase
+      .from("findings")
+      .select("severity, bucket, sla_due_date, source")
+      .eq("project_id", projectId)
+      .neq("source", "jira_import"),
     supabase.from("tickets").select("status").eq("project_id", projectId),
     supabase
       .from("scans")

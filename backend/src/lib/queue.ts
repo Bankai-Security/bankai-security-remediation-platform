@@ -58,6 +58,17 @@ export async function enqueueFixPr(data: FixPrJobData): Promise<void> {
   });
 }
 
+// Used after the CI bootstrap PR merges. The original fix-pr job completed
+// successfully when it marked the ticket pending_setup, so its deduped
+// `fix-pr-${ticketId}` id can still be retained in Redis. A resume must use
+// a fresh BullMQ id or it may silently no-op.
+export async function enqueueFixPrResume(data: FixPrJobData): Promise<void> {
+  await fixPrQueue.add("fix-pr", data, {
+    removeOnComplete: { age: 24 * 60 * 60 },
+    removeOnFail: { age: 7 * 24 * 60 * 60 },
+  });
+}
+
 export interface PipelineJobData {
   ticketId: string;
   projectId: string;

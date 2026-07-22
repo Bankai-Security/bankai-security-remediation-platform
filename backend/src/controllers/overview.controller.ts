@@ -16,7 +16,11 @@ export async function getOverview(req: Request, res: Response): Promise<void> {
   const projectId = req.project!.id;
 
   const [findingsRes, ticketsRes, scansRes, activityRes] = await Promise.all([
-    supabase.from("findings").select("id, severity, service, bucket, sla_due_date").eq("project_id", projectId),
+    supabase
+      .from("findings")
+      .select("id, severity, service, bucket, sla_due_date, source")
+      .eq("project_id", projectId)
+      .neq("source", "jira_import"),
     supabase.from("tickets").select("id, status, created_at, updated_at").eq("project_id", projectId),
     supabase
       .from("scans")
