@@ -1,16 +1,16 @@
 # Build stage
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY backend/package.json backend/package-lock.json* ./
+COPY package.json package-lock.json* ./
 RUN npm ci
-COPY backend/ ./
+COPY . ./
 RUN npm run build
 
 # Runtime stage
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY backend/package.json backend/package-lock.json* ./
+COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 
