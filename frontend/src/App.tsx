@@ -1,5 +1,10 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AccountSettings from './pages/AccountSettings';
+
+// Lazy so framer-motion and the landing sections stay out of the app bundle
+// for authenticated users going straight to /login or /projects.
+const Landing = lazy(() => import('./pages/landing/Landing'));
 import ForgotPassword from './pages/ForgotPassword';
 import InviteAccept from './pages/InviteAccept';
 import Login from './pages/Login';
@@ -25,7 +30,14 @@ import {
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route
+        path="/"
+        element={
+          <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0a0a0b' }} />}>
+            <Landing />
+          </Suspense>
+        }
+      />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<SignUp />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
