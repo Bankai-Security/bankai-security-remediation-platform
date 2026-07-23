@@ -56,14 +56,17 @@ export default function RemediationWorkflow() {
   }
 
   const hasFindings = (overview?.kpis.totalCvits ?? 0) > 0;
-  const hasTickets = (overview?.kpis.openTickets ?? 0) > 0;
+  const jiraConnected = !!project?.jiraConnected;
+  const jiraStepSub = jiraConnected
+    ? `Defects to tickets · project ${project?.jiraKey ?? 'Jira'}`
+    : 'Defects to tickets (Jira sync not connected)';
 
   const steps = [
     { n: 1, to: 'workflow/intake-triage', title: 'Intake & Triage', sub: 'AI repo scan, split by service', done: hasFindings },
     // No separate "defect" grouping stage is modeled — tickets are created
     // directly from accepted findings, so this reuses the intake signal.
     { n: 2, to: 'workflow/defect-generation', title: 'Defect Generation', sub: 'Findings clustered per service', done: hasFindings },
-    { n: 3, to: 'workflow/jira-tickets', title: 'Jira Tickets', sub: 'Defects to tickets (Jira sync not connected)', done: hasTickets },
+    { n: 3, to: 'workflow/jira-tickets', title: 'Jira Tickets', sub: jiraStepSub, done: jiraConnected },
   ];
 
   return (

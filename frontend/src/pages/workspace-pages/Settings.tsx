@@ -259,6 +259,7 @@ export default function Settings() {
     try {
       const conn = await connectJira(project.id, { site, email, apiToken, projectKey: projectKey.toUpperCase() });
       setJira(conn);
+      refreshProject();
       const notes = [
         conn.reconciled > 0 && `Linked ${conn.reconciled} ticket(s) to existing Jira issue(s) already in this project.`,
         conn.imported > 0 && `Imported ${conn.imported} finding(s)/ticket(s) from other Jira issue(s) using this connection.`,
@@ -289,6 +290,7 @@ export default function Settings() {
     try {
       const conn = await disconnectJira(project.id);
       setJira(conn);
+      refreshProject();
     } finally {
       setJiraLoading(false);
     }
