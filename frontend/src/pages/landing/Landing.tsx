@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import LandingNav from './LandingNav';
 import Hero from './Hero';
 import IntegrationStrip from './IntegrationStrip';
@@ -12,13 +11,8 @@ import LandingFooter from './LandingFooter';
 import './Landing.css';
 
 export default function Landing() {
-  useEffect(() => {
-    // The landing page is the only dark surface in the app; scope the page
-    // background to <body> while mounted so overscroll areas match.
-    document.body.classList.add('ldg-body');
-    return () => document.body.classList.remove('ldg-body');
-  }, []);
-
+  // Light theme: the page shares the app's #F4F4F5 body background, so no
+  // body-level override is needed (the old dark theme scoped one here).
   return (
     <div className="landing">
       <div id="landing-top-sentinel" aria-hidden="true" />

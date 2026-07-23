@@ -33,7 +33,7 @@ export default function App() {
       <Route
         path="/"
         element={
-          <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0a0a0b' }} />}>
+          <Suspense fallback={<div style={{ minHeight: '100vh', background: '#f4f4f5' }} />}>
             <Landing />
           </Suspense>
         }

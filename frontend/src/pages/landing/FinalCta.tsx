@@ -16,8 +16,6 @@ export default function FinalCta() {
         whileInView="visible"
         viewport={viewportOnce}
       >
-        {/* Wrapper takes the blur/opacity animation; the img keeps its CSS
-            invert(1) — animating filter on the img itself would overwrite it. */}
         <motion.div variants={enter}>
           <img src={mark} alt="" className="ldg-final-mark" />
         </motion.div>

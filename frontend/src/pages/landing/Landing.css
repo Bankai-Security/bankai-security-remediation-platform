@@ -1,25 +1,27 @@
 /* ============================================================
-   Bankai landing page — dark theme.
+   Bankai landing page — light theme (dark mode deferred until the
+   whole app ships dark mode).
    Every value traces to design-system/bankai/MASTER.md.
-   Scoped under .landing so the (light) app tokens stay untouched.
+   Scoped under .landing so the app tokens stay untouched.
    ============================================================ */
 
 .landing {
-  /* Color tokens (MASTER.md) */
-  --ldg-bg: #0a0a0b;
-  --ldg-surface: #111113;
-  --ldg-surface-alt: #161618;
-  --ldg-border: #26262a;
-  --ldg-border-strong: #3a3a40;
-  --ldg-text: #f4f4f5;
-  --ldg-text-muted: #a1a1aa;
-  --ldg-text-faint: #82828c; /* 4.9:1 on --ldg-bg, keeps AA for small mono annotations */
-  --ldg-blue: #3b82f6;
-  --ldg-blue-dark: #2563eb;
-  --ldg-green: #22c55e;
-  --ldg-red: #ef4444;
-  --ldg-orange: #f97316;
-  --ldg-yellow: #eab308;
+  /* Color tokens (MASTER.md — light, derived from the app palette) */
+  --ldg-bg: #f4f4f5;
+  --ldg-surface: #fcfcfd;
+  --ldg-surface-alt: #efeff2;
+  --ldg-border: #e5e5ea;
+  --ldg-border-strong: #d1d1d6;
+  --ldg-text: #1c1c1e;
+  --ldg-text-muted: #5a5a60; /* 6.2:1 on --ldg-bg */
+  --ldg-text-faint: #6e6e73; /* 4.6:1 on --ldg-bg, keeps AA for small mono annotations */
+  --ldg-code-bg: #ffffff; /* terminal + diff code panels */
+  --ldg-blue: #2563eb;
+  --ldg-blue-dark: #1d4ed8;
+  --ldg-green: #15803d;
+  --ldg-red: #dc2626;
+  --ldg-orange: #c2410c;
+  --ldg-yellow: #a16207;
 
   /* Type */
   --ldg-font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -49,12 +51,8 @@
   overflow-x: clip;
 }
 
-body.ldg-body {
-  background: #0a0a0b;
-}
-
 .landing ::selection {
-  background: rgba(59, 130, 246, 0.35);
+  background: rgba(37, 99, 235, 0.22);
 }
 
 .landing :focus-visible {
@@ -154,7 +152,7 @@ body.ldg-body {
 
 .ldg-btn-secondary:hover {
   border-color: var(--ldg-text-faint);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(28, 28, 30, 0.04);
   color: var(--ldg-text);
 }
 
@@ -184,7 +182,7 @@ body.ldg-body {
 }
 
 .ldg-nav-scrolled {
-  background: rgba(10, 10, 11, 0.94);
+  background: rgba(244, 244, 245, 0.94);
   border-bottom-color: var(--ldg-border);
 }
 
@@ -207,12 +205,10 @@ body.ldg-body {
 .ldg-brand-mark {
   width: 26px;
   height: 21px;
-  filter: invert(1);
 }
 
 .ldg-brand-wordmark {
   height: 11px;
-  filter: invert(1);
 }
 
 .ldg-nav-actions {
@@ -307,10 +303,10 @@ body.ldg-body {
 /* ---------- terminal (signature component) ---------- */
 
 .ldg-terminal {
-  background: var(--ldg-surface-alt);
+  background: var(--ldg-code-bg);
   border: 1px solid var(--ldg-border);
   border-radius: var(--ldg-radius-lg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: 0 12px 32px -16px rgba(28, 28, 30, 0.16);
   overflow: hidden;
 }
 
@@ -529,7 +525,7 @@ body.ldg-body {
 .ldg-diff {
   margin: 0;
   padding: 16px;
-  background: var(--ldg-surface-alt);
+  background: var(--ldg-code-bg);
   border: 1px solid var(--ldg-border);
   border-radius: var(--ldg-radius-md);
   font: 400 12.5px/1.7 var(--ldg-font-mono);
@@ -577,9 +573,9 @@ body.ldg-body {
   color: var(--ldg-text-muted);
 }
 
-.ldg-chip-new { border-color: rgba(59, 130, 246, 0.4); color: var(--ldg-blue); }
-.ldg-chip-changed { border-color: rgba(234, 179, 8, 0.4); color: var(--ldg-yellow); }
-.ldg-chip-resolved { border-color: rgba(34, 197, 94, 0.4); color: var(--ldg-green); }
+.ldg-chip-new { border-color: rgba(37, 99, 235, 0.35); color: var(--ldg-blue); }
+.ldg-chip-changed { border-color: rgba(161, 98, 7, 0.35); color: var(--ldg-yellow); }
+.ldg-chip-resolved { border-color: rgba(21, 128, 61, 0.35); color: var(--ldg-green); }
 
 .ldg-sla,
 .ldg-jira-sync,
@@ -736,7 +732,6 @@ body.ldg-body {
 .ldg-final-mark {
   width: 72px;
   height: 60px;
-  filter: invert(1);
 }
 
 .ldg-final-title {
@@ -762,7 +757,6 @@ body.ldg-body {
 
 .ldg-footer-wordmark {
   height: 12px;
-  filter: invert(1);
   opacity: 0.9;
 }
 

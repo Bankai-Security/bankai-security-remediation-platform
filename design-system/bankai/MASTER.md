@@ -11,6 +11,8 @@
 
 **Project:** Bankai — public landing page (pre-login `/`)
 **Generated:** 2026-07-23 (ui-ux-pro-max base, curated against PRODUCT.md)
+**Updated:** 2026-07-23 — **light theme is the default** (user decision). The dark
+version is deferred until the whole app ships dark mode; these tokens flip then.
 **Category:** Developer / security tool — marketing register (brand)
 **Design Dials:** Variance 7/10 | Motion 4/10 (standard, purposeful) | Density 3/10 (spacious)
 
@@ -19,14 +21,15 @@
 ## Design Direction
 
 **"Terminal-honest precision."** The page reads like the product: pipeline states,
-monospace evidence, ASCII structure as a design material. Dark, near-black neutral
-surfaces (derived from the app's own gray family — *not* slate-blue), with color
-reserved exclusively for *state*: CI pass green, severity red/orange, action blue.
-The Bankai slash mark is the only decorative gesture, used sparingly and large.
+monospace evidence, ASCII structure as a design material. Light, hue-less neutral
+surfaces shared with the product app (iOS-gray family, `#1C1C1E` text on `#F4F4F5`),
+with color reserved exclusively for *state*: CI pass green, severity red/orange,
+action blue. The Bankai slash mark is the only decorative gesture, used sparingly
+and large.
 
-The existing product app is light-mode neutral (iOS-gray family, `#1C1C1E` text on
-`#F4F4F5`). The landing page is its **inversion**: same discipline, same hue-less
-neutrals, flipped values.
+Terminal and diff panels are **white** (`#FFFFFF`) code surfaces on the gray page
+(user decision 2026-07-23) — the border and mono type carry the terminal identity,
+not a dark fill.
 
 ---
 
@@ -34,34 +37,34 @@ neutrals, flipped values.
 
 ### Color Palette
 
-Neutrals are hue-less (derived from the app's `#1C1C1E`/`#F4F4F5` family, inverted).
-State colors are lifted directly from the product app.
+Neutrals are hue-less, shared with the product app's `#1C1C1E`/`#F4F4F5` family.
+State colors are darkened for AA contrast on light surfaces.
 
 | Role | Hex | CSS Variable |
 |------|-----|--------------|
-| Background (page) | `#0A0A0B` | `--color-bg` |
-| Surface (raised) | `#111113` | `--color-surface` |
-| Surface alt (panels, terminal) | `#161618` | `--color-surface-alt` |
-| Border | `#26262A` | `--color-border` |
-| Border strong / hover | `#3A3A40` | `--color-border-strong` |
-| Text (primary) | `#F4F4F5` | `--color-text` |
-| Text muted | `#A1A1AA` | `--color-text-muted` |
-| Text faint | `#82828C` | `--color-text-faint` |
-| Action blue (primary CTA) | `#3B82F6` | `--color-blue` |
-| Action blue hover | `#2563EB` | `--color-blue-dark` |
-| CI green (pass / success) | `#22C55E` | `--color-green` |
-| Severity critical | `#EF4444` | `--color-red` |
-| Severity high | `#F97316` | `--color-orange` |
-| Severity medium | `#EAB308` | `--color-yellow` |
-| Severity low | `#82828C` | `--color-severity-low` |
+| Background (page) | `#F4F4F5` | `--color-bg` |
+| Surface (raised cards, panels) | `#FCFCFD` | `--color-surface` |
+| Surface alt (active tab fill) | `#EFEFF2` | `--color-surface-alt` |
+| Code surface (terminal, diff) | `#FFFFFF` | `--color-code-bg` |
+| Border | `#E5E5EA` | `--color-border` |
+| Border strong / hover | `#D1D1D6` | `--color-border-strong` |
+| Text (primary) | `#1C1C1E` | `--color-text` |
+| Text muted | `#5A5A60` | `--color-text-muted` |
+| Text faint | `#6E6E73` | `--color-text-faint` |
+| Action blue (primary CTA) | `#2563EB` | `--color-blue` |
+| Action blue hover | `#1D4ED8` | `--color-blue-dark` |
+| CI green (pass / success) | `#15803D` | `--color-green` |
+| Severity critical | `#DC2626` | `--color-red` |
+| Severity high | `#C2410C` | `--color-orange` |
+| Severity medium | `#A16207` | `--color-yellow` |
+| Severity low | `#6E6E73` | `--color-severity-low` |
 
 **Rules:**
 - Blue = interactive/CTA only. Green = pass/verified only. Red/orange/yellow = severity/failure only.
 - No gradients on text, ever. No decorative color washes. A faint radial glow behind the
   hero mark (blue at ≤ 6% opacity) is the maximum permitted atmosphere.
-- Never pure `#000000` backgrounds (OLED smear); `#0A0A0B` floor.
-- All text ≥ 4.5:1 contrast on its surface (muted `#A1A1AA` on `#0A0A0B` = 7.9:1 ✓;
-  faint `#82828C` ≈ 4.9:1, safe for small mono annotations; decorative ASCII may
+- All text ≥ 4.5:1 contrast on its surface (muted `#5A5A60` on `#F4F4F5` ≈ 6.2:1 ✓;
+  faint `#6E6E73` ≈ 4.6:1, safe for small mono annotations; decorative ASCII may
   further reduce via opacity since it is aria-hidden).
 
 ### Typography
@@ -76,7 +79,7 @@ State colors are lifted directly from the product app.
   user decision (2026-07-23), overriding the earlier no-Inter constraint. Brand
   continuity between the marketing page and the app wins.
 - The **wordmark/mark SVGs** (`frontend/src/assets/bankai-*.svg`) are the brand type —
-  recolor to `#F4F4F5` via CSS `filter: invert(1)` or inline fill. Never re-set "BANKAI" in a web font.
+  natively black, used as-is on the light page (no filter). Never re-set "BANKAI" in a web font.
 
 **CSS Import:**
 ```css
@@ -120,13 +123,14 @@ Content max-width: `1120px` (`--container`), gutter `24px` mobile / `32px` deskt
 
 ### Shadow / Elevation
 
-Dark theme: elevation = **border + subtle lift**, not drop shadows.
+Light theme: elevation = **border + subtle lift**, matching the app; the white
+terminal panel gets one soft shadow to lift it off the gray page.
 
 | Level | Value | Usage |
 |-------|-------|-------|
 | Raised | `1px solid var(--color-border)` on `--color-surface` | Cards, panels |
 | Hover | border → `--color-border-strong` + `translateY(-2px)` | Interactive cards |
-| Terminal | `inset 0 1px 0 rgba(255,255,255,0.04)` top highlight | Terminal chrome |
+| Terminal | `0 12px 32px -16px rgba(28,28,30,0.16)` lift | Terminal chrome |
 | Glow (hero only) | `radial-gradient` blue ≤ 6% opacity, 600px blur circle | Behind hero mark only |
 
 ---
@@ -148,7 +152,7 @@ Dark theme: elevation = **border + subtle lift**, not drop shadows.
 }
 .btn-primary:hover { background: var(--color-blue-dark); }
 
-/* Secondary — outline on dark */
+/* Secondary — outline on light */
 .btn-secondary {
   background: transparent;
   color: var(--color-text);
@@ -157,7 +161,7 @@ Dark theme: elevation = **border + subtle lift**, not drop shadows.
   border-radius: var(--radius-pill);
   transition: border-color 200ms ease, background 200ms ease;
 }
-.btn-secondary:hover { border-color: var(--color-text-faint); background: rgba(255,255,255,0.03); }
+.btn-secondary:hover { border-color: var(--color-text-faint); background: rgba(28,28,30,0.04); }
 ```
 
 ### Cards / Panels
@@ -180,12 +184,15 @@ Dark theme: elevation = **border + subtle lift**, not drop shadows.
 
 ### Terminal Window (signature component)
 
+Terminal and diff panels are **white** code surfaces (`--color-code-bg`); border,
+titlebar dots, and mono type carry the terminal identity.
+
 ```css
 .terminal {
-  background: var(--color-surface-alt);
+  background: var(--color-code-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  box-shadow: 0 12px 32px -16px rgba(28,28,30,0.16);
   font: 400 13px/1.7 'JetBrains Mono';
 }
 .terminal-titlebar { border-bottom: 1px solid var(--color-border); /* three 10px dots in --color-border-strong, never traffic-light colors */ }
@@ -264,11 +271,11 @@ route to existing `/signup` and `/login` pages.
 - ❌ Glassmorphism / backdrop blur panels
 - ❌ Identical card grids (three same-shaped cards in a row)
 - ❌ Side-stripe borders on cards
-- ❌ Slate-blue "generic dark SaaS" palette — neutrals are hue-less
+- ❌ Slate-blue "generic SaaS" palette — neutrals are hue-less
 - ❌ Neon/matrix hacker clichés, scanlines, skulls, fear language
 - ❌ Emojis as icons (SVG only — Lucide-style strokes, 1.5px)
-- ❌ Light mode default
-- ❌ Inter / Roboto / Arial
+- ❌ Dark page default — light is the default until the whole app ships dark mode (user decision 2026-07-23)
+- ❌ Roboto / Arial / system-font-only stacks (Inter + JetBrains Mono are the faces)
 - ❌ Missing cursor:pointer, invisible focus states, instant state changes
 - ❌ Layout-shifting hovers
 - ❌ Text below 4.5:1 contrast (decorative ASCII exempt, `aria-hidden`)
