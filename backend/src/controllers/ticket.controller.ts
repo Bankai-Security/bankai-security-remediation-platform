@@ -447,7 +447,7 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   if (status === "Done") {
     const { data: current, error: loadError } = await supabase
       .from("tickets")
-      .select("id, github_pr_state, findings ( bucket )")
+      .select("id, github_pr_state, github_branch_name, jira_issue_key, findings ( bucket )")
       .eq("id", req.params.ticketId)
       .eq("project_id", req.project!.id)
       .maybeSingle();
@@ -459,10 +459,16 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
     }
     const findingRel = Array.isArray(current.findings) ? current.findings[0] : current.findings;
     const bucket = (findingRel as { bucket: string } | null | undefined)?.bucket ?? null;
-    if (bucket !== "Resolved" && current.github_pr_state !== "merged") {
+    const resolvedSignal = bucket === "Resolved" || current.github_pr_state === "merged";
+    // A ticket with no remediation branch and no Jira issue is managed entirely
+    // by hand (CSV-only, no integrations) — let the user close it. Tickets under
+    // automated remediation (a branch/PR exists) or Jira tracking still require a
+    // real resolution signal, so an in-flight fix can't be closed out from under it.
+    const purelyManual = current.github_branch_name == null && current.jira_issue_key == null;
+    if (!resolvedSignal && !purelyManual) {
       throw new HttpError(
         422,
-        "A ticket can only be marked Done when its finding is Resolved or its fix pull request has merged.",
+        "A ticket can only be marked Done when its finding is Resolved, its fix pull request has merged, or it has no automated remediation in progress.",
       );
     }
   }

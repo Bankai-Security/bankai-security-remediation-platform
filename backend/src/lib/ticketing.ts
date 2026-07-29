@@ -252,8 +252,8 @@ export function resolveRecommendations(
 // Jira itself, not just Bankai.
 export async function attemptBranchCreation(
   github: { creds: GithubCredentials; defaultBranch: string } | null,
-  jiraCreds: JiraCredentials,
-  issueKey: string,
+  jiraCreds: JiraCredentials | null,
+  issueKey: string | null,
   fingerprint: string,
   cwe: string | null,
   filePath: string | null,
@@ -276,14 +276,18 @@ export async function attemptBranchCreation(
     const name = buildBranchName(fingerprint, cwe, filePath, { projectId, ticketKey });
     const branch = await createBranch(github.creds, { baseBranch: github.defaultBranch, branchName: name });
 
-    const comment = await addBranchComment(jiraCreds, issueKey, branch);
-    if (!comment.ok) {
-      logger.error(
-        { ticketId, issueKey, status: comment.status, message: comment.message },
-        "Could not post the remediation branch link as a Jira comment",
-      );
+    // Jira is optional: a GitHub-only project has no issue to comment on or
+    // transition. Same best-effort pattern as the rest of this module.
+    if (jiraCreds && issueKey) {
+      const comment = await addBranchComment(jiraCreds, issueKey, branch);
+      if (!comment.ok) {
+        logger.error(
+          { ticketId, issueKey, status: comment.status, message: comment.message },
+          "Could not post the remediation branch link as a Jira comment",
+        );
+      }
+      void transitionIssue(jiraCreds, issueKey, "In Progress");
     }
-    void transitionIssue(jiraCreds, issueKey, "In Progress");
 
     return {
       github_branch_name: branch.name,
@@ -380,7 +384,7 @@ export async function createTicketForFinding(
   supabase: SupabaseClient,
   input: CreateTicketForFindingInput,
 ): Promise<{ ticket: ReturnType<typeof toPublicTicket> }> {
-  const { projectId, finding, jira, actor, rpcName, formatContext, slaPolicyDays } = input;
+  const { projectId, finding, jira, github, actor, rpcName, formatContext, slaPolicyDays } = input;
 
   const { data: ticket, error: rpcError } = await supabase.rpc(rpcName, {
     p_project_id: projectId,
@@ -470,7 +474,6 @@ export async function createTicketForFinding(
         .select(SELECT_TICKET)
         .single();
       if (updated) ticketRow = updated as TicketRow;
-      maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source);
     } catch (err) {
       const message = err instanceof JiraApiError ? err.message : "Could not create a Jira issue for this ticket.";
       logger.error({ err, ticketId: ticketRow.id }, "Jira issue creation failed");
@@ -482,6 +485,14 @@ export async function createTicketForFinding(
         .single();
       if (updated) ticketRow = updated as TicketRow;
     }
+  }
+
+  // Kick off the branch → AI fix → PR → CI pipeline whenever GitHub is
+  // connected — independent of Jira. The fix-pr job creates the remediation
+  // branch itself, so a Jira-free project gets the full remediation loop.
+  // Fire-and-forget and already skips jira_import findings.
+  if (github) {
+    maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source);
   }
 
   const publicTicket = toPublicTicket(ticketRow);

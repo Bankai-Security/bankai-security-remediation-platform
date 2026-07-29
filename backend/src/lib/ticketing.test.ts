@@ -4,12 +4,22 @@ import type { JiraIssueSummary } from "./jira.js";
 
 const searchIssuesInProject = vi.fn<(creds: unknown, projectKey: string) => Promise<JiraIssueSummary[]>>();
 const transitionIssue = vi.fn(async () => true);
+const addBranchComment = vi.fn(async () => ({ ok: true as const, status: 200 }));
+const createBranch = vi.fn(async (_creds: unknown, input: { branchName: string }) => ({
+  name: input.branchName,
+  url: `https://github.com/anubhavgpta/repo/tree/${input.branchName}`,
+}));
 const recordActivity = vi.fn(async () => undefined);
 const loggerWarn = vi.fn();
 
 vi.mock("./jira.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./jira.js")>();
-  return { ...actual, searchIssuesInProject, transitionIssue };
+  return { ...actual, searchIssuesInProject, transitionIssue, addBranchComment };
+});
+
+vi.mock("./github.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./github.js")>();
+  return { ...actual, createBranch };
 });
 
 vi.mock("./activity.js", () => ({ recordActivity }));
@@ -23,7 +33,7 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
-const { reconcileJiraTickets, reopenTicket } = await import("./ticketing.js");
+const { reconcileJiraTickets, reopenTicket, attemptBranchCreation } = await import("./ticketing.js");
 
 const PROJECT_ID = "95d9544e-3424-4c53-acf6-1f16496f5666";
 const REPO_A = "anubhavgpta/js-test-repo-2";
@@ -435,5 +445,33 @@ describe("reopenTicket", () => {
       }),
     ).rejects.toMatchObject({ statusCode: 422, message: expect.stringContaining("Done") });
     expect(getUpdatedStatus()).toBeNull();
+  });
+});
+
+describe("attemptBranchCreation without Jira", () => {
+  const github = { creds: { repo: REPO_A, token: "t" }, defaultBranch: "main" };
+
+  beforeEach(() => {
+    createBranch.mockClear();
+    addBranchComment.mockClear();
+    transitionIssue.mockClear();
+  });
+
+  it("creates the branch and skips the Jira comment/transition when jiraCreds is null", async () => {
+    const result = await attemptBranchCreation(github, null, null, FP, "CWE-79", "src/auth.ts", "ticket-1", PROJECT_ID, "T-1");
+
+    expect(result?.github_branch_name).toMatch(/^remediation\//);
+    expect(createBranch).toHaveBeenCalledOnce();
+    expect(addBranchComment).not.toHaveBeenCalled();
+    expect(transitionIssue).not.toHaveBeenCalled();
+  });
+
+  it("posts the Jira comment and transitions the issue when Jira is connected", async () => {
+    const result = await attemptBranchCreation(github, JIRA.creds, "TT2-1", FP, "CWE-79", "src/auth.ts", "ticket-1", PROJECT_ID, "T-1");
+
+    expect(result?.github_branch_name).toMatch(/^remediation\//);
+    expect(createBranch).toHaveBeenCalledOnce();
+    expect(addBranchComment).toHaveBeenCalledOnce();
+    expect(transitionIssue).toHaveBeenCalledWith(JIRA.creds, "TT2-1", "In Progress");
   });
 });

@@ -122,12 +122,13 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
 
   let branch = ticket.github_branch_name;
   if (!branch) {
-    if (!jira || !ticket.jira_issue_key) return;
-
+    // GitHub is already guaranteed connected (early-return above). Jira is
+    // optional — a Jira-free project still gets a remediation branch; the
+    // comment/transition inside attemptBranchCreation are skipped when null.
     const branchColumns = await attemptBranchCreation(
       github,
-      jira.creds,
-      ticket.jira_issue_key,
+      jira?.creds ?? null,
+      ticket.jira_issue_key ?? null,
       finding.fingerprint,
       finding.cwe,
       finding.file_path,
