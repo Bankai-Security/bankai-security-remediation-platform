@@ -47,6 +47,12 @@
   background: var(--color-surface-alt);
   border-radius: 16px;
   padding: 12px;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.tickets-kanban-col--dragover {
+  background: var(--color-fill);
+  box-shadow: inset 0 0 0 2px #2563EB;
 }
 
 .tickets-kanban-col-header {
@@ -74,6 +80,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 52px;
 }
 
 .tickets-kanban-card {
@@ -83,6 +90,18 @@
   padding: 14px 15px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   cursor: pointer;
+}
+
+.tickets-kanban-card[draggable="true"] {
+  cursor: grab;
+}
+
+.tickets-kanban-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.tickets-kanban-card--dragging {
+  opacity: 0.45;
 }
 
 .tickets-kanban-card:hover {

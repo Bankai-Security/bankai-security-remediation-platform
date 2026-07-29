@@ -5,7 +5,7 @@ import GithubIcon from '../../components/GithubIcon';
 import JiraIcon from '../../components/JiraIcon';
 import CiStatusCircle from '../../components/CiStatusCircle';
 import RetryCiButton from '../../components/RetryCiButton';
-import { ApiError, listTickets, retryTicketFix, retryTicketPipeline, syncTicketsToJira, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
+import { ApiError, listTickets, retryTicketFix, retryTicketPipeline, syncTicketsToJira, updateTicketStatus, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
 import { canEdit } from '../../lib/roles';
 import { useProject } from '../../lib/project-context';
 import './Tickets.css';
@@ -63,6 +63,10 @@ export default function Tickets() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryingFixId, setRetryingFixId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<TicketStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const editable = canEdit(project?.myRole);
 
   useEffect(() => {
     if (!project) return;
@@ -136,6 +140,30 @@ export default function Tickets() {
     }
   };
 
+  // Native HTML5 drag-and-drop between Kanban columns — no dnd dependency.
+  // Optimistically moves the card, then reconciles with the server's ticket
+  // (or reverts on error, e.g. a 422 when trying to close a ticket that still
+  // has an in-flight automated fix).
+  const handleDropOnColumn = async (status: TicketStatus) => {
+    const id = draggingId;
+    setDragOverCol(null);
+    setDraggingId(null);
+    if (!id || !project || !editable) return;
+    const moved = tickets?.find((t) => t.id === id);
+    if (!moved || moved.status === status) return;
+
+    const snapshot = tickets;
+    setStatusError(null);
+    setTickets((ts) => ts?.map((t) => (t.id === id ? { ...t, status } : t)) ?? ts);
+    try {
+      const { ticket } = await updateTicketStatus(project.id, id, status);
+      setTickets((ts) => ts?.map((t) => (t.id === id ? ticket : t)) ?? ts);
+    } catch (err) {
+      setTickets(snapshot ?? null);
+      setStatusError(err instanceof ApiError ? err.message : 'Could not update the ticket status.');
+    }
+  };
+
   const filtered = useMemo(
     () => (tickets ?? []).filter((t) => (fService === 'all' || t.service === fService) && (fSeverity === 'all' || t.severity === fSeverity)),
     [tickets, fService, fSeverity],
@@ -186,6 +214,7 @@ export default function Tickets() {
           </div>
         </div>
         <div className="tickets-toolbar-right">
+          {statusError && <span style={{ fontSize: 12, color: '#DC2626' }}>{statusError}</span>}
           {syncMessage && <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{syncMessage}</span>}
           <button
             className={`ws-btn ${project?.jiraConnected && canEdit(project?.myRole) ? 'ws-btn-secondary' : 'ws-btn-disabled'}`}
@@ -218,7 +247,20 @@ export default function Tickets() {
           {view === 'kanban' && (
             <div className="tickets-kanban">
               {columns.map((col) => (
-                <div key={col.name} className="tickets-kanban-col">
+                <div
+                  key={col.name}
+                  className={`tickets-kanban-col${dragOverCol === col.name ? ' tickets-kanban-col--dragover' : ''}`}
+                  onDragOver={(e) => {
+                    if (!draggingId || !editable) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (dragOverCol !== col.name) setDragOverCol(col.name);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    void handleDropOnColumn(col.name);
+                  }}
+                >
                   <div className="tickets-kanban-col-header">
                     <span className="ws-dot" style={{ background: col.dot }} />
                     <span className="tickets-kanban-col-name">{col.name}</span>
@@ -226,7 +268,22 @@ export default function Tickets() {
                   </div>
                   <div className="tickets-kanban-cards">
                     {col.cards.map((t) => (
-                      <div key={t.id} className="tickets-kanban-card">
+                      <div
+                        key={t.id}
+                        className={`tickets-kanban-card${draggingId === t.id ? ' tickets-kanban-card--dragging' : ''}`}
+                        draggable={editable}
+                        onDragStart={(e) => {
+                          setDraggingId(t.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          // Required for Firefox to actually start the drag.
+                          e.dataTransfer.setData('text/plain', t.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingId(null);
+                          setDragOverCol(null);
+                        }}
+                        title={editable ? 'Drag to change status' : undefined}
+                      >
                         <div className="tickets-kanban-card-top">
                           <span className="ws-mono tickets-kanban-card-key">{t.jiraIssueKey ?? t.key}</span>
                           <span className={sevBadgeClass(t.severity)} style={{ padding: '2.5px 9px', fontSize: 10.5 }}>{t.severity}</span>
