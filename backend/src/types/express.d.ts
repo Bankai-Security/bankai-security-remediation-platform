@@ -15,6 +15,18 @@ declare global {
         slaPolicyDays: SlaPolicyDays;
         myRole: ProjectRole;
       };
+      org?: {
+        id: string;
+        name: string;
+        ownerId: string;
+        myRole: ProjectRole;
+      };
+      team?: {
+        id: string;
+        name: string;
+        orgId: string;
+        myRole: ProjectRole;
+      };
     }
   }
 }

@@ -14,6 +14,7 @@ import {
   type GithubAccountStatus,
 } from '../lib/api';
 import { getAvatarStyle, getInitials, useCurrentUser } from '../lib/auth-context';
+import { useOrgs } from '../lib/org-context';
 import './NewProject.css';
 
 const SERVICE_SUGGESTIONS = [
@@ -32,9 +33,10 @@ const SERVICE_SUGGESTIONS = [
 export default function NewProject() {
   const navigate = useNavigate();
   const { user } = useCurrentUser();
+  const { rollup } = useOrgs();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [teamName, setTeamName] = useState('');
+  const [teamId, setTeamId] = useState('');
   const [services, setServices] = useState<string[]>([]);
   const [newService, setNewService] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +117,7 @@ export default function NewProject() {
         const { project } = await createProject({
           name,
           description: description.trim() || undefined,
-          teamName: teamName.trim() || undefined,
+          teamId: teamId || undefined,
           services,
         });
         projectId = project.id;
@@ -232,19 +234,32 @@ export default function NewProject() {
                 />
               </div>
               <div className="new-project-field">
-                <label htmlFor="project-team-name">
-                  Team name <span className="new-project-optional">(optional)</span>
+                <label htmlFor="project-team">
+                  Team <span className="new-project-optional">(optional)</span>
                 </label>
-                <input
-                  id="project-team-name"
-                  type="text"
-                  placeholder="e.g. Identity Platform"
-                  className="new-project-input"
-                  value={teamName}
-                  onChange={(e) => setTeamName(e.target.value)}
-                  disabled={!!createdProjectId}
-                  maxLength={120}
-                />
+                {rollup && rollup.teams.length > 0 ? (
+                  <>
+                    <select
+                      id="project-team"
+                      className="new-project-input"
+                      value={teamId}
+                      onChange={(e) => setTeamId(e.target.value)}
+                      disabled={!!createdProjectId}
+                    >
+                      <option value="">No team</option>
+                      {rollup.teams.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    <div className="new-project-section-hint" style={{ marginTop: 6 }}>
+                      Groups this project under <strong>{rollup.name}</strong> in the org rollup. You can change this later in Settings.
+                    </div>
+                  </>
+                ) : (
+                  <div className="new-project-section-hint">
+                    No teams available yet — create one from your organization, then assign this project in Settings.
+                  </div>
+                )}
               </div>
             </div>
           </section>

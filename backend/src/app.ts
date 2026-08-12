@@ -9,7 +9,10 @@ import { errorHandler } from "./middleware/error-handler.js";
 import { originCheck } from "./middleware/origin-check.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { inviteRouter } from "./routes/invite.routes.js";
+import { orgInviteRouter } from "./routes/org-invite.routes.js";
+import { orgRouter } from "./routes/org.routes.js";
 import { projectRouter } from "./routes/project.routes.js";
+import { teamInviteRouter } from "./routes/team-invite.routes.js";
 import { webhookRouter } from "./routes/webhook.routes.js";
 
 export function createApp(): Express {
@@ -51,7 +54,10 @@ export function createApp(): Express {
 
   app.use("/api/auth", authRouter);
   app.use("/api/projects", projectRouter);
+  app.use("/api/orgs", orgRouter);
   app.use("/api/invites", inviteRouter);
+  app.use("/api/org-invites", orgInviteRouter);
+  app.use("/api/team-invites", teamInviteRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });
