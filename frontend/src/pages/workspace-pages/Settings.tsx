@@ -21,6 +21,7 @@ import {
   revokeInvite,
   scanGithubRepo,
   updateMemberRole,
+  listTeams,
   updateProjectSettings,
   updateSlaPolicy,
   type GithubAccountStatus,
@@ -32,9 +33,11 @@ import {
   type ProjectMember,
   type Scan,
   type SlaPolicyDays,
+  type TeamSummary,
 } from '../../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../../lib/auth-context';
 import { canManageProject } from '../../lib/roles';
+import { useOrgs } from '../../lib/org-context';
 import { useProject } from '../../lib/project-context';
 import './Settings.css';
 
@@ -78,6 +81,7 @@ function formatConnectedAt(iso: string): string {
 
 export default function Settings() {
   const { project, refresh: refreshProject } = useProject();
+  const { selectedOrgId } = useOrgs();
   const { user } = useCurrentUser();
   const navigate = useNavigate();
   const [notifs, setNotifs] = useState<Record<string, boolean>>(
@@ -106,7 +110,8 @@ export default function Settings() {
   const [slaError, setSlaError] = useState<string | null>(null);
 
   const [editingTeam, setEditingTeam] = useState(false);
-  const [teamDraft, setTeamDraft] = useState('');
+  const [teamDraftId, setTeamDraftId] = useState('');
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamSaving, setTeamSaving] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
 
@@ -393,14 +398,24 @@ export default function Settings() {
 
   const startEditingTeam = () => {
     if (!project) return;
-    setTeamDraft(project.teamName ?? '');
+    setTeamDraftId(project.teamId ?? '');
     setTeamError(null);
     setEditingTeam(true);
+    // Load the teams to choose from. A project already in a team knows its org;
+    // an unassigned project falls back to the org selected in the switcher.
+    const orgId = project.orgId ?? selectedOrgId;
+    if (orgId) {
+      listTeams(orgId)
+        .then(({ teams: t }) => setTeams(t))
+        .catch(() => setTeams([]));
+    } else {
+      setTeams([]);
+    }
   };
 
   const cancelEditingTeam = () => {
     setEditingTeam(false);
-    setTeamDraft('');
+    setTeamDraftId('');
     setTeamError(null);
   };
 
@@ -410,11 +425,11 @@ export default function Settings() {
     setTeamSaving(true);
     setTeamError(null);
     try {
-      await updateProjectSettings(project.id, { teamName: teamDraft.trim() });
+      await updateProjectSettings(project.id, { teamId: teamDraftId || null });
       refreshProject();
       setEditingTeam(false);
     } catch (err) {
-      setTeamError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Could not save the team name.');
+      setTeamError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Could not save the project team.');
     } finally {
       setTeamSaving(false);
     }
@@ -455,23 +470,31 @@ export default function Settings() {
 
       <section className="ws-card settings-section">
         <div className="ws-card-eyebrow">Project</div>
-        <h2 className="settings-h2" style={{ marginBottom: 6 }}>General</h2>
-        <div className="ws-card-hint">The team name shown on Jira tickets Bankai creates from this project&rsquo;s findings.</div>
+        <h2 className="settings-h2" style={{ marginBottom: 6 }}>Team</h2>
+        <div className="ws-card-hint">The team this project belongs to. Determines how it rolls up in the organization view.</div>
 
         {editingTeam ? (
           <form onSubmit={handleSaveTeam}>
             {teamError && <div className="settings-jira-error" role="alert">{teamError}</div>}
             <div className="settings-jira-field" style={{ marginTop: 12 }}>
-              <label htmlFor="team-name" className="settings-field-label">Team name</label>
-              <input
-                id="team-name"
-                type="text"
-                className="settings-jira-input"
-                value={teamDraft}
-                onChange={(e) => setTeamDraft(e.target.value)}
-                maxLength={120}
-                placeholder="e.g. Identity Platform"
-              />
+              <label htmlFor="team-select" className="settings-field-label">Team</label>
+              {teams.length > 0 ? (
+                <select
+                  id="team-select"
+                  className="settings-jira-input"
+                  value={teamDraftId}
+                  onChange={(e) => setTeamDraftId(e.target.value)}
+                >
+                  <option value="">No team</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="ws-card-hint" style={{ marginBottom: 0 }}>
+                  No teams available in this organization yet — create one from the organization settings first.
+                </div>
+              )}
             </div>
             <div className="settings-jira-actions" style={{ marginTop: 16 }}>
               <button type="submit" className="ws-btn ws-btn-primary" disabled={teamSaving}>
@@ -485,17 +508,17 @@ export default function Settings() {
         ) : (
           <>
             <div style={{ marginTop: 12 }}>
-              <div className="settings-field-label">Team name</div>
-              <div className="settings-field-value">{project?.teamName || '—'}</div>
+              <div className="settings-field-label">Team</div>
+              <div className="settings-field-value">{project?.teamHierarchyName || '—'}</div>
             </div>
             <button
               className="ws-btn ws-btn-secondary"
               style={{ marginTop: 16 }}
               onClick={startEditingTeam}
               disabled={!project || !canManageProject(project.myRole)}
-              title={project && !canManageProject(project.myRole) ? 'Only admins can edit the team name.' : undefined}
+              title={project && !canManageProject(project.myRole) ? 'Only admins can change the team.' : undefined}
             >
-              Edit team name
+              Change team
             </button>
           </>
         )}

@@ -1,3 +1,15 @@
+.projects-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.projects-topbar-sep {
+  color: var(--color-text-faint);
+  font-size: 18px;
+  font-weight: 400;
+}
+
 .projects-empty {
   background: var(--color-surface);
   border: 1px solid var(--color-border);

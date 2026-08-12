@@ -1,46 +1,94 @@
 import { useEffect, useState } from 'react';
-import { acceptInvite, declineInvite, listMyInvites, type MyInvite } from '../lib/api';
+import {
+  acceptInvite,
+  acceptOrgInvite,
+  acceptTeamInvite,
+  declineInvite,
+  declineOrgInvite,
+  declineTeamInvite,
+  listMyInvites,
+  listMyOrgInvites,
+  listMyTeamInvites,
+  type MemberRole,
+} from '../lib/api';
 import './InviteBell.css';
 
+// Unified pending-invite item across the three invite kinds so one dropdown can
+// show them all.
+interface UnifiedInvite {
+  kind: 'project' | 'org' | 'team';
+  id: string;
+  token: string;
+  label: string; // project / org / team name
+  context: string | null; // e.g. the org a team belongs to
+  role: Exclude<MemberRole, 'owner'>;
+}
+
 export default function InviteBell() {
-  const [invites, setInvites] = useState<MyInvite[]>([]);
+  const [invites, setInvites] = useState<UnifiedInvite[]>([]);
   const [open, setOpen] = useState(false);
-  const [busyToken, setBusyToken] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = () => {
-    listMyInvites()
-      .then(({ invites: fetched }) => setInvites(fetched))
-      .catch(() => {
-        /* best-effort — an invite list failure shouldn't break the page it's mounted on */
-      });
+    // Each list is best-effort — one failing (or one endpoint being absent for
+    // a logged-out probe) shouldn't blank out the others or break the page.
+    Promise.allSettled([listMyInvites(), listMyOrgInvites(), listMyTeamInvites()]).then((results) => {
+      const merged: UnifiedInvite[] = [];
+      if (results[0].status === 'fulfilled') {
+        for (const i of results[0].value.invites) {
+          merged.push({ kind: 'project', id: i.id, token: i.token, label: i.projectName, context: null, role: i.role });
+        }
+      }
+      if (results[1].status === 'fulfilled') {
+        for (const i of results[1].value.invites) {
+          merged.push({ kind: 'org', id: i.id, token: i.token, label: i.orgName, context: null, role: i.role });
+        }
+      }
+      if (results[2].status === 'fulfilled') {
+        for (const i of results[2].value.invites) {
+          merged.push({ kind: 'team', id: i.id, token: i.token, label: i.teamName, context: i.orgName, role: i.role });
+        }
+      }
+      setInvites(merged);
+    });
   };
 
   useEffect(() => {
     refresh();
   }, []);
 
-  const handleAccept = async (invite: MyInvite) => {
-    setBusyToken(invite.token);
+  const handleAccept = async (invite: UnifiedInvite) => {
+    setBusyId(invite.id);
     try {
-      const { projectId } = await acceptInvite(invite.token);
+      if (invite.kind === 'project') {
+        const { projectId } = await acceptInvite(invite.token);
+        window.location.href = `/workspace/${projectId}/overview`;
+      } else if (invite.kind === 'org') {
+        const { orgId } = await acceptOrgInvite(invite.token);
+        window.location.href = `/orgs/${orgId}`;
+      } else {
+        const { orgId } = await acceptTeamInvite(invite.token);
+        window.location.href = orgId ? `/orgs/${orgId}` : '/projects';
+      }
       setInvites((prev) => prev.filter((i) => i.id !== invite.id));
-      window.location.href = `/workspace/${projectId}/overview`;
     } catch {
       refresh();
     } finally {
-      setBusyToken(null);
+      setBusyId(null);
     }
   };
 
-  const handleDecline = async (invite: MyInvite) => {
-    setBusyToken(invite.token);
+  const handleDecline = async (invite: UnifiedInvite) => {
+    setBusyId(invite.id);
     try {
-      await declineInvite(invite.token);
+      if (invite.kind === 'project') await declineInvite(invite.token);
+      else if (invite.kind === 'org') await declineOrgInvite(invite.token);
+      else await declineTeamInvite(invite.token);
       setInvites((prev) => prev.filter((i) => i.id !== invite.id));
     } catch {
       refresh();
     } finally {
-      setBusyToken(null);
+      setBusyId(null);
     }
   };
 
@@ -63,22 +111,27 @@ export default function InviteBell() {
               <div className="invite-bell-empty">No pending invites.</div>
             ) : (
               invites.map((invite) => (
-                <div key={invite.id} className="invite-bell-item">
+                <div key={`${invite.kind}-${invite.id}`} className="invite-bell-item">
                   <div className="invite-bell-item-text">
-                    <span className="invite-bell-item-project">{invite.projectName}</span>
-                    <span className="invite-bell-item-role">Invited as {invite.role}</span>
+                    <span className="invite-bell-item-project">
+                      {invite.label}
+                      {invite.context && <span className="invite-bell-item-context"> · {invite.context}</span>}
+                    </span>
+                    <span className="invite-bell-item-role">
+                      {invite.kind === 'team' ? 'Team' : invite.kind === 'org' ? 'Organization' : 'Project'} · invited as {invite.role}
+                    </span>
                   </div>
                   <div className="invite-bell-item-actions">
                     <button
                       className="invite-bell-accept"
-                      disabled={busyToken === invite.token}
+                      disabled={busyId === invite.id}
                       onClick={() => void handleAccept(invite)}
                     >
                       Accept
                     </button>
                     <button
                       className="invite-bell-decline"
-                      disabled={busyToken === invite.token}
+                      disabled={busyId === invite.id}
                       onClick={() => void handleDecline(invite)}
                     >
                       Decline

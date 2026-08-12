@@ -1,0 +1,21 @@
+.org-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.org-topbar-sep {
+  color: var(--color-text-faint);
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.org-topbar-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.org-topbar-link:hover {
+  color: var(--color-text);
+}

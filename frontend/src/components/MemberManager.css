@@ -1,0 +1,203 @@
+.mm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.mm-count {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.mm-invite-toggle {
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.mm-invite-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.mm-invite-form {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.mm-input {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+  min-width: 0;
+}
+
+.mm-input:focus-visible {
+  outline: 2px solid var(--color-blue);
+  outline-offset: 1px;
+}
+
+.mm-invite-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.mm-invite-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mm-invite-url {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+}
+
+.mm-invite-done {
+  margin-top: 12px;
+}
+
+.mm-error {
+  font-size: 12.5px;
+  color: #b91c1c;
+  background: var(--color-red-bg);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.mm-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.mm-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.mm-row:last-child {
+  border-bottom: none;
+}
+
+.mm-row--invite {
+  grid-template-columns: 1fr auto auto auto;
+}
+
+.mm-row-id {
+  min-width: 0;
+}
+
+.mm-row-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-row-email {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-row-role-select {
+  min-width: 104px;
+}
+
+.mm-remove {
+  border: none;
+  background: transparent;
+  color: #b91c1c;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+}
+
+.mm-remove:hover:not(:disabled) {
+  background: var(--color-red-bg);
+}
+
+.mm-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.mm-remove-spacer {
+  display: inline-block;
+}
+
+.mm-link-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-blue);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+}
+
+.mm-link-btn:hover {
+  background: var(--color-bg);
+}
+
+.mm-invites {
+  margin-top: 22px;
+}
+
+.mm-invites-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+/* Role badges — outline style, colored per role (design tokens only). */
+.mm-role--owner { border: 1.5px solid var(--color-border-strong); color: var(--color-text-subtle); background: transparent; text-transform: capitalize; }
+.mm-role--admin { border: 1.5px solid #93C5FD; color: #1D4ED8; background: transparent; text-transform: capitalize; }
+.mm-role--editor { border: 1.5px solid #86EFAC; color: #15803D; background: transparent; text-transform: capitalize; }
+.mm-role--viewer { border: 1.5px solid var(--color-border-strong); color: var(--color-text-muted); background: transparent; text-transform: capitalize; }
+
+@media (max-width: 640px) {
+  .mm-invite-form {
+    grid-template-columns: 1fr;
+  }
+}

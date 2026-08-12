@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import InviteBell from '../components/InviteBell';
+import OrgSwitcher from '../components/OrgSwitcher';
 import { listProjects, logout, type Project } from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
 import './TopBar.css';
@@ -53,10 +54,14 @@ export default function Projects() {
   return (
     <div className="topbar-page">
       <div className="topbar">
-        <Link to="/projects" className="topbar-brand">
-          <img src={bankaiMark} alt="Bankai" className="topbar-brand-mark" />
-          <img src={bankaiWordmark} alt="BANKAI" className="topbar-brand-wordmark" />
-        </Link>
+        <div className="projects-topbar-left">
+          <Link to="/projects" className="topbar-brand">
+            <img src={bankaiMark} alt="Bankai" className="topbar-brand-mark" />
+            <img src={bankaiWordmark} alt="BANKAI" className="topbar-brand-wordmark" />
+          </Link>
+          <span className="projects-topbar-sep" aria-hidden="true">/</span>
+          <OrgSwitcher />
+        </div>
         <div className="topbar-user">
           <InviteBell />
           <div className="avatar-ring" style={getAvatarStyle(user)}>{getInitials(user)}</div>

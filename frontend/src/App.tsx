@@ -9,12 +9,18 @@ const Terms = lazy(() => import('./pages/legal/Terms'));
 const Privacy = lazy(() => import('./pages/legal/Privacy'));
 import ForgotPassword from './pages/ForgotPassword';
 import InviteAccept from './pages/InviteAccept';
+import OrgInviteAccept from './pages/OrgInviteAccept';
+import TeamInviteAccept from './pages/TeamInviteAccept';
 import Login from './pages/Login';
 import ResetPassword from './pages/ResetPassword';
 import SignUp from './pages/SignUp';
 import Onboarding from './pages/Onboarding';
 import Projects from './pages/Projects';
 import NewProject from './pages/NewProject';
+import CreateOrg from './pages/CreateOrg';
+import OrgRollup from './pages/OrgRollup';
+import OrgSettings from './pages/OrgSettings';
+import TeamSettings from './pages/TeamSettings';
 import Workspace from './pages/Workspace';
 import {
   RemediationWorkflow,
@@ -63,8 +69,14 @@ export default function App() {
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/projects" element={<Projects />} />
       <Route path="/projects/new" element={<NewProject />} />
+      <Route path="/orgs/new" element={<CreateOrg />} />
+      <Route path="/orgs/:orgId" element={<OrgRollup />} />
+      <Route path="/orgs/:orgId/settings" element={<OrgSettings />} />
+      <Route path="/orgs/:orgId/teams/:teamId" element={<TeamSettings />} />
       <Route path="/settings" element={<AccountSettings />} />
       <Route path="/invites/:token" element={<InviteAccept />} />
+      <Route path="/org-invites/:token" element={<OrgInviteAccept />} />
+      <Route path="/team-invites/:token" element={<TeamInviteAccept />} />
 
       <Route path="/workspace/:projectId" element={<Workspace />}>
         <Route index element={<Navigate to="workflow" replace />} />

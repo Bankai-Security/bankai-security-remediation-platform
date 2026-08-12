@@ -120,7 +120,12 @@ export interface Project {
   id: string;
   name: string;
   description: string | null;
+  // Legacy free-text label (deprecated). The hierarchy placement is teamId /
+  // teamHierarchyName / orgId below.
   teamName: string | null;
+  teamId: string | null;
+  teamHierarchyName: string | null;
+  orgId: string | null;
   status: "not_connected" | "active";
   services: string[];
   jiraSite: string | null;
@@ -144,7 +149,7 @@ export function getProject(id: string): Promise<{ project: Project }> {
 export function createProject(input: {
   name: string;
   description?: string;
-  teamName?: string;
+  teamId?: string;
   services?: string[];
 }): Promise<{ project: Project }> {
   return apiFetch("/projects", { method: "POST", body: JSON.stringify(input) });
@@ -154,7 +159,9 @@ export function deleteProject(id: string, confirmName: string): Promise<void> {
   return apiFetch(`/projects/${id}`, { method: "DELETE", body: JSON.stringify({ confirmName }) });
 }
 
-export function updateProjectSettings(projectId: string, input: { teamName: string }): Promise<{ teamName: string | null }> {
+// Assigns the project to a team in the hierarchy (null unassigns). Replaces the
+// old free-text team-name setter.
+export function updateProjectSettings(projectId: string, input: { teamId: string | null }): Promise<{ teamId: string | null }> {
   return apiFetch(`/projects/${projectId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
 
@@ -588,4 +595,241 @@ export function acceptInvite(token: string): Promise<{ projectId: string }> {
 
 export function declineInvite(token: string): Promise<void> {
   return apiFetch(`/invites/${token}/decline`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------------
+// Organizations (Org → Team → Project hierarchy)
+// ---------------------------------------------------------------------
+
+export interface OrgSummary {
+  id: string;
+  name: string;
+  myRole: MemberRole;
+  createdAt: string;
+}
+
+export interface OrgProjectRef {
+  id: string;
+  name: string;
+  status: "not_connected" | "active";
+}
+
+export interface OrgTeam {
+  id: string;
+  name: string;
+  projects: OrgProjectRef[];
+}
+
+// The teams/projects rollup the API returns is already RLS-scoped to what the
+// caller can see — an org member inherits at least viewer on every project in
+// the org, a narrower grant returns a narrower tree. The frontend never
+// re-filters it; it just renders whatever came back.
+export interface OrgDetail extends OrgSummary {
+  teams: OrgTeam[];
+}
+
+export function listOrgs(): Promise<{ orgs: OrgSummary[] }> {
+  return apiFetch("/orgs", { method: "GET" });
+}
+
+export function getOrg(id: string): Promise<{ org: OrgDetail }> {
+  return apiFetch(`/orgs/${id}`, { method: "GET" });
+}
+
+export function createOrg(input: { name: string }): Promise<{ org: OrgDetail }> {
+  return apiFetch("/orgs", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateOrg(orgId: string, input: { name: string }): Promise<{ org: { id: string; name: string } }> {
+  return apiFetch(`/orgs/${orgId}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function deleteOrg(orgId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}`, { method: "DELETE" });
+}
+
+// --- Org members + invites (mirror the project members API) ---
+
+export interface OrgMember {
+  id: string;
+  userId: string;
+  name: string;
+  email: string | null;
+  role: MemberRole;
+}
+
+export interface PendingOrgInvite {
+  id: string;
+  token: string;
+  email: string;
+  role: Exclude<MemberRole, "owner">;
+  createdAt: string;
+}
+
+export function listOrgMembers(orgId: string): Promise<{ members: OrgMember[]; invites: PendingOrgInvite[] }> {
+  return apiFetch(`/orgs/${orgId}/members`, { method: "GET" });
+}
+
+export function inviteOrgMember(
+  orgId: string,
+  input: { email: string; role: Exclude<MemberRole, "owner"> },
+): Promise<{ invite: PendingOrgInvite; inviteUrl: string }> {
+  return apiFetch(`/orgs/${orgId}/members/invite`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateOrgMemberRole(orgId: string, memberId: string, role: Exclude<MemberRole, "owner">): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/members/${memberId}`, { method: "PATCH", body: JSON.stringify({ role }) });
+}
+
+export function removeOrgMember(orgId: string, memberId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/members/${memberId}`, { method: "DELETE" });
+}
+
+export function revokeOrgInvite(orgId: string, inviteId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+// --- Org invite acceptance (mirror /invites) ---
+
+export interface MyOrgInvite {
+  id: string;
+  token: string;
+  orgId: string | null;
+  orgName: string;
+  role: Exclude<MemberRole, "owner">;
+  createdAt: string;
+}
+
+export interface OrgInviteDetails {
+  id: string;
+  orgId: string | null;
+  orgName: string;
+  role: Exclude<MemberRole, "owner">;
+  status: string;
+  createdAt: string;
+}
+
+export function listMyOrgInvites(): Promise<{ invites: MyOrgInvite[] }> {
+  return apiFetch("/org-invites", { method: "GET" });
+}
+
+export function getOrgInviteByToken(token: string): Promise<OrgInviteDetails> {
+  return apiFetch(`/org-invites/${token}`, { method: "GET" });
+}
+
+export function acceptOrgInvite(token: string): Promise<{ orgId: string }> {
+  return apiFetch(`/org-invites/${token}/accept`, { method: "POST" });
+}
+
+export function declineOrgInvite(token: string): Promise<void> {
+  return apiFetch(`/org-invites/${token}/decline`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------------
+// Teams (within an org)
+// ---------------------------------------------------------------------
+
+export interface TeamSummary {
+  id: string;
+  name: string;
+  myRole: MemberRole;
+  createdAt: string;
+}
+
+export function listTeams(orgId: string): Promise<{ teams: TeamSummary[] }> {
+  return apiFetch(`/orgs/${orgId}/teams`, { method: "GET" });
+}
+
+export function createTeam(orgId: string, input: { name: string }): Promise<{ team: TeamSummary }> {
+  return apiFetch(`/orgs/${orgId}/teams`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateTeam(orgId: string, teamId: string, input: { name: string }): Promise<{ team: { id: string; name: string } }> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function deleteTeam(orgId: string, teamId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE" });
+}
+
+// --- Team members + invites ---
+
+export interface TeamMember {
+  id: string;
+  userId: string;
+  name: string;
+  email: string | null;
+  role: Exclude<MemberRole, "owner">;
+}
+
+export interface PendingTeamInvite {
+  id: string;
+  token: string;
+  email: string;
+  role: Exclude<MemberRole, "owner">;
+  createdAt: string;
+}
+
+export function listTeamMembers(orgId: string, teamId: string): Promise<{ members: TeamMember[]; invites: PendingTeamInvite[] }> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members`, { method: "GET" });
+}
+
+export function inviteTeamMember(
+  orgId: string,
+  teamId: string,
+  input: { email: string; role: Exclude<MemberRole, "owner"> },
+): Promise<{ invite: PendingTeamInvite; inviteUrl: string }> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/invite`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateTeamMemberRole(orgId: string, teamId: string, memberId: string, role: Exclude<MemberRole, "owner">): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/${memberId}`, { method: "PATCH", body: JSON.stringify({ role }) });
+}
+
+export function removeTeamMember(orgId: string, teamId: string, memberId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/${memberId}`, { method: "DELETE" });
+}
+
+export function revokeTeamInvite(orgId: string, teamId: string, inviteId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+// --- Team invite acceptance (mirror /invites) ---
+
+export interface MyTeamInvite {
+  id: string;
+  token: string;
+  teamId: string | null;
+  teamName: string;
+  orgId: string | null;
+  orgName: string;
+  role: Exclude<MemberRole, "owner">;
+  createdAt: string;
+}
+
+export interface TeamInviteDetails {
+  id: string;
+  teamId: string | null;
+  teamName: string;
+  orgId: string | null;
+  orgName: string;
+  role: Exclude<MemberRole, "owner">;
+  status: string;
+  createdAt: string;
+}
+
+export function listMyTeamInvites(): Promise<{ invites: MyTeamInvite[] }> {
+  return apiFetch("/team-invites", { method: "GET" });
+}
+
+export function getTeamInviteByToken(token: string): Promise<TeamInviteDetails> {
+  return apiFetch(`/team-invites/${token}`, { method: "GET" });
+}
+
+export function acceptTeamInvite(token: string): Promise<{ teamId: string; orgId: string | null }> {
+  return apiFetch(`/team-invites/${token}/accept`, { method: "POST" });
+}
+
+export function declineTeamInvite(token: string): Promise<void> {
+  return apiFetch(`/team-invites/${token}/decline`, { method: "POST" });
 }
