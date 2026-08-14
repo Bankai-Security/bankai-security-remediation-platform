@@ -8,10 +8,13 @@
 -- of other people is unchanged (the existing owner/admin DELETE policies).
 -- Note the org owner has no org_members row at all, so they can't "leave" —
 -- they must transfer ownership first, which the API surfaces as a 422.
+-- Dropped first so this file can be re-run (CREATE POLICY has no IF NOT EXISTS).
+drop policy if exists "Members can leave an organization" on public.org_members;
 create policy "Members can leave an organization"
   on public.org_members for delete
   using (user_id = auth.uid());
 
+drop policy if exists "Members can leave a team" on public.team_members;
 create policy "Members can leave a team"
   on public.team_members for delete
   using (user_id = auth.uid());

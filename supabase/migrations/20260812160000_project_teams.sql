@@ -16,9 +16,22 @@ create index if not exists project_teams_team_id_idx on public.project_teams (te
 
 -- Backfill from the scalar column before it's dropped: every project currently
 -- in a team gets one link row.
-insert into public.project_teams (project_id, team_id)
-  select id, team_id from public.projects where team_id is not null
-on conflict do nothing;
+--
+-- Guarded because the last statement of this migration drops projects.team_id:
+-- without the check, re-running the file fails here with "column team_id does
+-- not exist". Inside a DO block the INSERT is only parsed if the branch is
+-- taken, so it's a clean no-op once the column is gone.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'projects' and column_name = 'team_id'
+  ) then
+    insert into public.project_teams (project_id, team_id)
+      select id, team_id from public.projects where team_id is not null
+    on conflict do nothing;
+  end if;
+end $$;
 
 -- RLS: mirrors team_members — visible if you can see the project or the team;
 -- only project owners/admins can attach or detach teams. project_role() is
@@ -26,14 +39,18 @@ on conflict do nothing;
 -- through this policy.
 alter table public.project_teams enable row level security;
 
+-- Dropped first so the file can be re-run (CREATE POLICY has no IF NOT EXISTS).
+drop policy if exists "Members can view a project's team links" on public.project_teams;
 create policy "Members can view a project's team links"
   on public.project_teams for select
   using (public.project_role(project_id) is not null or public.team_role(team_id) is not null);
 
+drop policy if exists "Project owners and admins can attach teams" on public.project_teams;
 create policy "Project owners and admins can attach teams"
   on public.project_teams for insert
   with check (public.project_role(project_id) in ('owner', 'admin'));
 
+drop policy if exists "Project owners and admins can detach teams" on public.project_teams;
 create policy "Project owners and admins can detach teams"
   on public.project_teams for delete
   using (public.project_role(project_id) in ('owner', 'admin'));

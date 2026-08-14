@@ -31,10 +31,13 @@ alter table public.org_activity_events enable row level security;
 -- happen through the user-scoped client from controllers — including invite
 -- acceptance, where the accepter has just become a member). Append-only: no
 -- UPDATE or DELETE policies, deliberately, mirroring activity_events.
+-- Dropped first so this file can be re-run (CREATE POLICY has no IF NOT EXISTS).
+drop policy if exists "Org members can view org activity" on public.org_activity_events;
 create policy "Org members can view org activity"
   on public.org_activity_events for select
   using (public.org_role(org_id) is not null);
 
+drop policy if exists "Org members can record org activity" on public.org_activity_events;
 create policy "Org members can record org activity"
   on public.org_activity_events for insert
   with check (public.org_role(org_id) is not null);
