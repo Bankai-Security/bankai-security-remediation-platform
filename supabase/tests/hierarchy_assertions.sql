@@ -106,6 +106,83 @@ end $$;
 
 reset role;
 
+-- ---------------------------------------------------------------------
+-- (C1) Expired invites can't be accepted: accept_org_invite must raise 22023
+-- for a pending invite whose expires_at is in the past.
+-- ---------------------------------------------------------------------
+insert into public.org_invites (org_id, email, role, invited_by, expires_at)
+  values ('00000000-0000-0000-0000-0000000000b1', 'assert-member@test.local', 'admin',
+          '00000000-0000-0000-0000-0000000000a1', now() - interval '1 day');
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a2","email":"assert-member@test.local"}', true);
+
+do $$
+declare
+  v_token uuid;
+begin
+  select token into v_token from public.org_invites
+    where org_id = '00000000-0000-0000-0000-0000000000b1' and expires_at < now() limit 1;
+
+  begin
+    perform public.accept_org_invite(v_token);
+    raise exception 'C1 FAILED: an expired invite was accepted';
+  exception
+    when sqlstate '22023' then null; -- expected
+  end;
+end $$;
+
+reset role;
+
+-- ---------------------------------------------------------------------
+-- (D1) transfer_org_ownership: the target must end up as owner, and the
+-- outgoing owner must be demoted to an admin member (not locked out).
+-- (D2) A non-owner attempting the transfer is rejected with 42501.
+-- ---------------------------------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a2","email":"assert-member@test.local"}', true);
+
+do $$
+begin
+  begin
+    perform public.transfer_org_ownership('00000000-0000-0000-0000-0000000000b1',
+                                          '00000000-0000-0000-0000-0000000000a2');
+    raise exception 'D2 FAILED: a non-owner transferred ownership';
+  exception
+    when sqlstate '42501' then null; -- expected
+  end;
+end $$;
+
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","email":"assert-owner@test.local"}', true);
+
+do $$
+begin
+  perform public.transfer_org_ownership('00000000-0000-0000-0000-0000000000b1',
+                                        '00000000-0000-0000-0000-0000000000a2');
+
+  assert (select owner_id from public.organizations where id = '00000000-0000-0000-0000-0000000000b1')
+         = '00000000-0000-0000-0000-0000000000a2',
+    'D1 FAILED: owner_id was not transferred';
+
+  assert exists (
+    select 1 from public.org_members
+      where org_id = '00000000-0000-0000-0000-0000000000b1'
+        and user_id = '00000000-0000-0000-0000-0000000000a1'
+        and role = 'admin'
+  ), 'D1 FAILED: outgoing owner was not demoted to admin member';
+
+  assert not exists (
+    select 1 from public.org_members
+      where org_id = '00000000-0000-0000-0000-0000000000b1'
+        and user_id = '00000000-0000-0000-0000-0000000000a2'
+  ), 'D1 FAILED: new owner should not also hold a member row';
+end $$;
+
+reset role;
+
 do $$ begin raise notice 'ALL HIERARCHY ASSERTIONS PASSED'; end $$;
 
 rollback;
