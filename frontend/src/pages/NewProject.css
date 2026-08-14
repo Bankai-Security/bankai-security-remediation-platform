@@ -156,6 +156,18 @@
   padding: 0 13px;
 }
 
+/* Native <select> draws its arrow flush to the edge — swap in a custom chevron
+   with breathing room on the right, and extra right padding so the value text
+   never runs under it. */
+select.new-project-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%238A8A8E' fill='none' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
 .new-project-input--upper {
   text-transform: uppercase;
 }

@@ -141,6 +141,17 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
 
+/* Native <select> draws its arrow flush to the edge — swap in a custom chevron
+   with right-side padding (used by the org/team pickers). */
+select.settings-jira-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%238A8A8E' fill='none' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
 .settings-jira-field-error {
   color: var(--color-red);
   font-size: 11.5px;
