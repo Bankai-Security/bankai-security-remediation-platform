@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { HttpError } from "../lib/http-error.js";
 import { logger } from "../lib/logger.js";
+import { recordOrgActivity } from "../lib/org-activity.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import type { InviteTeamMemberInput, UpdateTeamMemberRoleInput } from "../schemas/team.schema.js";
@@ -102,6 +103,15 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
     throw new HttpError(500, "Could not create this invite.");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `invited ${invite.email} to team "${team.name}" as ${invite.role}`,
+  });
+
   res.status(201).json({
     invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at },
     inviteUrl: `${env.FRONTEND_ORIGIN}/team-invites/${invite.token}`,
@@ -119,7 +129,7 @@ export async function updateTeamMemberRole(req: Request, res: Response): Promise
     .update({ role })
     .eq("id", req.params.memberId)
     .eq("team_id", team.id)
-    .select("id")
+    .select("id, email")
     .maybeSingle();
 
   if (error) {
@@ -129,6 +139,15 @@ export async function updateTeamMemberRole(req: Request, res: Response): Promise
     throw new HttpError(404, "Member not found");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `changed ${data.email ?? "a member"}'s role in team "${team.name}" to ${role}`,
+  });
+
   res.status(200).json({ ok: true });
 }
 
@@ -137,18 +156,30 @@ export async function removeTeamMember(req: Request, res: Response): Promise<voi
   requireRole(team.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
-  const { error, count } = await supabase
+  // DELETE ... RETURNING via .select() so the audit summary can name who was
+  // removed without a separate lookup.
+  const { data: removed, error } = await supabase
     .from("team_members")
-    .delete({ count: "exact" })
+    .delete()
     .eq("id", req.params.memberId)
-    .eq("team_id", team.id);
+    .eq("team_id", team.id)
+    .select("email");
 
   if (error) {
     throw new HttpError(500, "Could not remove this member.");
   }
-  if (!count) {
+  if (!removed || removed.length === 0) {
     throw new HttpError(404, "Member not found");
   }
+
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `removed ${removed[0]?.email ?? "a member"} from team "${team.name}"`,
+  });
 
   res.status(204).send();
 }
@@ -158,19 +189,29 @@ export async function revokeTeamInvite(req: Request, res: Response): Promise<voi
   requireRole(team.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
-  const { error, count } = await supabase
+  const { data: revoked, error } = await supabase
     .from("team_invites")
-    .update({ status: "revoked", responded_at: new Date().toISOString() }, { count: "exact" })
+    .update({ status: "revoked", responded_at: new Date().toISOString() })
     .eq("id", req.params.inviteId)
     .eq("team_id", team.id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .select("email");
 
   if (error) {
     throw new HttpError(500, "Could not revoke this invite.");
   }
-  if (!count) {
+  if (!revoked || revoked.length === 0) {
     throw new HttpError(404, "Invite not found");
   }
+
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `revoked the team "${team.name}" invite for ${revoked[0]?.email ?? "a pending member"}`,
+  });
 
   res.status(204).send();
 }

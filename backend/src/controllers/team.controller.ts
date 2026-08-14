@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { HttpError } from "../lib/http-error.js";
 import { logger } from "../lib/logger.js";
+import { recordOrgActivity } from "../lib/org-activity.js";
 import type { ProjectRole } from "../lib/roles.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
@@ -68,6 +69,15 @@ export async function createTeam(req: Request, res: Response): Promise<void> {
     throw new HttpError(500, "Could not create team.");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    teamId: data.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "team",
+    summary: `created team "${data.name}"`,
+  });
+
   res.status(201).json({ team: { id: data.id, name: data.name, myRole: "admin" as const, createdAt: data.created_at } });
 }
 
@@ -91,6 +101,15 @@ export async function updateTeam(req: Request, res: Response): Promise<void> {
     throw new HttpError(404, "Team not found");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "team",
+    summary: `renamed team "${team.name}" to "${data.name}"`,
+  });
+
   res.status(200).json({ team: { id: data.id, name: data.name } });
 }
 
@@ -112,6 +131,16 @@ export async function deleteTeam(req: Request, res: Response): Promise<void> {
   if (!count) {
     throw new HttpError(404, "Team not found");
   }
+
+  // teamId deliberately omitted: the team row is gone, so the FK couldn't
+  // reference it — the name in the summary is the surviving record.
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "team",
+    summary: `deleted team "${team.name}"`,
+  });
 
   res.status(204).send();
 }

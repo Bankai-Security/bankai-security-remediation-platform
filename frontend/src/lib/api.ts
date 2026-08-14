@@ -644,6 +644,19 @@ export function updateOrg(orgId: string, input: { name: string }): Promise<{ org
   return apiFetch(`/orgs/${orgId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
 
+export interface OrgActivityEvent {
+  id: string;
+  type: "org" | "team" | "member" | "invite";
+  actor: string;
+  summary: string;
+  meta: string | null;
+  createdAt: string;
+}
+
+export function listOrgActivity(orgId: string): Promise<{ activity: OrgActivityEvent[] }> {
+  return apiFetch(`/orgs/${orgId}/activity`, { method: "GET" });
+}
+
 export function deleteOrg(orgId: string): Promise<void> {
   return apiFetch(`/orgs/${orgId}`, { method: "DELETE" });
 }

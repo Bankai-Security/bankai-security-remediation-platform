@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createOrg, deleteOrg, getOrg, listOrgs, updateOrg } from "../controllers/org.controller.js";
+import { createOrg, deleteOrg, getOrg, listOrgActivity, listOrgs, updateOrg } from "../controllers/org.controller.js";
 import { baselineProtect } from "../middleware/baseline-arcjet.js";
 import { loadOrg } from "../middleware/load-org.js";
 import { requireAuth } from "../middleware/require-auth.js";
@@ -23,6 +23,7 @@ const orgScoped = Router({ mergeParams: true });
 orgScoped.use(loadOrg);
 orgScoped.patch("/", validateBody(updateOrgSchema), updateOrg);
 orgScoped.delete("/", deleteOrg);
+orgScoped.get("/activity", listOrgActivity);
 orgScoped.use("/members", orgMemberRouter);
 orgScoped.use("/teams", teamRouter);
 

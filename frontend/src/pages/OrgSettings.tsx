@@ -9,6 +9,7 @@ import {
   deleteTeam,
   getOrg,
   inviteOrgMember,
+  listOrgActivity,
   listOrgMembers,
   listTeams,
   removeOrgMember,
@@ -16,6 +17,7 @@ import {
   updateOrg,
   updateOrgMemberRole,
   type MemberRole,
+  type OrgActivityEvent,
   type OrgMember,
   type PendingOrgInvite,
   type TeamSummary,
@@ -24,7 +26,23 @@ import { canManageOrg } from '../lib/roles';
 import { useOrgs } from '../lib/org-context';
 import './TopBar.css';
 import './workspace-pages/shared.css';
+import './workspace-pages/Overview.css'; // overview-activity-item list styles, reused by the audit card
 import './OrgSettings.css';
+
+const ACTIVITY_DOT: Record<OrgActivityEvent['type'], string> = {
+  org: 'var(--color-blue)',
+  team: 'var(--color-green)',
+  member: 'var(--color-text-muted)',
+  invite: 'var(--color-text-muted)',
+};
+
+function formatEventTime(iso: string): string {
+  const date = new Date(iso);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  return sameDay
+    ? `Today ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+    : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
 
 export default function OrgSettings() {
   const { orgId } = useParams<{ orgId: string }>();
@@ -48,6 +66,8 @@ export default function OrgSettings() {
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
 
+  const [activity, setActivity] = useState<OrgActivityEvent[] | null>(null);
+
   // Keep the switcher's selection in sync with the URL.
   useEffect(() => {
     if (orgId) selectOrg(orgId);
@@ -70,6 +90,13 @@ export default function OrgSettings() {
       .catch(() => {});
   };
 
+  const reloadActivity = () => {
+    if (!orgId) return;
+    listOrgActivity(orgId)
+      .then(({ activity: a }) => setActivity(a))
+      .catch(() => setActivity([]));
+  };
+
   useEffect(() => {
     if (!orgId) return;
     let cancelled = false;
@@ -85,6 +112,7 @@ export default function OrgSettings() {
       });
     reloadMembers();
     reloadTeams();
+    reloadActivity();
     return () => {
       cancelled = true;
     };
@@ -283,6 +311,29 @@ export default function OrgSettings() {
                           Delete
                         </button>
                       )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Audit trail */}
+            <section className="ws-card orgset-card">
+              <div className="ws-card-eyebrow">Audit</div>
+              <h2 className="ws-card-title">Recent activity</h2>
+              {activity === null ? (
+                <div className="orgset-empty">Loading activity…</div>
+              ) : activity.length === 0 ? (
+                <div className="orgset-empty">No activity recorded yet.</div>
+              ) : (
+                <div>
+                  {activity.map((ev) => (
+                    <div key={ev.id} className="overview-activity-item">
+                      <span className="ws-dot" style={{ background: ACTIVITY_DOT[ev.type] }} />
+                      <span className="overview-activity-text">
+                        <strong>{ev.actor}</strong> {ev.summary}
+                      </span>
+                      <span className="overview-activity-time">{formatEventTime(ev.createdAt)}</span>
                     </div>
                   ))}
                 </div>

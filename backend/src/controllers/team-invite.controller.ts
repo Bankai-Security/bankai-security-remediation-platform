@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { HttpError } from "../lib/http-error.js";
+import { recordOrgActivity } from "../lib/org-activity.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 
 function userScopedClient(req: Request) {
@@ -133,7 +134,22 @@ export async function acceptTeamInvite(req: Request, res: Response): Promise<voi
   // Resolve the org for redirect. The RPC just made the caller at least an org
   // viewer, so this team row is now visible to them.
   const teamId = (data as { team_id: string }).team_id;
-  const { data: team } = await supabase.from("teams").select("org_id").eq("id", teamId).maybeSingle();
+  const { data: team } = await supabase.from("teams").select("org_id, name").eq("id", teamId).maybeSingle();
+
+  // The accepter is an org member as of the RPC above, so the append policy
+  // passes. Declines are deliberately not recorded (a decliner never becomes
+  // a member, so they have no write access to the org's trail).
+  if (team?.org_id) {
+    await recordOrgActivity(supabase, {
+      orgId: team.org_id,
+      teamId,
+      actorId: req.user!.id,
+      actorLabel: req.user!.email ?? "Unknown",
+      eventType: "member",
+      summary: `joined team "${team.name}"`,
+    });
+  }
+
   res.status(200).json({ teamId, orgId: team?.org_id ?? null });
 }
 
