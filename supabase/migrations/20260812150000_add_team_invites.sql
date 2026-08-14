@@ -39,20 +39,26 @@ create unique index if not exists team_invites_pending_email_idx
 -- RLS: team_invites ----------------------------------------------------
 alter table public.team_invites enable row level security;
 
+-- Each policy is dropped first so this file can be re-run (CREATE POLICY has
+-- no IF NOT EXISTS).
+drop policy if exists "Team admins can view invites for their team" on public.team_invites;
 create policy "Team admins can view invites for their team"
   on public.team_invites for select
   using (public.team_role(team_id) = 'admin');
 
 -- Matches the invitee's own JWT email claim — they aren't a team member yet, so
 -- team_role() would return null for them; a separate, non-membership condition.
+drop policy if exists "Invited users can view their own pending team invites" on public.team_invites;
 create policy "Invited users can view their own pending team invites"
   on public.team_invites for select
   using (lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
 
+drop policy if exists "Team admins can create team invites" on public.team_invites;
 create policy "Team admins can create team invites"
   on public.team_invites for insert
   with check (public.team_role(team_id) = 'admin');
 
+drop policy if exists "Team admins can revoke team invites" on public.team_invites;
 create policy "Team admins can revoke team invites"
   on public.team_invites for update
   using (public.team_role(team_id) = 'admin')
@@ -60,6 +66,7 @@ create policy "Team admins can revoke team invites"
 
 -- Invitees may self-service ONLY a decline directly; acceptance goes through
 -- accept_team_invite() so the membership writes stay atomic.
+drop policy if exists "Invited users can decline their own pending team invite" on public.team_invites;
 create policy "Invited users can decline their own pending team invite"
   on public.team_invites for update
   using (status = 'pending' and lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')))

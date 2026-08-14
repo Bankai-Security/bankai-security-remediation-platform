@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../lib/http-error.js";
 import { logger } from "../lib/logger.js";
+import { recordOrgActivity, toPublicOrgActivityEvent, type OrgActivityEventRow } from "../lib/org-activity.js";
 import type { ProjectRole } from "../lib/roles.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
@@ -145,6 +146,14 @@ export async function createOrg(req: Request, res: Response): Promise<void> {
     throw new HttpError(500, "Organization created, but could not be loaded.");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "org",
+    summary: `created the organization "${name}"`,
+  });
+
   res.status(201).json({
     org: {
       id: org.id,
@@ -179,7 +188,35 @@ export async function updateOrg(req: Request, res: Response): Promise<void> {
     throw new HttpError(404, "Organization not found");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "org",
+    summary: `renamed the organization to "${data.name}"`,
+  });
+
   res.status(200).json({ org: { id: data.id, name: data.name } });
+}
+
+// GET /orgs/:orgId/activity — latest audit events for the org. RLS already
+// scopes reads to members; loadOrg has 404'd non-members before this runs.
+export async function listOrgActivity(req: Request, res: Response): Promise<void> {
+  const org = req.org!;
+  const supabase = userScopedClient(req);
+
+  const { data, error } = await supabase
+    .from("org_activity_events")
+    .select("id, event_type, actor_label, summary, meta, created_at")
+    .eq("org_id", org.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    throw new HttpError(500, "Could not load organization activity.");
+  }
+
+  res.status(200).json({ activity: ((data ?? []) as OrgActivityEventRow[]).map(toPublicOrgActivityEvent) });
 }
 
 // DELETE /orgs/:orgId — owner-only (matches the organizations DELETE RLS
@@ -192,6 +229,27 @@ export async function deleteOrg(req: Request, res: Response): Promise<void> {
     throw new HttpError(403, "Only the organization owner can delete it.");
   }
   const supabase = userScopedClient(req);
+
+  // Same acknowledge-first guard as deleteTeam: report how many projects will
+  // be detached (via the org's teams) unless the caller passed force.
+  const { force } = (req.body ?? {}) as { force?: boolean };
+  if (!force) {
+    const { data: teamRows } = await supabase.from("teams").select("id").eq("org_id", org.id);
+    const teamIds = (teamRows ?? []).map((t) => t.id);
+
+    if (teamIds.length > 0) {
+      const { count: linkCount } = await supabase
+        .from("project_teams")
+        .select("project_id", { count: "exact", head: true })
+        .in("team_id", teamIds);
+
+      if ((linkCount ?? 0) > 0) {
+        throw new HttpError(409, `${linkCount} project assignment(s) will be removed with this organization.`, {
+          projectCount: linkCount,
+        });
+      }
+    }
+  }
 
   const { error, count } = await supabase.from("organizations").delete({ count: "exact" }).eq("id", org.id);
 

@@ -1,7 +1,9 @@
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { HttpError } from "../lib/http-error.js";
+import { assertInviteRateLimit, resendInvite } from "../lib/invites.js";
 import { logger } from "../lib/logger.js";
+import { recordOrgActivity } from "../lib/org-activity.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import type { InviteTeamMemberInput, UpdateTeamMemberRoleInput } from "../schemas/team.schema.js";
@@ -43,7 +45,7 @@ export async function listTeamMembers(req: Request, res: Response): Promise<void
       .order("created_at", { ascending: true }),
     supabase
       .from("team_invites")
-      .select("id, email, role, token, created_at")
+      .select("id, email, role, token, created_at, expires_at")
       .eq("team_id", team.id)
       .eq("status", "pending")
       .order("created_at", { ascending: true }),
@@ -68,6 +70,7 @@ export async function listTeamMembers(req: Request, res: Response): Promise<void
     email: row.email,
     role: row.role,
     createdAt: row.created_at,
+    expiresAt: row.expires_at,
   }));
 
   res.status(200).json({ members, invites });
@@ -78,6 +81,8 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
   requireRole(team.myRole, ["owner", "admin"]);
   const { email, role } = req.body as InviteTeamMemberInput;
   const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "team_invites", req.user!.id);
 
   const { data: existingMember } = await supabase
     .from("team_members")
@@ -92,7 +97,7 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
   const { data: invite, error } = await supabase
     .from("team_invites")
     .insert({ team_id: team.id, email, role, invited_by: req.user!.id })
-    .select("id, token, email, role, created_at")
+    .select("id, token, email, role, created_at, expires_at")
     .single();
 
   if (error) {
@@ -102,9 +107,86 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
     throw new HttpError(500, "Could not create this invite.");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `invited ${invite.email} to team "${team.name}" as ${invite.role}`,
+  });
+
   res.status(201).json({
-    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at },
+    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at, expiresAt: invite.expires_at },
     inviteUrl: `${env.FRONTEND_ORIGIN}/team-invites/${invite.token}`,
+  });
+}
+
+// DELETE .../teams/:teamId/members/me — leave the team. Authorized by the
+// "Members can leave a team" RLS policy. Org owners/admins surface as team
+// 'admin' via team_role() without having a team_members row, so they get a
+// clear message rather than a confusing 404.
+export async function leaveTeam(req: Request, res: Response): Promise<void> {
+  const team = req.team!;
+  const supabase = userScopedClient(req);
+
+  const { data: left, error } = await supabase
+    .from("team_members")
+    .delete()
+    .eq("team_id", team.id)
+    .eq("user_id", req.user!.id)
+    .select("email");
+
+  if (error) {
+    throw new HttpError(500, "Could not leave this team.");
+  }
+  if (!left || left.length === 0) {
+    throw new HttpError(404, "You are not a member of this team.");
+  }
+
+  // The caller keeps org membership (leaving a team doesn't leave the org), so
+  // this write still passes the org-member insert policy.
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `left team "${team.name}"`,
+  });
+
+  res.status(204).send();
+}
+
+// POST .../teams/:teamId/members/invites/:inviteId/resend — same contract as
+// resendOrgInvite, scoped to the team.
+export async function resendTeamInvite(req: Request, res: Response): Promise<void> {
+  const team = req.team!;
+  requireRole(team.myRole, ["owner", "admin"]);
+  const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "team_invites", req.user!.id);
+
+  const fresh = await resendInvite(supabase, {
+    table: "team_invites",
+    scopeColumn: "team_id",
+    scopeId: team.id,
+    inviteId: req.params.inviteId as string,
+    invitedBy: req.user!.id,
+  });
+
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `resent the team "${team.name}" invite for ${fresh.email}`,
+  });
+
+  res.status(201).json({
+    invite: { id: fresh.id, email: fresh.email, role: fresh.role, createdAt: fresh.created_at, expiresAt: fresh.expires_at },
+    inviteUrl: `${env.FRONTEND_ORIGIN}/team-invites/${fresh.token}`,
   });
 }
 
@@ -119,7 +201,7 @@ export async function updateTeamMemberRole(req: Request, res: Response): Promise
     .update({ role })
     .eq("id", req.params.memberId)
     .eq("team_id", team.id)
-    .select("id")
+    .select("id, email")
     .maybeSingle();
 
   if (error) {
@@ -129,6 +211,15 @@ export async function updateTeamMemberRole(req: Request, res: Response): Promise
     throw new HttpError(404, "Member not found");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `changed ${data.email ?? "a member"}'s role in team "${team.name}" to ${role}`,
+  });
+
   res.status(200).json({ ok: true });
 }
 
@@ -137,18 +228,30 @@ export async function removeTeamMember(req: Request, res: Response): Promise<voi
   requireRole(team.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
-  const { error, count } = await supabase
+  // DELETE ... RETURNING via .select() so the audit summary can name who was
+  // removed without a separate lookup.
+  const { data: removed, error } = await supabase
     .from("team_members")
-    .delete({ count: "exact" })
+    .delete()
     .eq("id", req.params.memberId)
-    .eq("team_id", team.id);
+    .eq("team_id", team.id)
+    .select("email");
 
   if (error) {
     throw new HttpError(500, "Could not remove this member.");
   }
-  if (!count) {
+  if (!removed || removed.length === 0) {
     throw new HttpError(404, "Member not found");
   }
+
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `removed ${removed[0]?.email ?? "a member"} from team "${team.name}"`,
+  });
 
   res.status(204).send();
 }
@@ -158,19 +261,29 @@ export async function revokeTeamInvite(req: Request, res: Response): Promise<voi
   requireRole(team.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
-  const { error, count } = await supabase
+  const { data: revoked, error } = await supabase
     .from("team_invites")
-    .update({ status: "revoked", responded_at: new Date().toISOString() }, { count: "exact" })
+    .update({ status: "revoked", responded_at: new Date().toISOString() })
     .eq("id", req.params.inviteId)
     .eq("team_id", team.id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .select("email");
 
   if (error) {
     throw new HttpError(500, "Could not revoke this invite.");
   }
-  if (!count) {
+  if (!revoked || revoked.length === 0) {
     throw new HttpError(404, "Invite not found");
   }
+
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `revoked the team "${team.name}" invite for ${revoked[0]?.email ?? "a pending member"}`,
+  });
 
   res.status(204).send();
 }

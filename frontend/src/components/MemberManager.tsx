@@ -21,6 +21,7 @@ export interface ManagedInvite {
   email: string;
   role: Exclude<MemberRole, 'owner'>;
   createdAt: string;
+  expiresAt: string;
 }
 
 type AssignableRole = Exclude<MemberRole, 'owner'>;
@@ -35,6 +36,9 @@ interface Props {
   onChangeRole: (memberId: string, role: AssignableRole) => Promise<void>;
   onRemove: (memberId: string) => Promise<void>;
   onRevoke: (inviteId: string) => Promise<void>;
+  // Revokes the pending invite and issues a fresh link — the only way to
+  // renew an expired one.
+  onResend: (inviteId: string) => Promise<{ inviteUrl: string }>;
   onChanged: () => void;
 }
 
@@ -57,6 +61,16 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Invites expire 14 days after they're issued. An expired one still shows in
+// the pending list (so it's clear why the link stopped working) but is marked
+// and can only be renewed with Resend.
+function expiryLabel(iso: string): { text: string; expired: boolean } {
+  const msLeft = new Date(iso).getTime() - Date.now();
+  if (msLeft <= 0) return { text: 'Expired', expired: true };
+  const days = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
+  return { text: days === 1 ? 'Expires in 1 day' : `Expires in ${days} days`, expired: false };
+}
+
 const ROLE_BADGE: Record<MemberRole, string> = {
   owner: 'mm-role--owner',
   admin: 'mm-role--admin',
@@ -73,6 +87,7 @@ export default function MemberManager({
   onChangeRole,
   onRemove,
   onRevoke,
+  onResend,
   onChanged,
 }: Props) {
   const [showInvite, setShowInvite] = useState(false);
@@ -135,6 +150,23 @@ export default function MemberManager({
     try {
       await onRevoke(inviteId);
       onChanged();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const resend = async (inviteId: string) => {
+    setBusyId(inviteId);
+    setInviteError(null);
+    try {
+      const { inviteUrl } = await onResend(inviteId);
+      // Surface the new link straight away — the old one is now dead, so the
+      // admin needs to re-send this one.
+      setGeneratedUrl(inviteUrl);
+      setShowInvite(true);
+      onChanged();
+    } catch (err) {
+      setInviteError(err instanceof ApiError ? err.message : 'Could not resend this invite.');
     } finally {
       setBusyId(null);
     }
@@ -237,20 +269,35 @@ export default function MemberManager({
           <div className="mm-invites-title">Pending invites</div>
           {invites.map((inv) => {
             const link = `${window.location.origin}${inviteBasePath}/${inv.token}`;
+            const expiry = expiryLabel(inv.expiresAt);
             return (
               <div key={inv.id} className="mm-row mm-row--invite">
                 <div className="mm-row-id">
                   <div className="mm-row-name">{inv.email}</div>
-                  <div className="mm-row-email">Invited {formatDate(inv.createdAt)}</div>
+                  <div className="mm-row-email">
+                    Invited {formatDate(inv.createdAt)}
+                    {' · '}
+                    <span className={expiry.expired ? 'mm-expired' : undefined}>{expiry.text}</span>
+                  </div>
                 </div>
                 <span className={`ws-badge ${ROLE_BADGE[inv.role]}`}>{inv.role}</span>
-                <button type="button" className="mm-link-btn" onClick={() => void copy(link, inv.id)}>
-                  {copied === inv.id ? 'Copied' : 'Copy link'}
-                </button>
-                {canManage && (
-                  <button type="button" className="mm-remove" disabled={busyId === inv.id} onClick={() => void revoke(inv.id)}>
-                    Revoke
+                {/* An expired link is dead — offer Resend instead of Copy. */}
+                {expiry.expired ? (
+                  <span className="mm-link-placeholder" />
+                ) : (
+                  <button type="button" className="mm-link-btn" onClick={() => void copy(link, inv.id)}>
+                    {copied === inv.id ? 'Copied' : 'Copy link'}
                   </button>
+                )}
+                {canManage && (
+                  <>
+                    <button type="button" className="mm-link-btn" disabled={busyId === inv.id} onClick={() => void resend(inv.id)}>
+                      Resend
+                    </button>
+                    <button type="button" className="mm-remove" disabled={busyId === inv.id} onClick={() => void revoke(inv.id)}>
+                      Revoke
+                    </button>
+                  </>
                 )}
               </div>
             );

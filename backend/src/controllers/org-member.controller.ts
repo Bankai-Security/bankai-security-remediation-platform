@@ -1,10 +1,12 @@
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { HttpError } from "../lib/http-error.js";
+import { assertInviteRateLimit, resendInvite } from "../lib/invites.js";
 import { logger } from "../lib/logger.js";
+import { recordOrgActivity } from "../lib/org-activity.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
-import type { InviteOrgMemberInput, UpdateOrgMemberRoleInput } from "../schemas/org.schema.js";
+import type { InviteOrgMemberInput, TransferOrgInput, UpdateOrgMemberRoleInput } from "../schemas/org.schema.js";
 
 function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
@@ -50,7 +52,7 @@ export async function listOrgMembers(req: Request, res: Response): Promise<void>
     // sharing that link.
     supabase
       .from("org_invites")
-      .select("id, email, role, token, created_at")
+      .select("id, email, role, token, created_at, expires_at")
       .eq("org_id", org.id)
       .eq("status", "pending")
       .order("created_at", { ascending: true }),
@@ -87,6 +89,7 @@ export async function listOrgMembers(req: Request, res: Response): Promise<void>
     email: row.email,
     role: row.role,
     createdAt: row.created_at,
+    expiresAt: row.expires_at,
   }));
 
   res.status(200).json({ members, invites });
@@ -97,6 +100,8 @@ export async function inviteOrgMember(req: Request, res: Response): Promise<void
   requireRole(org.myRole, ["owner", "admin"]);
   const { email, role } = req.body as InviteOrgMemberInput;
   const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "org_invites", req.user!.id);
 
   const { data: existingMember } = await supabase
     .from("org_members")
@@ -111,7 +116,7 @@ export async function inviteOrgMember(req: Request, res: Response): Promise<void
   const { data: invite, error } = await supabase
     .from("org_invites")
     .insert({ org_id: org.id, email, role, invited_by: req.user!.id })
-    .select("id, token, email, role, created_at")
+    .select("id, token, email, role, created_at, expires_at")
     .single();
 
   if (error) {
@@ -121,9 +126,121 @@ export async function inviteOrgMember(req: Request, res: Response): Promise<void
     throw new HttpError(500, "Could not create this invite.");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `invited ${invite.email} as ${invite.role}`,
+  });
+
   res.status(201).json({
-    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at },
+    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at, expiresAt: invite.expires_at },
     inviteUrl: `${env.FRONTEND_ORIGIN}/org-invites/${invite.token}`,
+  });
+}
+
+// DELETE /orgs/:orgId/members/me — leave the organization. Authorized by the
+// "Members can leave an organization" RLS policy (user_id = auth.uid()), so no
+// role gate here. The owner has no org_members row, so they can't leave; the
+// explicit check gives them a useful message instead of a bare 404.
+export async function leaveOrg(req: Request, res: Response): Promise<void> {
+  const org = req.org!;
+  if (org.myRole === "owner") {
+    throw new HttpError(422, "Transfer ownership before leaving this organization.");
+  }
+  const supabase = userScopedClient(req);
+
+  const { data: left, error } = await supabase
+    .from("org_members")
+    .delete()
+    .eq("org_id", org.id)
+    .eq("user_id", req.user!.id)
+    .select("email");
+
+  if (error) {
+    throw new HttpError(500, "Could not leave this organization.");
+  }
+  if (!left || left.length === 0) {
+    throw new HttpError(404, "You are not a member of this organization.");
+  }
+
+  // Recorded before the caller loses read access — the insert policy only
+  // needs org membership at the moment of the write, which has just ended, so
+  // this is best-effort and may no-op. Logged either way by recordOrgActivity.
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: "left the organization",
+  });
+
+  res.status(204).send();
+}
+
+// POST /orgs/:orgId/transfer — hand ownership to an existing member. The RPC
+// does the owner check and the atomic swap; this maps its errcodes.
+export async function transferOrgOwnership(req: Request, res: Response): Promise<void> {
+  const org = req.org!;
+  const { userId } = req.body as TransferOrgInput;
+  const supabase = userScopedClient(req);
+
+  const { error } = await supabase.rpc("transfer_org_ownership", { p_org_id: org.id, p_to_user: userId });
+
+  if (error) {
+    if (error.code === "42501") {
+      throw new HttpError(403, "Only the organization owner can transfer ownership.");
+    }
+    if (error.code === "P0002") {
+      throw new HttpError(404, "That user is not a member of this organization.");
+    }
+    if (error.code === "22023") {
+      throw new HttpError(422, error.message);
+    }
+    throw new HttpError(500, "Could not transfer ownership.");
+  }
+
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "org",
+    summary: "transferred ownership of the organization",
+  });
+
+  res.status(200).json({ ok: true });
+}
+
+// POST /orgs/:orgId/members/invites/:inviteId/resend — revoke the pending
+// (possibly expired) invite and issue a fresh token + expiry for the same
+// email/role. The one path to a new link for an expired invite.
+export async function resendOrgInvite(req: Request, res: Response): Promise<void> {
+  const org = req.org!;
+  requireRole(org.myRole, ["owner", "admin"]);
+  const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "org_invites", req.user!.id);
+
+  const fresh = await resendInvite(supabase, {
+    table: "org_invites",
+    scopeColumn: "org_id",
+    scopeId: org.id,
+    inviteId: req.params.inviteId as string,
+    invitedBy: req.user!.id,
+  });
+
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `resent the invite for ${fresh.email}`,
+  });
+
+  res.status(201).json({
+    invite: { id: fresh.id, email: fresh.email, role: fresh.role, createdAt: fresh.created_at, expiresAt: fresh.expires_at },
+    inviteUrl: `${env.FRONTEND_ORIGIN}/org-invites/${fresh.token}`,
   });
 }
 
@@ -138,7 +255,7 @@ export async function updateOrgMemberRole(req: Request, res: Response): Promise<
     .update({ role })
     .eq("id", req.params.memberId)
     .eq("org_id", org.id)
-    .select("id")
+    .select("id, email")
     .maybeSingle();
 
   if (error) {
@@ -148,6 +265,14 @@ export async function updateOrgMemberRole(req: Request, res: Response): Promise<
     throw new HttpError(404, "Member not found");
   }
 
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `changed ${data.email ?? "a member"}'s role to ${role}`,
+  });
+
   res.status(200).json({ ok: true });
 }
 
@@ -156,18 +281,29 @@ export async function removeOrgMember(req: Request, res: Response): Promise<void
   requireRole(org.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
-  const { error, count } = await supabase
+  // DELETE ... RETURNING via .select() so the audit summary can name who was
+  // removed without a separate lookup.
+  const { data: removed, error } = await supabase
     .from("org_members")
-    .delete({ count: "exact" })
+    .delete()
     .eq("id", req.params.memberId)
-    .eq("org_id", org.id);
+    .eq("org_id", org.id)
+    .select("email");
 
   if (error) {
     throw new HttpError(500, "Could not remove this member.");
   }
-  if (!count) {
+  if (!removed || removed.length === 0) {
     throw new HttpError(404, "Member not found");
   }
+
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `removed ${removed[0]?.email ?? "a member"} from the organization`,
+  });
 
   res.status(204).send();
 }
@@ -177,19 +313,28 @@ export async function revokeOrgInvite(req: Request, res: Response): Promise<void
   requireRole(org.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
-  const { error, count } = await supabase
+  const { data: revoked, error } = await supabase
     .from("org_invites")
-    .update({ status: "revoked", responded_at: new Date().toISOString() }, { count: "exact" })
+    .update({ status: "revoked", responded_at: new Date().toISOString() })
     .eq("id", req.params.inviteId)
     .eq("org_id", org.id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .select("email");
 
   if (error) {
     throw new HttpError(500, "Could not revoke this invite.");
   }
-  if (!count) {
+  if (!revoked || revoked.length === 0) {
     throw new HttpError(404, "Invite not found");
   }
+
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `revoked the invite for ${revoked[0]?.email ?? "a pending member"}`,
+  });
 
   res.status(204).send();
 }

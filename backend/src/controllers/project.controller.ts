@@ -46,11 +46,13 @@ function teamsOf(row: ProjectRow): TeamEmbed[] {
     .filter((t): t is TeamEmbed => t != null);
 }
 
-// Validates a set of team ids the caller wants to attach to a project: every id
-// must be visible to them (teams SELECT RLS scopes the lookup, so a team in an
-// org they don't belong to simply won't come back), and — since a project
-// belongs to a single org — all of them must share one org. Returns the
-// distinct, validated ids. Throws 422 on any violation.
+// Fail-fast preflight used ONLY by createProject, so an invalid team selection
+// is rejected before the project row is created (updateProjectSettings instead
+// delegates all validation to the set_project_teams() SQL function). Every id
+// must be visible to the caller (teams SELECT RLS scopes the lookup, so a team
+// in an org they don't belong to simply won't come back), and — since a project
+// belongs to a single org — all must share one org. The enforce_project_single_org
+// trigger backs this at the DB layer regardless. Throws 422 on any violation.
 async function validateTeamIds(supabase: SupabaseClient, teamIds: string[]): Promise<string[]> {
   const distinct = [...new Set(teamIds)];
   if (distinct.length === 0) return [];
@@ -159,35 +161,32 @@ export async function getProject(req: Request, res: Response): Promise<void> {
 }
 
 // PATCH /projects/:projectId — set the full list of teams the project belongs
-// to (replace semantics; an empty list unassigns it from every team). Replaces
-// the old single-team / free-text controls. Mounted on the loadProject-scoped
-// router, so req.project.myRole is available.
+// to (replace semantics; an empty list unassigns it from every team). The whole
+// replace runs inside the set_project_teams() SQL function so a failure can't
+// leave the project half-assigned (the old delete-then-insert had that window).
+// The function owns validation too: role gate (42501), team visibility and the
+// single-org invariant (both 22023, with user-appropriate messages).
 export async function updateProjectSettings(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin"]);
   const { teamIds } = req.body as UpdateProjectSettingsInput;
   const supabase = userScopedClient(req);
-  const projectId = req.project!.id;
 
-  const validIds = await validateTeamIds(supabase, teamIds);
+  const { data, error } = await supabase.rpc("set_project_teams", {
+    p_project_id: req.project!.id,
+    p_team_ids: teamIds,
+  });
 
-  // Replace the set: clear the current links, then insert the new ones. RLS on
-  // project_teams gates both on project_role(project_id) in (owner, admin),
-  // which requireRole above already guaranteed for this caller.
-  const { error: deleteError } = await supabase.from("project_teams").delete().eq("project_id", projectId);
-  if (deleteError) {
+  if (error) {
+    if (error.code === "42501") {
+      throw new HttpError(403, "You do not have permission to change this project's teams.");
+    }
+    if (error.code === "22023") {
+      throw new HttpError(422, error.message);
+    }
     throw new HttpError(500, "Could not update the project's teams.");
   }
 
-  if (validIds.length > 0) {
-    const { error: insertError } = await supabase
-      .from("project_teams")
-      .insert(validIds.map((teamId) => ({ project_id: projectId, team_id: teamId })));
-    if (insertError) {
-      throw new HttpError(500, "Could not update the project's teams.");
-    }
-  }
-
-  res.status(200).json({ teamIds: validIds });
+  res.status(200).json({ teamIds: (data as string[] | null) ?? [] });
 }
 
 export async function createProject(req: Request, res: Response): Promise<void> {

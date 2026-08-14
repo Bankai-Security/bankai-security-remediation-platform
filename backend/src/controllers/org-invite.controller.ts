@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { HttpError } from "../lib/http-error.js";
+import { recordOrgActivity } from "../lib/org-activity.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 
 function userScopedClient(req: Request) {
@@ -47,6 +48,7 @@ export async function listMyOrgInvites(req: Request, res: Response): Promise<voi
     .select("id, token, role, status, created_at, organizations ( id, name )")
     .eq("email", email)
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -108,15 +110,29 @@ export async function acceptOrgInvite(req: Request, res: Response): Promise<void
       throw new HttpError(404, "Invite not found");
     }
     if (error?.code === "42501") {
-      throw new HttpError(403, "This invite was sent to a different email address.");
+      throw new HttpError(403, `This invite was sent to a different email address (you're signed in as ${req.user!.email ?? "an account with no email"}).`);
     }
     if (error?.code === "22023") {
-      throw new HttpError(409, "This invite is no longer pending.");
+      // "no longer pending" vs "expired" — the RPC's message says which.
+      throw new HttpError(409, error.message);
     }
     throw new HttpError(500, "Could not accept this invite.");
   }
 
-  res.status(200).json({ orgId: (data as { org_id: string }).org_id });
+  const orgId = (data as { org_id: string }).org_id;
+
+  // The accepter is an org member as of the RPC above, so the append policy
+  // passes. Declines are deliberately NOT recorded: a decliner never becomes a
+  // member, so they have no write access to the org's trail.
+  await recordOrgActivity(supabase, {
+    orgId,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: "joined the organization",
+  });
+
+  res.status(200).json({ orgId });
 }
 
 export async function declineOrgInvite(req: Request, res: Response): Promise<void> {

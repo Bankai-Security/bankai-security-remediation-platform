@@ -109,7 +109,18 @@
 }
 
 .mm-row--invite {
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
+}
+
+.mm-expired {
+  color: var(--color-red);
+  font-weight: 600;
+}
+
+/* Holds the Copy-link column when the link is expired (and so not offered),
+   so the remaining action buttons stay aligned across rows. */
+.mm-link-placeholder {
+  display: inline-block;
 }
 
 .mm-row-id {

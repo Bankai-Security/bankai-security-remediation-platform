@@ -2,13 +2,24 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export class ApiError extends Error {
   readonly status: number;
+  // Validation failures send details as an array of field errors; other errors
+  // (e.g. the delete-guard 409) send an object. Keep the raw value in details
+  // and expose fieldErrors only when it's actually the array form.
+  readonly details?: unknown;
   readonly fieldErrors?: Array<{ path: string; message: string }>;
 
-  constructor(status: number, message: string, fieldErrors?: Array<{ path: string; message: string }>) {
+  constructor(status: number, message: string, details?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
-    this.fieldErrors = fieldErrors;
+    this.details = details;
+    this.fieldErrors = Array.isArray(details) ? (details as Array<{ path: string; message: string }>) : undefined;
+  }
+
+  // Number of projects a delete would detach, from the 409 delete-guard.
+  get projectCount(): number | null {
+    const d = this.details as { projectCount?: unknown } | undefined;
+    return typeof d?.projectCount === "number" ? d.projectCount : null;
   }
 }
 
@@ -538,6 +549,7 @@ export interface PendingProjectInvite {
   email: string;
   role: Exclude<MemberRole, "owner">;
   createdAt: string;
+  expiresAt: string;
 }
 
 export function listMembers(projectId: string): Promise<{ members: ProjectMember[]; invites: PendingProjectInvite[] }> {
@@ -561,6 +573,11 @@ export function removeMember(projectId: string, memberId: string): Promise<void>
 
 export function revokeInvite(projectId: string, inviteId: string): Promise<void> {
   return apiFetch(`/projects/${projectId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+// Revokes the pending (possibly expired) invite and issues a fresh link.
+export function resendMemberInvite(projectId: string, inviteId: string): Promise<{ invite: PendingProjectInvite; inviteUrl: string }> {
+  return apiFetch(`/projects/${projectId}/members/invites/${inviteId}/resend`, { method: "POST" });
 }
 
 export interface MyInvite {
@@ -644,8 +661,32 @@ export function updateOrg(orgId: string, input: { name: string }): Promise<{ org
   return apiFetch(`/orgs/${orgId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
 
-export function deleteOrg(orgId: string): Promise<void> {
-  return apiFetch(`/orgs/${orgId}`, { method: "DELETE" });
+export interface OrgActivityEvent {
+  id: string;
+  type: "org" | "team" | "member" | "invite";
+  actor: string;
+  summary: string;
+  meta: string | null;
+  createdAt: string;
+}
+
+export function listOrgActivity(orgId: string): Promise<{ activity: OrgActivityEvent[] }> {
+  return apiFetch(`/orgs/${orgId}/activity`, { method: "GET" });
+}
+
+// force acknowledges that projects assigned to this org's teams will be
+// detached; without it the API 409s with { projectCount } in details.
+export function deleteOrg(orgId: string, force = false): Promise<void> {
+  return apiFetch(`/orgs/${orgId}`, { method: "DELETE", body: JSON.stringify({ force }) });
+}
+
+export function leaveOrg(orgId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/members/me`, { method: "DELETE" });
+}
+
+// Hands ownership to an existing member; the outgoing owner becomes an admin.
+export function transferOrgOwnership(orgId: string, userId: string): Promise<{ ok: true }> {
+  return apiFetch(`/orgs/${orgId}/transfer`, { method: "POST", body: JSON.stringify({ userId }) });
 }
 
 // --- Org members + invites (mirror the project members API) ---
@@ -664,6 +705,7 @@ export interface PendingOrgInvite {
   email: string;
   role: Exclude<MemberRole, "owner">;
   createdAt: string;
+  expiresAt: string;
 }
 
 export function listOrgMembers(orgId: string): Promise<{ members: OrgMember[]; invites: PendingOrgInvite[] }> {
@@ -687,6 +729,10 @@ export function removeOrgMember(orgId: string, memberId: string): Promise<void> 
 
 export function revokeOrgInvite(orgId: string, inviteId: string): Promise<void> {
   return apiFetch(`/orgs/${orgId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+export function resendOrgInvite(orgId: string, inviteId: string): Promise<{ invite: PendingOrgInvite; inviteUrl: string }> {
+  return apiFetch(`/orgs/${orgId}/members/invites/${inviteId}/resend`, { method: "POST" });
 }
 
 // --- Org invite acceptance (mirror /invites) ---
@@ -748,8 +794,14 @@ export function updateTeam(orgId: string, teamId: string, input: { name: string 
   return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
 
-export function deleteTeam(orgId: string, teamId: string): Promise<void> {
-  return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE" });
+// force acknowledges that projects in this team will lose it; without it the
+// API 409s with { projectCount } in details.
+export function deleteTeam(orgId: string, teamId: string, force = false): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE", body: JSON.stringify({ force }) });
+}
+
+export function leaveTeam(orgId: string, teamId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/me`, { method: "DELETE" });
 }
 
 // --- Team members + invites ---
@@ -768,6 +820,7 @@ export interface PendingTeamInvite {
   email: string;
   role: Exclude<MemberRole, "owner">;
   createdAt: string;
+  expiresAt: string;
 }
 
 export function listTeamMembers(orgId: string, teamId: string): Promise<{ members: TeamMember[]; invites: PendingTeamInvite[] }> {
@@ -792,6 +845,10 @@ export function removeTeamMember(orgId: string, teamId: string, memberId: string
 
 export function revokeTeamInvite(orgId: string, teamId: string, inviteId: string): Promise<void> {
   return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+export function resendTeamInvite(orgId: string, teamId: string, inviteId: string): Promise<{ invite: PendingTeamInvite; inviteUrl: string }> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/invites/${inviteId}/resend`, { method: "POST" });
 }
 
 // --- Team invite acceptance (mirror /invites) ---
