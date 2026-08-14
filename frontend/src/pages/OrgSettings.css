@@ -26,6 +26,18 @@
   outline-offset: 1px;
 }
 
+/* Native <select> draws its arrow flush to the edge — swap in the design
+   system's chevron with breathing room on the right, and extra right padding
+   so the value never runs under it (used by the ownership-transfer picker). */
+select.orgset-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%238A8A8E' fill='none' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
 .orgset-readonly {
   font-size: 15px;
   font-weight: 600;
