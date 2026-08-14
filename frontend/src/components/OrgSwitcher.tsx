@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useOrgs } from '../lib/org-context';
 import './OrgSwitcher.css';
 
@@ -10,6 +10,7 @@ export default function OrgSwitcher() {
   const { orgs, loading, selectedOrgId, selectOrg } = useOrgs();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   if (loading && !orgs) {
     return <div className="org-switcher-skeleton ws-skeleton" aria-hidden="true" />;
@@ -23,7 +24,12 @@ export default function OrgSwitcher() {
   const choose = (orgId: string) => {
     setOpen(false);
     selectOrg(orgId);
-    navigate(`/orgs/${orgId}`);
+    // On an org page, follow the selection to that org's rollup. Elsewhere
+    // (e.g. the Projects page, which filters by the selected org in place),
+    // just update the selection without navigating away.
+    if (location.pathname.startsWith('/orgs/')) {
+      navigate(`/orgs/${orgId}`);
+    }
   };
 
   return (
