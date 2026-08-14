@@ -81,7 +81,7 @@ function formatConnectedAt(iso: string): string {
 
 export default function Settings() {
   const { project, refresh: refreshProject } = useProject();
-  const { selectedOrgId } = useOrgs();
+  const { orgs, selectedOrgId } = useOrgs();
   const { user } = useCurrentUser();
   const navigate = useNavigate();
   const [notifs, setNotifs] = useState<Record<string, boolean>>(
@@ -110,8 +110,10 @@ export default function Settings() {
   const [slaError, setSlaError] = useState<string | null>(null);
 
   const [editingTeam, setEditingTeam] = useState(false);
+  const [orgDraftId, setOrgDraftId] = useState('');
   const [teamDraftId, setTeamDraftId] = useState('');
   const [teams, setTeams] = useState<TeamSummary[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamSaving, setTeamSaving] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
 
@@ -396,26 +398,46 @@ export default function Settings() {
     }
   };
 
+  const loadTeamsForOrg = (orgId: string) => {
+    setTeamsLoading(true);
+    listTeams(orgId)
+      .then(({ teams: t }) => setTeams(t))
+      .catch(() => setTeams([]))
+      .finally(() => setTeamsLoading(false));
+  };
+
   const startEditingTeam = () => {
     if (!project) return;
-    setTeamDraftId(project.teamId ?? '');
     setTeamError(null);
     setEditingTeam(true);
-    // Load the teams to choose from. A project already in a team knows its org;
-    // an unassigned project falls back to the org selected in the switcher.
-    const orgId = project.orgId ?? selectedOrgId;
-    if (orgId) {
-      listTeams(orgId)
-        .then(({ teams: t }) => setTeams(t))
-        .catch(() => setTeams([]));
+    // Two-step picker. Seed the org from the project's current org (or, for an
+    // unassigned project, the org selected in the switcher, else the first org
+    // the user belongs to), then load that org's teams. teamDraftId is
+    // preserved only when we're seeding the project's own org.
+    const seedOrg = project.orgId ?? selectedOrgId ?? orgs?.[0]?.id ?? '';
+    setOrgDraftId(seedOrg);
+    setTeamDraftId(seedOrg === project.orgId ? (project.teamId ?? '') : '');
+    if (seedOrg) {
+      loadTeamsForOrg(seedOrg);
     } else {
       setTeams([]);
     }
   };
 
+  // Switching the org resets the team choice — a team from another org no
+  // longer applies — and loads the newly selected org's teams.
+  const handleOrgChange = (orgId: string) => {
+    setOrgDraftId(orgId);
+    setTeamDraftId('');
+    setTeams([]);
+    if (orgId) loadTeamsForOrg(orgId);
+  };
+
   const cancelEditingTeam = () => {
     setEditingTeam(false);
+    setOrgDraftId('');
     setTeamDraftId('');
+    setTeams([]);
     setTeamError(null);
   };
 
@@ -476,9 +498,30 @@ export default function Settings() {
         {editingTeam ? (
           <form onSubmit={handleSaveTeam}>
             {teamError && <div className="settings-jira-error" role="alert">{teamError}</div>}
+            {/* Step 1: pick the organization (moving across orgs re-homes the project). */}
+            <div className="settings-jira-field" style={{ marginTop: 12 }}>
+              <label htmlFor="org-select" className="settings-field-label">Organization</label>
+              {orgs && orgs.length > 0 ? (
+                <select
+                  id="org-select"
+                  className="settings-jira-input"
+                  value={orgDraftId}
+                  onChange={(e) => handleOrgChange(e.target.value)}
+                >
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="ws-card-hint" style={{ marginBottom: 0 }}>You don&rsquo;t belong to any organizations yet.</div>
+              )}
+            </div>
+            {/* Step 2: pick a team within that organization. */}
             <div className="settings-jira-field" style={{ marginTop: 12 }}>
               <label htmlFor="team-select" className="settings-field-label">Team</label>
-              {teams.length > 0 ? (
+              {teamsLoading ? (
+                <div className="ws-card-hint" style={{ marginBottom: 0 }}>Loading teams…</div>
+              ) : teams.length > 0 ? (
                 <select
                   id="team-select"
                   className="settings-jira-input"
@@ -492,7 +535,7 @@ export default function Settings() {
                 </select>
               ) : (
                 <div className="ws-card-hint" style={{ marginBottom: 0 }}>
-                  No teams available in this organization yet — create one from the organization settings first.
+                  This organization has no teams yet — create one from its settings first, then assign the project here.
                 </div>
               )}
             </div>
@@ -509,7 +552,14 @@ export default function Settings() {
           <>
             <div style={{ marginTop: 12 }}>
               <div className="settings-field-label">Team</div>
-              <div className="settings-field-value">{project?.teamHierarchyName || '—'}</div>
+              <div className="settings-field-value">
+                {project?.teamHierarchyName || '—'}
+                {project?.orgId && orgs?.some((o) => o.id === project.orgId) && (
+                  <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                    {' · '}{orgs.find((o) => o.id === project.orgId)!.name}
+                  </span>
+                )}
+              </div>
             </div>
             <button
               className="ws-btn ws-btn-secondary"
