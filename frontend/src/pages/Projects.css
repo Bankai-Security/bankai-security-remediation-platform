@@ -10,6 +10,29 @@
   font-weight: 400;
 }
 
+.projects-unassigned {
+  margin-top: 40px;
+}
+
+.projects-section-head {
+  padding-bottom: 16px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 28px;
+}
+
+.projects-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.projects-section-hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+  max-width: 620px;
+}
+
 .projects-empty {
   background: var(--color-surface);
   border: 1px solid var(--color-border);

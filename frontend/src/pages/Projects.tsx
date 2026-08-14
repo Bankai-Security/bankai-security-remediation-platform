@@ -6,8 +6,61 @@ import InviteBell from '../components/InviteBell';
 import OrgSwitcher from '../components/OrgSwitcher';
 import { listProjects, logout, type Project } from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
+import { useOrgs } from '../lib/org-context';
 import './TopBar.css';
 import './Projects.css';
+
+function projectCard(project: Project) {
+  return project.status === 'active' ? (
+    <Link key={project.id} to={`/workspace/${project.id}/workflow`} className="project-card project-card--active">
+      <div className="project-card-status-row">
+        <span className="project-card-status project-card-status--active">
+          <span className="project-card-status-dot project-card-status-dot--active" />
+          Active
+        </span>
+      </div>
+      <div className="project-card-title">{project.name}</div>
+      {project.services.length > 0 && (
+        <div className="project-card-tags">
+          {project.services.map((service) => (
+            <span key={service} className="project-card-tag">{service}</span>
+          ))}
+        </div>
+      )}
+      <div className="project-card-stats">
+        <div>
+          <div className="project-card-stat-value">{project.stats.totalCvits}</div>
+          <div className="project-card-stat-label">Total CVITs</div>
+        </div>
+        <div>
+          <div className="project-card-stat-value project-card-stat-value--red">{project.stats.slaBreachedPct}%</div>
+          <div className="project-card-stat-label">SLA breached</div>
+        </div>
+        <div>
+          <div className="project-card-stat-value">{project.stats.openTickets}</div>
+          <div className="project-card-stat-label">Open tickets</div>
+        </div>
+      </div>
+      {project.lastIntakeAt && (
+        <div className="project-card-footer">Last intake {formatDate(project.lastIntakeAt)}</div>
+      )}
+    </Link>
+  ) : (
+    <Link key={project.id} to={`/workspace/${project.id}/intake`} className="project-card project-card--muted">
+      <div className="project-card-status-row">
+        <span className="project-card-status">
+          <span className="project-card-status-dot" />
+          Not connected
+        </span>
+      </div>
+      <div className="project-card-title project-card-title--muted">{project.name}</div>
+      <div className="project-card-muted-body">
+        Connect a scanner export for this project to start triaging CVITs.
+      </div>
+      <div className="project-card-footer">Upload a scan →</div>
+    </Link>
+  );
+}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -19,6 +72,7 @@ export default function Projects() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { user, setUser } = useCurrentUser();
+  const { orgs, selectedOrgId } = useOrgs();
 
   const handleSignOut = async () => {
     setMenuOpen(false);
@@ -50,6 +104,16 @@ export default function Projects() {
 
   const isLoading = projects === null && !error;
   const isEmpty = projects !== null && projects.length === 0;
+
+  // The grid is scoped to the org selected in the switcher. A project belongs to
+  // an org via its team (project.orgId). Projects with no team (orgId === null)
+  // belong to no org, so they'd vanish from every filtered view — instead they
+  // get their own "unassigned" section so they stay reachable and can be filed.
+  const all = projects ?? [];
+  const activeOrg = orgs?.find((o) => o.id === selectedOrgId) ?? null;
+  const filtering = !!selectedOrgId;
+  const inOrg = filtering ? all.filter((p) => p.orgId === selectedOrgId) : all;
+  const unassigned = filtering ? all.filter((p) => p.orgId === null) : [];
 
   return (
     <div className="topbar-page">
@@ -106,7 +170,16 @@ export default function Projects() {
       <main className="page-main">
         <div className="page-eyebrow">Workspace</div>
         <h1 className="page-title">Projects</h1>
-        <div className="page-subtitle">Pick a project to open its remediation pipeline.</div>
+        <div className="page-subtitle">
+          {filtering && activeOrg ? (
+            <>
+              Projects in <strong>{activeOrg.name}</strong>.{' '}
+              <Link to={`/orgs/${activeOrg.id}`}>View organization rollup →</Link>
+            </>
+          ) : (
+            'Pick a project to open its remediation pipeline.'
+          )}
+        </div>
 
         {isLoading ? (
           <div className="page-subtitle">Loading projects…</div>
@@ -133,65 +206,35 @@ export default function Projects() {
             <Link to="/projects/new" className="projects-empty-cta">+ New project</Link>
           </div>
         ) : (
-          <div className="projects-grid">
-            {projects!.map((project) =>
-              project.status === 'active' ? (
-                <Link key={project.id} to={`/workspace/${project.id}/workflow`} className="project-card project-card--active">
-                  <div className="project-card-status-row">
-                    <span className="project-card-status project-card-status--active">
-                      <span className="project-card-status-dot project-card-status-dot--active" />
-                      Active
-                    </span>
-                  </div>
-                  <div className="project-card-title">{project.name}</div>
-                  {project.services.length > 0 && (
-                    <div className="project-card-tags">
-                      {project.services.map((service) => (
-                        <span key={service} className="project-card-tag">{service}</span>
-                      ))}
-                    </div>
-                  )}
-                  <div className="project-card-stats">
-                    <div>
-                      <div className="project-card-stat-value">{project.stats.totalCvits}</div>
-                      <div className="project-card-stat-label">Total CVITs</div>
-                    </div>
-                    <div>
-                      <div className="project-card-stat-value project-card-stat-value--red">{project.stats.slaBreachedPct}%</div>
-                      <div className="project-card-stat-label">SLA breached</div>
-                    </div>
-                    <div>
-                      <div className="project-card-stat-value">{project.stats.openTickets}</div>
-                      <div className="project-card-stat-label">Open tickets</div>
-                    </div>
-                  </div>
-                  {project.lastIntakeAt && (
-                    <div className="project-card-footer">Last intake {formatDate(project.lastIntakeAt)}</div>
-                  )}
-                </Link>
-              ) : (
-                <Link key={project.id} to={`/workspace/${project.id}/intake`} className="project-card project-card--muted">
-                  <div className="project-card-status-row">
-                    <span className="project-card-status">
-                      <span className="project-card-status-dot" />
-                      Not connected
-                    </span>
-                  </div>
-                  <div className="project-card-title project-card-title--muted">{project.name}</div>
-                  <div className="project-card-muted-body">
-                    Connect a scanner export for this project to start triaging CVITs.
-                  </div>
-                  <div className="project-card-footer">Upload a scan →</div>
-                </Link>
-              ),
+          <>
+            {filtering && inOrg.length === 0 && (
+              <div className="page-subtitle" style={{ marginTop: -8, marginBottom: 20 }}>
+                No projects in this organization yet — create one, or assign an existing project to a team from its Settings.
+              </div>
             )}
+            <div className="projects-grid">
+              {inOrg.map(projectCard)}
+              <Link to="/projects/new" className="project-card-new">
+                <div className="project-card-new-icon">+</div>
+                <div className="project-card-new-title">New project</div>
+                <div className="project-card-new-sub">Connect another scanner feed</div>
+              </Link>
+            </div>
 
-            <Link to="/projects/new" className="project-card-new">
-              <div className="project-card-new-icon">+</div>
-              <div className="project-card-new-title">New project</div>
-              <div className="project-card-new-sub">Connect another scanner feed</div>
-            </Link>
-          </div>
+            {unassigned.length > 0 && (
+              <div className="projects-unassigned">
+                <div className="projects-section-head">
+                  <h2 className="projects-section-title">Not in an organization</h2>
+                  <div className="projects-section-hint">
+                    These aren&rsquo;t assigned to a team. Open one and set its team in Settings to file it under an organization.
+                  </div>
+                </div>
+                <div className="projects-grid">
+                  {unassigned.map(projectCard)}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
