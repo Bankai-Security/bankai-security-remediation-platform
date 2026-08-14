@@ -39,6 +39,7 @@ import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../
 import { canManageProject } from '../../lib/roles';
 import { useOrgs } from '../../lib/org-context';
 import { useProject } from '../../lib/project-context';
+import '../NewProject.css'; // chip classes (new-project-chip*) for the teams multi-select
 import './Settings.css';
 
 const SLA_TIERS: { key: keyof SlaPolicyDays; label: string; badgeClass: string }[] = [
@@ -111,7 +112,7 @@ export default function Settings() {
 
   const [editingTeam, setEditingTeam] = useState(false);
   const [orgDraftId, setOrgDraftId] = useState('');
-  const [teamDraftId, setTeamDraftId] = useState('');
+  const [teamDraftIds, setTeamDraftIds] = useState<string[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamSaving, setTeamSaving] = useState(false);
@@ -410,13 +411,13 @@ export default function Settings() {
     if (!project) return;
     setTeamError(null);
     setEditingTeam(true);
-    // Two-step picker. Seed the org from the project's current org (or, for an
-    // unassigned project, the org selected in the switcher, else the first org
-    // the user belongs to), then load that org's teams. teamDraftId is
+    // Pick the org from the project's current org (or, for an unassigned
+    // project, the org selected in the switcher, else the first org the user
+    // belongs to), then load that org's teams. The current team selection is
     // preserved only when we're seeding the project's own org.
     const seedOrg = project.orgId ?? selectedOrgId ?? orgs?.[0]?.id ?? '';
     setOrgDraftId(seedOrg);
-    setTeamDraftId(seedOrg === project.orgId ? (project.teamId ?? '') : '');
+    setTeamDraftIds(seedOrg === project.orgId ? project.teams.map((t) => t.id) : []);
     if (seedOrg) {
       loadTeamsForOrg(seedOrg);
     } else {
@@ -424,11 +425,11 @@ export default function Settings() {
     }
   };
 
-  // Switching the org resets the team choice — a team from another org no
-  // longer applies — and loads the newly selected org's teams.
+  // Switching the org clears the team selection — teams from another org no
+  // longer apply — and loads the newly selected org's teams.
   const handleOrgChange = (orgId: string) => {
     setOrgDraftId(orgId);
-    setTeamDraftId('');
+    setTeamDraftIds([]);
     setTeams([]);
     if (orgId) loadTeamsForOrg(orgId);
   };
@@ -436,7 +437,7 @@ export default function Settings() {
   const cancelEditingTeam = () => {
     setEditingTeam(false);
     setOrgDraftId('');
-    setTeamDraftId('');
+    setTeamDraftIds([]);
     setTeams([]);
     setTeamError(null);
   };
@@ -447,11 +448,11 @@ export default function Settings() {
     setTeamSaving(true);
     setTeamError(null);
     try {
-      await updateProjectSettings(project.id, { teamId: teamDraftId || null });
+      await updateProjectSettings(project.id, { teamIds: teamDraftIds });
       refreshProject();
       setEditingTeam(false);
     } catch (err) {
-      setTeamError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Could not save the project team.');
+      setTeamError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Could not save the project teams.');
     } finally {
       setTeamSaving(false);
     }
@@ -492,8 +493,8 @@ export default function Settings() {
 
       <section className="ws-card settings-section">
         <div className="ws-card-eyebrow">Project</div>
-        <h2 className="settings-h2" style={{ marginBottom: 6 }}>Team</h2>
-        <div className="ws-card-hint">The team this project belongs to. Determines how it rolls up in the organization view.</div>
+        <h2 className="settings-h2" style={{ marginBottom: 6 }}>Teams</h2>
+        <div className="ws-card-hint">The teams this project belongs to. Determines how it rolls up in the organization view.</div>
 
         {editingTeam ? (
           <form onSubmit={handleSaveTeam}>
@@ -516,23 +517,47 @@ export default function Settings() {
                 <div className="ws-card-hint" style={{ marginBottom: 0 }}>You don&rsquo;t belong to any organizations yet.</div>
               )}
             </div>
-            {/* Step 2: pick a team within that organization. */}
+            {/* Step 2: pick one or more teams within that organization. */}
             <div className="settings-jira-field" style={{ marginTop: 12 }}>
-              <label htmlFor="team-select" className="settings-field-label">Team</label>
+              <label className="settings-field-label">Teams</label>
               {teamsLoading ? (
                 <div className="ws-card-hint" style={{ marginBottom: 0 }}>Loading teams…</div>
               ) : teams.length > 0 ? (
-                <select
-                  id="team-select"
-                  className="settings-jira-input"
-                  value={teamDraftId}
-                  onChange={(e) => setTeamDraftId(e.target.value)}
-                >
-                  <option value="">No team</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                <>
+                  {teamDraftIds.length > 0 && (
+                    <div className="new-project-chips">
+                      {teamDraftIds.map((id) => {
+                        const team = teams.find((t) => t.id === id);
+                        return (
+                          <span key={id} className="new-project-chip">
+                            {team?.name ?? id}
+                            <button
+                              type="button"
+                              className="new-project-chip-remove"
+                              onClick={() => setTeamDraftIds((prev) => prev.filter((x) => x !== id))}
+                              aria-label={`Remove ${team?.name ?? 'team'}`}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="new-project-suggestions">
+                    <span className="new-project-suggestions-label">Add to team:</span>
+                    {teams.filter((t) => !teamDraftIds.includes(t.id)).map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className="new-project-suggestion-chip"
+                        onClick={() => setTeamDraftIds((prev) => [...prev, t.id])}
+                      >
+                        + {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <div className="ws-card-hint" style={{ marginBottom: 0 }}>
                   This organization has no teams yet — create one from its settings first, then assign the project here.
@@ -551,9 +576,9 @@ export default function Settings() {
         ) : (
           <>
             <div style={{ marginTop: 12 }}>
-              <div className="settings-field-label">Team</div>
+              <div className="settings-field-label">Teams</div>
               <div className="settings-field-value">
-                {project?.teamHierarchyName || '—'}
+                {project && project.teams.length > 0 ? project.teams.map((t) => t.name).join(', ') : '—'}
                 {project?.orgId && orgs?.some((o) => o.id === project.orgId) && (
                   <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
                     {' · '}{orgs.find((o) => o.id === project.orgId)!.name}
@@ -566,9 +591,9 @@ export default function Settings() {
               style={{ marginTop: 16 }}
               onClick={startEditingTeam}
               disabled={!project || !canManageProject(project.myRole)}
-              title={project && !canManageProject(project.myRole) ? 'Only admins can change the team.' : undefined}
+              title={project && !canManageProject(project.myRole) ? 'Only admins can change the teams.' : undefined}
             >
-              Change team
+              Change teams
             </button>
           </>
         )}
