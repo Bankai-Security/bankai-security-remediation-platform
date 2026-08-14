@@ -7,6 +7,7 @@ import {
   listTeamMembers,
   listTeams,
   removeTeamMember,
+  resendTeamInvite,
   revokeTeamInvite,
   updateTeam,
   updateTeamMemberRole,
@@ -141,6 +142,7 @@ export default function TeamSettings() {
                 onChangeRole={(memberId, role) => updateTeamMemberRole(orgId, teamId, memberId, role)}
                 onRemove={(memberId) => removeTeamMember(orgId, teamId, memberId)}
                 onRevoke={(inviteId) => revokeTeamInvite(orgId, teamId, inviteId)}
+                onResend={(inviteId) => resendTeamInvite(orgId, teamId, inviteId)}
                 onChanged={reloadMembers}
               />
             </section>

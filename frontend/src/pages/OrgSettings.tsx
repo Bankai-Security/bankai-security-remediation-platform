@@ -13,6 +13,7 @@ import {
   listOrgMembers,
   listTeams,
   removeOrgMember,
+  resendOrgInvite,
   revokeOrgInvite,
   updateOrg,
   updateOrgMemberRole,
@@ -272,6 +273,7 @@ export default function OrgSettings() {
                 onChangeRole={(memberId, role) => updateOrgMemberRole(orgId, memberId, role)}
                 onRemove={(memberId) => removeOrgMember(orgId, memberId)}
                 onRevoke={(inviteId) => revokeOrgInvite(orgId, inviteId)}
+                onResend={(inviteId) => resendOrgInvite(orgId, inviteId)}
                 onChanged={reloadMembers}
               />
             </section>

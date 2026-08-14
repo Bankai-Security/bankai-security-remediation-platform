@@ -538,6 +538,7 @@ export interface PendingProjectInvite {
   email: string;
   role: Exclude<MemberRole, "owner">;
   createdAt: string;
+  expiresAt: string;
 }
 
 export function listMembers(projectId: string): Promise<{ members: ProjectMember[]; invites: PendingProjectInvite[] }> {
@@ -561,6 +562,11 @@ export function removeMember(projectId: string, memberId: string): Promise<void>
 
 export function revokeInvite(projectId: string, inviteId: string): Promise<void> {
   return apiFetch(`/projects/${projectId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+// Revokes the pending (possibly expired) invite and issues a fresh link.
+export function resendMemberInvite(projectId: string, inviteId: string): Promise<{ invite: PendingProjectInvite; inviteUrl: string }> {
+  return apiFetch(`/projects/${projectId}/members/invites/${inviteId}/resend`, { method: "POST" });
 }
 
 export interface MyInvite {
@@ -677,6 +683,7 @@ export interface PendingOrgInvite {
   email: string;
   role: Exclude<MemberRole, "owner">;
   createdAt: string;
+  expiresAt: string;
 }
 
 export function listOrgMembers(orgId: string): Promise<{ members: OrgMember[]; invites: PendingOrgInvite[] }> {
@@ -700,6 +707,10 @@ export function removeOrgMember(orgId: string, memberId: string): Promise<void> 
 
 export function revokeOrgInvite(orgId: string, inviteId: string): Promise<void> {
   return apiFetch(`/orgs/${orgId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+export function resendOrgInvite(orgId: string, inviteId: string): Promise<{ invite: PendingOrgInvite; inviteUrl: string }> {
+  return apiFetch(`/orgs/${orgId}/members/invites/${inviteId}/resend`, { method: "POST" });
 }
 
 // --- Org invite acceptance (mirror /invites) ---
@@ -781,6 +792,7 @@ export interface PendingTeamInvite {
   email: string;
   role: Exclude<MemberRole, "owner">;
   createdAt: string;
+  expiresAt: string;
 }
 
 export function listTeamMembers(orgId: string, teamId: string): Promise<{ members: TeamMember[]; invites: PendingTeamInvite[] }> {
@@ -805,6 +817,10 @@ export function removeTeamMember(orgId: string, teamId: string, memberId: string
 
 export function revokeTeamInvite(orgId: string, teamId: string, inviteId: string): Promise<void> {
   return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/invites/${inviteId}`, { method: "DELETE" });
+}
+
+export function resendTeamInvite(orgId: string, teamId: string, inviteId: string): Promise<{ invite: PendingTeamInvite; inviteUrl: string }> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/invites/${inviteId}/resend`, { method: "POST" });
 }
 
 // --- Team invite acceptance (mirror /invites) ---

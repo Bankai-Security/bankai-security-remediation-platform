@@ -48,6 +48,7 @@ export async function listMyOrgInvites(req: Request, res: Response): Promise<voi
     .select("id, token, role, status, created_at, organizations ( id, name )")
     .eq("email", email)
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -109,10 +110,11 @@ export async function acceptOrgInvite(req: Request, res: Response): Promise<void
       throw new HttpError(404, "Invite not found");
     }
     if (error?.code === "42501") {
-      throw new HttpError(403, "This invite was sent to a different email address.");
+      throw new HttpError(403, `This invite was sent to a different email address (you're signed in as ${req.user!.email ?? "an account with no email"}).`);
     }
     if (error?.code === "22023") {
-      throw new HttpError(409, "This invite is no longer pending.");
+      // "no longer pending" vs "expired" — the RPC's message says which.
+      throw new HttpError(409, error.message);
     }
     throw new HttpError(500, "Could not accept this invite.");
   }

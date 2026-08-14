@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { HttpError } from "../lib/http-error.js";
+import { assertInviteRateLimit, resendInvite } from "../lib/invites.js";
 import { logger } from "../lib/logger.js";
 import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
@@ -50,7 +51,7 @@ export async function listMembers(req: Request, res: Response): Promise<void> {
     // are meant to be sharing that link in the first place.
     supabase
       .from("project_invites")
-      .select("id, email, role, token, created_at")
+      .select("id, email, role, token, created_at, expires_at")
       .eq("project_id", project.id)
       .eq("status", "pending")
       .order("created_at", { ascending: true }),
@@ -87,6 +88,7 @@ export async function listMembers(req: Request, res: Response): Promise<void> {
     email: row.email,
     role: row.role,
     createdAt: row.created_at,
+    expiresAt: row.expires_at,
   }));
 
   res.status(200).json({ members, invites });
@@ -97,6 +99,8 @@ export async function inviteMember(req: Request, res: Response): Promise<void> {
   requireRole(project.myRole, ["owner", "admin"]);
   const { email, role } = req.body as InviteMemberInput;
   const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "project_invites", req.user!.id);
 
   const { data: existingMember } = await supabase
     .from("project_members")
@@ -111,7 +115,7 @@ export async function inviteMember(req: Request, res: Response): Promise<void> {
   const { data: invite, error } = await supabase
     .from("project_invites")
     .insert({ project_id: project.id, email, role, invited_by: req.user!.id })
-    .select("id, token, email, role, created_at")
+    .select("id, token, email, role, created_at, expires_at")
     .single();
 
   if (error) {
@@ -122,8 +126,31 @@ export async function inviteMember(req: Request, res: Response): Promise<void> {
   }
 
   res.status(201).json({
-    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at },
+    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at, expiresAt: invite.expires_at },
     inviteUrl: `${env.FRONTEND_ORIGIN}/invites/${invite.token}`,
+  });
+}
+
+// POST /projects/:projectId/members/invites/:inviteId/resend — revoke the
+// pending (possibly expired) invite and issue a fresh token + expiry.
+export async function resendMemberInvite(req: Request, res: Response): Promise<void> {
+  const project = req.project!;
+  requireRole(project.myRole, ["owner", "admin"]);
+  const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "project_invites", req.user!.id);
+
+  const fresh = await resendInvite(supabase, {
+    table: "project_invites",
+    scopeColumn: "project_id",
+    scopeId: project.id,
+    inviteId: req.params.inviteId as string,
+    invitedBy: req.user!.id,
+  });
+
+  res.status(201).json({
+    invite: { id: fresh.id, email: fresh.email, role: fresh.role, createdAt: fresh.created_at, expiresAt: fresh.expires_at },
+    inviteUrl: `${env.FRONTEND_ORIGIN}/invites/${fresh.token}`,
   });
 }
 

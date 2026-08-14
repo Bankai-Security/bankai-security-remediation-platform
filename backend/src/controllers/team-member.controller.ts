@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { HttpError } from "../lib/http-error.js";
+import { assertInviteRateLimit, resendInvite } from "../lib/invites.js";
 import { logger } from "../lib/logger.js";
 import { recordOrgActivity } from "../lib/org-activity.js";
 import { requireRole } from "../lib/roles.js";
@@ -44,7 +45,7 @@ export async function listTeamMembers(req: Request, res: Response): Promise<void
       .order("created_at", { ascending: true }),
     supabase
       .from("team_invites")
-      .select("id, email, role, token, created_at")
+      .select("id, email, role, token, created_at, expires_at")
       .eq("team_id", team.id)
       .eq("status", "pending")
       .order("created_at", { ascending: true }),
@@ -69,6 +70,7 @@ export async function listTeamMembers(req: Request, res: Response): Promise<void
     email: row.email,
     role: row.role,
     createdAt: row.created_at,
+    expiresAt: row.expires_at,
   }));
 
   res.status(200).json({ members, invites });
@@ -79,6 +81,8 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
   requireRole(team.myRole, ["owner", "admin"]);
   const { email, role } = req.body as InviteTeamMemberInput;
   const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "team_invites", req.user!.id);
 
   const { data: existingMember } = await supabase
     .from("team_members")
@@ -93,7 +97,7 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
   const { data: invite, error } = await supabase
     .from("team_invites")
     .insert({ team_id: team.id, email, role, invited_by: req.user!.id })
-    .select("id, token, email, role, created_at")
+    .select("id, token, email, role, created_at, expires_at")
     .single();
 
   if (error) {
@@ -113,8 +117,40 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
   });
 
   res.status(201).json({
-    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at },
+    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at, expiresAt: invite.expires_at },
     inviteUrl: `${env.FRONTEND_ORIGIN}/team-invites/${invite.token}`,
+  });
+}
+
+// POST .../teams/:teamId/members/invites/:inviteId/resend — same contract as
+// resendOrgInvite, scoped to the team.
+export async function resendTeamInvite(req: Request, res: Response): Promise<void> {
+  const team = req.team!;
+  requireRole(team.myRole, ["owner", "admin"]);
+  const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "team_invites", req.user!.id);
+
+  const fresh = await resendInvite(supabase, {
+    table: "team_invites",
+    scopeColumn: "team_id",
+    scopeId: team.id,
+    inviteId: req.params.inviteId as string,
+    invitedBy: req.user!.id,
+  });
+
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `resent the team "${team.name}" invite for ${fresh.email}`,
+  });
+
+  res.status(201).json({
+    invite: { id: fresh.id, email: fresh.email, role: fresh.role, createdAt: fresh.created_at, expiresAt: fresh.expires_at },
+    inviteUrl: `${env.FRONTEND_ORIGIN}/team-invites/${fresh.token}`,
   });
 }
 

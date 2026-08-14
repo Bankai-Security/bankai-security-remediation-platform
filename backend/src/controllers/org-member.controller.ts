@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { HttpError } from "../lib/http-error.js";
+import { assertInviteRateLimit, resendInvite } from "../lib/invites.js";
 import { logger } from "../lib/logger.js";
 import { recordOrgActivity } from "../lib/org-activity.js";
 import { requireRole } from "../lib/roles.js";
@@ -51,7 +52,7 @@ export async function listOrgMembers(req: Request, res: Response): Promise<void>
     // sharing that link.
     supabase
       .from("org_invites")
-      .select("id, email, role, token, created_at")
+      .select("id, email, role, token, created_at, expires_at")
       .eq("org_id", org.id)
       .eq("status", "pending")
       .order("created_at", { ascending: true }),
@@ -88,6 +89,7 @@ export async function listOrgMembers(req: Request, res: Response): Promise<void>
     email: row.email,
     role: row.role,
     createdAt: row.created_at,
+    expiresAt: row.expires_at,
   }));
 
   res.status(200).json({ members, invites });
@@ -98,6 +100,8 @@ export async function inviteOrgMember(req: Request, res: Response): Promise<void
   requireRole(org.myRole, ["owner", "admin"]);
   const { email, role } = req.body as InviteOrgMemberInput;
   const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "org_invites", req.user!.id);
 
   const { data: existingMember } = await supabase
     .from("org_members")
@@ -112,7 +116,7 @@ export async function inviteOrgMember(req: Request, res: Response): Promise<void
   const { data: invite, error } = await supabase
     .from("org_invites")
     .insert({ org_id: org.id, email, role, invited_by: req.user!.id })
-    .select("id, token, email, role, created_at")
+    .select("id, token, email, role, created_at, expires_at")
     .single();
 
   if (error) {
@@ -131,8 +135,40 @@ export async function inviteOrgMember(req: Request, res: Response): Promise<void
   });
 
   res.status(201).json({
-    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at },
+    invite: { id: invite.id, email: invite.email, role: invite.role, createdAt: invite.created_at, expiresAt: invite.expires_at },
     inviteUrl: `${env.FRONTEND_ORIGIN}/org-invites/${invite.token}`,
+  });
+}
+
+// POST /orgs/:orgId/members/invites/:inviteId/resend — revoke the pending
+// (possibly expired) invite and issue a fresh token + expiry for the same
+// email/role. The one path to a new link for an expired invite.
+export async function resendOrgInvite(req: Request, res: Response): Promise<void> {
+  const org = req.org!;
+  requireRole(org.myRole, ["owner", "admin"]);
+  const supabase = userScopedClient(req);
+
+  await assertInviteRateLimit(supabase, "org_invites", req.user!.id);
+
+  const fresh = await resendInvite(supabase, {
+    table: "org_invites",
+    scopeColumn: "org_id",
+    scopeId: org.id,
+    inviteId: req.params.inviteId as string,
+    invitedBy: req.user!.id,
+  });
+
+  await recordOrgActivity(supabase, {
+    orgId: org.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "invite",
+    summary: `resent the invite for ${fresh.email}`,
+  });
+
+  res.status(201).json({
+    invite: { id: fresh.id, email: fresh.email, role: fresh.role, createdAt: fresh.created_at, expiresAt: fresh.expires_at },
+    inviteUrl: `${env.FRONTEND_ORIGIN}/org-invites/${fresh.token}`,
   });
 }
 
