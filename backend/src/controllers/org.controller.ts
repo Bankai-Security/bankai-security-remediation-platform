@@ -18,11 +18,15 @@ interface OrgRow {
   created_at: string;
 }
 
+type RollupProject = { id: string; name: string; status: string };
+
 interface TeamRollupRow {
   id: string;
   name: string;
   created_at: string;
-  projects: { id: string; name: string; status: string }[] | null;
+  // Projects reach teams through the project_teams join table now, so the embed
+  // is one level deeper; a project in several teams appears under each.
+  project_teams: { projects: RollupProject | RollupProject[] | null }[] | null;
 }
 
 // GET /orgs — every org the caller belongs to. RLS on organizations already
@@ -56,7 +60,7 @@ export async function listOrgs(req: Request, res: Response): Promise<void> {
 }
 
 // GET /orgs/:id — a single org with its teams -> projects rollup. Teams embed
-// their projects through projects.team_id; RLS on both tables means an org
+// their projects through the project_teams join table; RLS on both tables means an org
 // member only ever sees the teams/projects they're entitled to (org members
 // inherit at least viewer on every project in the org via project_role()).
 export async function getOrg(req: Request, res: Response): Promise<void> {
@@ -78,7 +82,7 @@ export async function getOrg(req: Request, res: Response): Promise<void> {
     supabase.rpc("org_role", { p_org_id: data.id }),
     supabase
       .from("teams")
-      .select("id, name, created_at, projects ( id, name, status )")
+      .select("id, name, created_at, project_teams ( projects ( id, name, status ) )")
       .eq("org_id", data.id)
       .order("created_at", { ascending: true }),
   ]);
@@ -90,7 +94,10 @@ export async function getOrg(req: Request, res: Response): Promise<void> {
   const teams = ((teamRows ?? []) as TeamRollupRow[]).map((team) => ({
     id: team.id,
     name: team.name,
-    projects: (team.projects ?? []).map((p) => ({ id: p.id, name: p.name, status: p.status })),
+    projects: (team.project_teams ?? [])
+      .map((link) => (Array.isArray(link.projects) ? link.projects[0] : link.projects))
+      .filter((p): p is RollupProject => p != null)
+      .map((p) => ({ id: p.id, name: p.name, status: p.status })),
   }));
 
   res.status(200).json({
@@ -176,8 +183,9 @@ export async function updateOrg(req: Request, res: Response): Promise<void> {
 }
 
 // DELETE /orgs/:orgId — owner-only (matches the organizations DELETE RLS
-// policy). Cascades to teams, org/team members, invites, and unsets team_id on
-// any projects in the org (projects.team_id is `on delete set null`).
+// policy). Cascades to teams, org/team members, invites, and the project_teams
+// links for those teams (join rows are `on delete cascade`); the projects
+// themselves are kept, just detached from the org's teams.
 export async function deleteOrg(req: Request, res: Response): Promise<void> {
   const org = req.org!;
   if (org.myRole !== "owner") {

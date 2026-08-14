@@ -36,7 +36,7 @@ export default function NewProject() {
   const { rollup } = useOrgs();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [teamId, setTeamId] = useState('');
+  const [teamIds, setTeamIds] = useState<string[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [newService, setNewService] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +117,7 @@ export default function NewProject() {
         const { project } = await createProject({
           name,
           description: description.trim() || undefined,
-          teamId: teamId || undefined,
+          teamIds,
           services,
         });
         projectId = project.id;
@@ -234,25 +234,48 @@ export default function NewProject() {
                 />
               </div>
               <div className="new-project-field">
-                <label htmlFor="project-team">
-                  Team <span className="new-project-optional">(optional)</span>
+                <label>
+                  Teams <span className="new-project-optional">(optional)</span>
                 </label>
                 {rollup && rollup.teams.length > 0 ? (
                   <>
-                    <select
-                      id="project-team"
-                      className="new-project-input"
-                      value={teamId}
-                      onChange={(e) => setTeamId(e.target.value)}
-                      disabled={!!createdProjectId}
-                    >
-                      <option value="">No team</option>
-                      {rollup.teams.map((t) => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
+                    {teamIds.length > 0 && (
+                      <div className="new-project-chips">
+                        {teamIds.map((id) => {
+                          const team = rollup.teams.find((t) => t.id === id);
+                          return (
+                            <span key={id} className="new-project-chip">
+                              {team?.name ?? id}
+                              <button
+                                type="button"
+                                className="new-project-chip-remove"
+                                onClick={() => setTeamIds((prev) => prev.filter((x) => x !== id))}
+                                aria-label={`Remove ${team?.name ?? 'team'}`}
+                                disabled={!!createdProjectId}
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="new-project-suggestions">
+                      <span className="new-project-suggestions-label">Add to team:</span>
+                      {rollup.teams.filter((t) => !teamIds.includes(t.id)).map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          className="new-project-suggestion-chip"
+                          onClick={() => setTeamIds((prev) => [...prev, t.id])}
+                          disabled={!!createdProjectId}
+                        >
+                          + {t.name}
+                        </button>
                       ))}
-                    </select>
+                    </div>
                     <div className="new-project-section-hint" style={{ marginTop: 6 }}>
-                      Groups this project under <strong>{rollup.name}</strong> in the org rollup. You can change this later in Settings.
+                      Files this project under <strong>{rollup.name}</strong> in the org rollup (one or more teams). You can change this later in Settings.
                     </div>
                   </>
                 ) : (

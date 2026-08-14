@@ -120,11 +120,11 @@ export interface Project {
   id: string;
   name: string;
   description: string | null;
-  // Legacy free-text label (deprecated). The hierarchy placement is teamId /
-  // teamHierarchyName / orgId below.
+  // Legacy free-text label (deprecated). The hierarchy placement is teams[] /
+  // orgId below.
   teamName: string | null;
-  teamId: string | null;
-  teamHierarchyName: string | null;
+  // Every team the project belongs to (many-to-many). All share one org.
+  teams: { id: string; name: string }[];
   orgId: string | null;
   status: "not_connected" | "active";
   services: string[];
@@ -149,7 +149,7 @@ export function getProject(id: string): Promise<{ project: Project }> {
 export function createProject(input: {
   name: string;
   description?: string;
-  teamId?: string;
+  teamIds?: string[];
   services?: string[];
 }): Promise<{ project: Project }> {
   return apiFetch("/projects", { method: "POST", body: JSON.stringify(input) });
@@ -159,9 +159,9 @@ export function deleteProject(id: string, confirmName: string): Promise<void> {
   return apiFetch(`/projects/${id}`, { method: "DELETE", body: JSON.stringify({ confirmName }) });
 }
 
-// Assigns the project to a team in the hierarchy (null unassigns). Replaces the
-// old free-text team-name setter.
-export function updateProjectSettings(projectId: string, input: { teamId: string | null }): Promise<{ teamId: string | null }> {
+// Sets the full list of teams a project belongs to (replace semantics; an empty
+// array unassigns it from every team). All teams must be in one org.
+export function updateProjectSettings(projectId: string, input: { teamIds: string[] }): Promise<{ teamIds: string[] }> {
   return apiFetch(`/projects/${projectId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
 

@@ -6,21 +6,116 @@ import GithubIcon from '../components/GithubIcon';
 import {
   ApiError,
   changePassword,
+  createTeam,
   deleteAccount,
+  deleteTeam,
   disconnectGithubAccount,
   getGithubAccountStatus,
   githubAuthorizeUrl,
   listProjects,
+  listTeams,
   updateProfile,
   type GithubAccountStatus,
+  type OrgSummary,
   type Project,
+  type TeamSummary,
 } from '../lib/api';
 import { getAvatarStyle, getDisplayName, getInitials, useCurrentUser } from '../lib/auth-context';
+import { useOrgs } from '../lib/org-context';
+import { canManageOrg } from '../lib/roles';
 import './AccountSettings.css';
 import './NewProject.css';
 
+// One organization's teams: list + quick create/delete, so teams are available
+// to the New Project team picker without leaving Account Settings. Full team
+// management (rename, members) lives on the per-org settings page.
+function OrgTeamsManager({ org }: { org: OrgSummary }) {
+  const [teams, setTeams] = useState<TeamSummary[] | null>(null);
+  const [newTeam, setNewTeam] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canManage = canManageOrg(org.myRole);
+
+  const reload = () => {
+    listTeams(org.id)
+      .then(({ teams: t }) => setTeams(t))
+      .catch(() => setTeams([]));
+  };
+
+  useEffect(reload, [org.id]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTeam.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createTeam(org.id, { name: newTeam.trim() });
+      setNewTeam('');
+      reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.fieldErrors?.[0]?.message ?? err.message) : 'Could not create the team.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async (team: TeamSummary) => {
+    if (!window.confirm(`Delete team "${team.name}"? Projects keep any other teams they're in.`)) return;
+    try {
+      await deleteTeam(org.id, team.id);
+      reload();
+    } catch {
+      /* best-effort */
+    }
+  };
+
+  return (
+    <div className="account-org-block">
+      <div className="account-org-head">
+        <span className="account-org-name">{org.name}</span>
+        <Link to={`/orgs/${org.id}/settings`} className="account-org-link">Org settings →</Link>
+      </div>
+      {teams === null ? (
+        <div className="account-settings-hint">Loading teams…</div>
+      ) : teams.length === 0 ? (
+        <div className="account-settings-hint">No teams yet.</div>
+      ) : (
+        <div className="new-project-chips">
+          {teams.map((t) => (
+            <span key={t.id} className="new-project-chip">
+              {t.name}
+              {canManage && (
+                <button type="button" className="new-project-chip-remove" onClick={() => void handleDelete(t)} aria-label={`Delete ${t.name}`}>
+                  ✕
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      {canManage && (
+        <form className="new-project-add-row" onSubmit={handleCreate} style={{ marginTop: 10 }}>
+          <input
+            className="new-project-add-input"
+            placeholder="New team name"
+            value={newTeam}
+            onChange={(e) => setNewTeam(e.target.value)}
+            maxLength={120}
+          />
+          <button type="submit" className="new-project-add-btn" disabled={busy || !newTeam.trim()}>
+            {busy ? 'Adding…' : 'Add team'}
+          </button>
+        </form>
+      )}
+      {error && <div className="new-project-error" role="alert" style={{ marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
+
 export default function AccountSettings() {
   const { user, setUser } = useCurrentUser();
+  const { orgs } = useOrgs();
   const navigate = useNavigate();
 
   const [ownedProjects, setOwnedProjects] = useState<Project[] | null>(null);
@@ -319,6 +414,20 @@ export default function AccountSettings() {
                 Connect GitHub account
               </button>
             </div>
+          )}
+        </section>
+
+        <section className="new-project-section" style={{ marginTop: 28 }}>
+          <h2 className="new-project-section-title">Organizations &amp; Teams</h2>
+          <div className="account-settings-hint" style={{ marginBottom: 16 }}>
+            Create teams under your organizations. A new project can then be filed under one or more of them.
+          </div>
+          {orgs === null ? (
+            <div className="account-settings-hint">Loading…</div>
+          ) : orgs.length === 0 ? (
+            <div className="account-settings-hint">You don&rsquo;t belong to any organizations yet.</div>
+          ) : (
+            orgs.map((o) => <OrgTeamsManager key={o.id} org={o} />)
           )}
         </section>
 

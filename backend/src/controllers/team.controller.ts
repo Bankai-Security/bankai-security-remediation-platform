@@ -95,8 +95,9 @@ export async function updateTeam(req: Request, res: Response): Promise<void> {
 }
 
 // Deleting a team is an org-level decision (RLS: org owners/admins), so this
-// gates on the org role, not the team role. projects.team_id is
-// `on delete set null`, so any projects in the team become unassigned.
+// gates on the org role, not the team role. The team's project_teams links are
+// `on delete cascade`, so its projects simply lose this team (they keep any
+// other team memberships).
 export async function deleteTeam(req: Request, res: Response): Promise<void> {
   const org = req.org!;
   const team = req.team!;

@@ -12,20 +12,21 @@ import { requireRole } from "../lib/roles.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import type { CreateProjectInput, DeleteProjectInput, UpdateProjectSettingsInput } from "../schemas/project.schema.js";
 
-// The `teams ( ... )` embed follows projects.team_id → teams, and its nested
-// organizations embed gives us the project's org id — so a single project fetch
-// carries enough to render the team picker (which org's teams to offer) without
-// a second round trip.
+// The `project_teams ( teams ( ... ) )` embed follows the join table to every
+// team the project belongs to, each carrying its org id — so a single fetch
+// carries the project's full team list and (since all teams share one org) its
+// org, without a second round trip.
 const PROJECT_COLUMNS =
-  "id, name, description, team_name, team_id, jira_site, jira_key, jira_connected_at, sla_critical_days, sla_high_days, sla_medium_days, sla_low_days, status, created_at, teams ( id, name, org_id )";
+  "id, name, description, team_name, jira_site, jira_key, jira_connected_at, sla_critical_days, sla_high_days, sla_medium_days, sla_low_days, status, created_at, project_teams ( teams ( id, name, org_id ) )";
+
+type TeamEmbed = { id: string; name: string; org_id: string };
 
 interface ProjectRow {
   id: string;
   name: string;
   description: string | null;
   team_name: string | null;
-  team_id: string | null;
-  teams: { id: string; name: string; org_id: string } | { id: string; name: string; org_id: string }[] | null;
+  project_teams: { teams: TeamEmbed | TeamEmbed[] | null }[] | null;
   jira_site: string | null;
   jira_key: string | null;
   jira_connected_at: string | null;
@@ -36,6 +37,36 @@ interface ProjectRow {
   status: "not_connected" | "active";
   created_at: string;
   project_services: { name: string }[];
+}
+
+// Flatten the join-table embed to the list of teams the project belongs to.
+function teamsOf(row: ProjectRow): TeamEmbed[] {
+  return (row.project_teams ?? [])
+    .map((link) => (Array.isArray(link.teams) ? link.teams[0] : link.teams))
+    .filter((t): t is TeamEmbed => t != null);
+}
+
+// Validates a set of team ids the caller wants to attach to a project: every id
+// must be visible to them (teams SELECT RLS scopes the lookup, so a team in an
+// org they don't belong to simply won't come back), and — since a project
+// belongs to a single org — all of them must share one org. Returns the
+// distinct, validated ids. Throws 422 on any violation.
+async function validateTeamIds(supabase: SupabaseClient, teamIds: string[]): Promise<string[]> {
+  const distinct = [...new Set(teamIds)];
+  if (distinct.length === 0) return [];
+
+  const { data, error } = await supabase.from("teams").select("id, org_id").in("id", distinct);
+  if (error) {
+    throw new HttpError(500, "Could not validate the selected teams.");
+  }
+  const found = (data ?? []) as { id: string; org_id: string }[];
+  if (found.length !== distinct.length) {
+    throw new HttpError(422, "One or more teams don't exist or you don't have access to them.");
+  }
+  if (new Set(found.map((t) => t.org_id)).size > 1) {
+    throw new HttpError(422, "All of a project's teams must be in the same organization.");
+  }
+  return distinct;
 }
 
 async function toPublicProject(supabase: SupabaseClient, row: ProjectRow) {
@@ -49,17 +80,16 @@ async function toPublicProject(supabase: SupabaseClient, row: ProjectRow) {
     computeProjectStats(supabase, row.id, policyDays),
     supabase.rpc("project_role", { p_project_id: row.id }),
   ]);
-  const team = Array.isArray(row.teams) ? row.teams[0] : row.teams;
+  const teams = teamsOf(row);
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     teamName: row.team_name,
-    // Hierarchy placement: the team the project sits in and (transitively) its
-    // org. teamId is null for a project not yet assigned to any team.
-    teamId: row.team_id,
-    teamHierarchyName: team?.name ?? null,
-    orgId: team?.org_id ?? null,
+    // Hierarchy placement: every team the project belongs to, plus its org
+    // (all teams share one org). Empty teams[] / null orgId = unassigned.
+    teams: teams.map((t) => ({ id: t.id, name: t.name })),
+    orgId: teams[0]?.org_id ?? null,
     status: row.status,
     services: row.project_services.map((s) => s.name),
     jiraSite: row.jira_site,
@@ -128,59 +158,45 @@ export async function getProject(req: Request, res: Response): Promise<void> {
   res.status(200).json({ project: await toPublicProject(supabase, data as ProjectRow) });
 }
 
-// PATCH /projects/:projectId — assign the project to a team in the hierarchy
-// (or null to unassign). Replaces the old free-text team_name control. Mounted
-// on the already-loadProject-scoped router, so req.project.myRole is available.
-// Postgres enforces the FK: a teamId the caller can't actually reach (a team in
-// an org they don't belong to) is a foreign-key violation surfaced as a 422,
-// not a silent cross-org write.
+// PATCH /projects/:projectId — set the full list of teams the project belongs
+// to (replace semantics; an empty list unassigns it from every team). Replaces
+// the old single-team / free-text controls. Mounted on the loadProject-scoped
+// router, so req.project.myRole is available.
 export async function updateProjectSettings(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin"]);
-  const { teamId } = req.body as UpdateProjectSettingsInput;
+  const { teamIds } = req.body as UpdateProjectSettingsInput;
   const supabase = userScopedClient(req);
+  const projectId = req.project!.id;
 
-  // The FK guarantees the team exists, but not that the caller may use it. A
-  // team the caller can't see (one in an org they don't belong to) must not be
-  // attachable — otherwise a project would surface in a stranger's org rollup.
-  // The teams SELECT RLS returns only visible teams, so this is the auth gate.
-  if (teamId !== null) {
-    const { data: team } = await supabase.from("teams").select("id").eq("id", teamId).maybeSingle();
-    if (!team) {
-      throw new HttpError(422, "That team doesn't exist or you don't have access to it.");
+  const validIds = await validateTeamIds(supabase, teamIds);
+
+  // Replace the set: clear the current links, then insert the new ones. RLS on
+  // project_teams gates both on project_role(project_id) in (owner, admin),
+  // which requireRole above already guaranteed for this caller.
+  const { error: deleteError } = await supabase.from("project_teams").delete().eq("project_id", projectId);
+  if (deleteError) {
+    throw new HttpError(500, "Could not update the project's teams.");
+  }
+
+  if (validIds.length > 0) {
+    const { error: insertError } = await supabase
+      .from("project_teams")
+      .insert(validIds.map((teamId) => ({ project_id: projectId, team_id: teamId })));
+    if (insertError) {
+      throw new HttpError(500, "Could not update the project's teams.");
     }
   }
 
-  const { data, error } = await supabase
-    .from("projects")
-    .update({ team_id: teamId })
-    .eq("id", req.project!.id)
-    .select("team_id")
-    .single();
-
-  if (error || !data) {
-    if (error?.code === "23503") {
-      throw new HttpError(422, "That team no longer exists.");
-    }
-    throw new HttpError(500, "Could not update the project's team.");
-  }
-
-  res.status(200).json({ teamId: data.team_id });
+  res.status(200).json({ teamIds: validIds });
 }
 
 export async function createProject(req: Request, res: Response): Promise<void> {
-  const { name, description, teamId, teamName, services } = req.body as CreateProjectInput;
+  const { name, description, teamIds, teamName, services } = req.body as CreateProjectInput;
   const supabase = userScopedClient(req);
 
-  // Same visibility gate as updateProjectSettings: the projects INSERT policy
-  // only checks ownership, so without this a caller could attach a new project
-  // to any team id, including one in an org they can't see. RLS on teams scopes
-  // this lookup to teams the caller can actually reach.
-  if (teamId) {
-    const { data: team } = await supabase.from("teams").select("id").eq("id", teamId).maybeSingle();
-    if (!team) {
-      throw new HttpError(422, "That team doesn't exist or you don't have access to it.");
-    }
-  }
+  // Validate the requested teams up front (visibility + single-org), same gate
+  // as updateProjectSettings — the projects INSERT policy only checks ownership.
+  const validTeamIds = await validateTeamIds(supabase, teamIds);
 
   // Insert without chaining .select(): PostgREST would turn that into
   // INSERT ... RETURNING, which re-checks the projects SELECT policy
@@ -196,7 +212,6 @@ export async function createProject(req: Request, res: Response): Promise<void> 
     owner_id: req.user!.id,
     name,
     description: description || null,
-    team_id: teamId ?? null,
     team_name: teamName || null,
     key_prefix: deriveKeyPrefix(name),
   });
@@ -204,6 +219,18 @@ export async function createProject(req: Request, res: Response): Promise<void> 
   if (insertError) {
     logger.error({ err: insertError, userId: req.user!.id }, "Could not create project");
     throw new HttpError(500, "Could not create project.");
+  }
+
+  // Attach the project to its teams. The project row is committed above, so
+  // project_role(projectId) resolves to 'owner' for the creator and the
+  // project_teams INSERT policy passes.
+  if (validTeamIds.length > 0) {
+    const { error: teamsError } = await supabase
+      .from("project_teams")
+      .insert(validTeamIds.map((teamId) => ({ project_id: projectId, team_id: teamId })));
+    if (teamsError) {
+      throw new HttpError(500, "Project created, but its teams could not be saved.");
+    }
   }
 
   if (services.length > 0) {

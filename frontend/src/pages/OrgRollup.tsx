@@ -56,10 +56,20 @@ export default function OrgRollup() {
   // one render after the URL changes — gate on the id matching this route.
   const activeRollup = rollup && rollup.id === orgId ? rollup : null;
 
-  const allProjects = useMemo(
-    () => (activeRollup ? activeRollup.teams.flatMap((t) => t.projects.map(withStats)) : []),
-    [activeRollup, statsById],
-  );
+  // A project can belong to several teams, so it appears under each in the
+  // rollup tree. De-duplicate by project id before computing org-level totals,
+  // or a shared project would double-count its CVITs/tickets and the project
+  // count. (Per-team subtotals below intentionally still count membership.)
+  const allProjects = useMemo(() => {
+    if (!activeRollup) return [];
+    const unique = new Map<string, ReturnType<typeof attachStats>>();
+    for (const team of activeRollup.teams) {
+      for (const ref of team.projects) {
+        if (!unique.has(ref.id)) unique.set(ref.id, attachStats(ref, statsById));
+      }
+    }
+    return [...unique.values()];
+  }, [activeRollup, statsById]);
   const orgTotals = useMemo(() => aggregate(allProjects), [allProjects]);
 
   return (
