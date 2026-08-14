@@ -3,7 +3,9 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import MemberManager from '../components/MemberManager';
 import OrgTopBar from '../components/OrgTopBar';
 import {
+  ApiError,
   inviteTeamMember,
+  leaveTeam,
   listTeamMembers,
   listTeams,
   removeTeamMember,
@@ -32,6 +34,8 @@ export default function TeamSettings() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (orgId) selectOrg(orgId);
@@ -77,6 +81,21 @@ export default function TeamSettings() {
   if (!orgId || !teamId) return <Navigate to="/projects" replace />;
 
   const canManage = canManageTeam(team?.myRole);
+
+  const handleLeave = async () => {
+    if (!window.confirm('Leave this team? You will lose access to its projects.')) return;
+    setLeaving(true);
+    setLeaveError(null);
+    try {
+      await leaveTeam(orgId, teamId);
+      navigate(`/orgs/${orgId}`);
+    } catch (err) {
+      // Org owners/admins get team 'admin' via team_role() without a member
+      // row, so "not a member" is the expected 404 for them.
+      setLeaveError(err instanceof ApiError ? err.message : 'Could not leave this team.');
+      setLeaving(false);
+    }
+  };
 
   const saveName = async () => {
     if (!nameDraft.trim() || nameDraft.trim() === team?.name) return;
@@ -128,6 +147,13 @@ export default function TeamSettings() {
               ) : (
                 <div className="orgset-readonly">{team?.name}</div>
               )}
+
+              {leaveError && <div className="mm-error" role="alert" style={{ marginTop: 16 }}>{leaveError}</div>}
+              <div className="orgset-danger">
+                <button type="button" className="ws-btn ws-btn-danger-outline" disabled={leaving} onClick={() => void handleLeave()}>
+                  {leaving ? 'Leaving…' : 'Leave team'}
+                </button>
+              </div>
             </section>
 
             <section className="ws-card orgset-card">

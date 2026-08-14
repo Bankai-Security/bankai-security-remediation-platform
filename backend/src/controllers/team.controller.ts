@@ -123,6 +123,21 @@ export async function deleteTeam(req: Request, res: Response): Promise<void> {
   requireRole(org.myRole, ["owner", "admin"]);
   const supabase = userScopedClient(req);
 
+  // Deleting a team silently detaches its projects (project_teams links
+  // cascade). Surface that as a 409 with the count so the UI can confirm,
+  // unless the caller already acknowledged it with force.
+  const { force } = (req.body ?? {}) as { force?: boolean };
+  if (!force) {
+    const { count: linkCount } = await supabase
+      .from("project_teams")
+      .select("project_id", { count: "exact", head: true })
+      .eq("team_id", team.id);
+
+    if ((linkCount ?? 0) > 0) {
+      throw new HttpError(409, `${linkCount} project(s) will lose this team.`, { projectCount: linkCount });
+    }
+  }
+
   const { error, count } = await supabase.from("teams").delete({ count: "exact" }).eq("id", team.id);
 
   if (error) {

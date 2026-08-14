@@ -4,7 +4,8 @@ import { baselineProtect } from "../middleware/baseline-arcjet.js";
 import { loadOrg } from "../middleware/load-org.js";
 import { requireAuth } from "../middleware/require-auth.js";
 import { validateBody } from "../middleware/validate-body.js";
-import { createOrgSchema, updateOrgSchema } from "../schemas/org.schema.js";
+import { transferOrgOwnership } from "../controllers/org-member.controller.js";
+import { createOrgSchema, transferOrgSchema, updateOrgSchema } from "../schemas/org.schema.js";
 import { orgMemberRouter } from "./org-member.routes.js";
 import { teamRouter } from "./team.routes.js";
 
@@ -24,6 +25,7 @@ orgScoped.use(loadOrg);
 orgScoped.patch("/", validateBody(updateOrgSchema), updateOrg);
 orgScoped.delete("/", deleteOrg);
 orgScoped.get("/activity", listOrgActivity);
+orgScoped.post("/transfer", validateBody(transferOrgSchema), transferOrgOwnership);
 orgScoped.use("/members", orgMemberRouter);
 orgScoped.use("/teams", teamRouter);
 

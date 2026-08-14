@@ -230,6 +230,27 @@ export async function deleteOrg(req: Request, res: Response): Promise<void> {
   }
   const supabase = userScopedClient(req);
 
+  // Same acknowledge-first guard as deleteTeam: report how many projects will
+  // be detached (via the org's teams) unless the caller passed force.
+  const { force } = (req.body ?? {}) as { force?: boolean };
+  if (!force) {
+    const { data: teamRows } = await supabase.from("teams").select("id").eq("org_id", org.id);
+    const teamIds = (teamRows ?? []).map((t) => t.id);
+
+    if (teamIds.length > 0) {
+      const { count: linkCount } = await supabase
+        .from("project_teams")
+        .select("project_id", { count: "exact", head: true })
+        .in("team_id", teamIds);
+
+      if ((linkCount ?? 0) > 0) {
+        throw new HttpError(409, `${linkCount} project assignment(s) will be removed with this organization.`, {
+          projectCount: linkCount,
+        });
+      }
+    }
+  }
+
   const { error, count } = await supabase.from("organizations").delete({ count: "exact" }).eq("id", org.id);
 
   if (error) {

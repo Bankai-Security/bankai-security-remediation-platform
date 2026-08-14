@@ -26,4 +26,11 @@ export const updateOrgMemberRoleSchema = z.object({
   role: z.enum(["admin", "editor", "viewer"]),
 });
 
+// Hands org ownership to an existing member (by their profile id).
+export const transferOrgSchema = z.object({
+  userId: z.uuid(),
+});
+
+export type TransferOrgInput = z.infer<typeof transferOrgSchema>;
+
 export type UpdateOrgMemberRoleInput = z.infer<typeof updateOrgMemberRoleSchema>;

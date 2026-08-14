@@ -122,6 +122,42 @@ export async function inviteTeamMember(req: Request, res: Response): Promise<voi
   });
 }
 
+// DELETE .../teams/:teamId/members/me — leave the team. Authorized by the
+// "Members can leave a team" RLS policy. Org owners/admins surface as team
+// 'admin' via team_role() without having a team_members row, so they get a
+// clear message rather than a confusing 404.
+export async function leaveTeam(req: Request, res: Response): Promise<void> {
+  const team = req.team!;
+  const supabase = userScopedClient(req);
+
+  const { data: left, error } = await supabase
+    .from("team_members")
+    .delete()
+    .eq("team_id", team.id)
+    .eq("user_id", req.user!.id)
+    .select("email");
+
+  if (error) {
+    throw new HttpError(500, "Could not leave this team.");
+  }
+  if (!left || left.length === 0) {
+    throw new HttpError(404, "You are not a member of this team.");
+  }
+
+  // The caller keeps org membership (leaving a team doesn't leave the org), so
+  // this write still passes the org-member insert policy.
+  await recordOrgActivity(supabase, {
+    orgId: team.orgId,
+    teamId: team.id,
+    actorId: req.user!.id,
+    actorLabel: req.user!.email ?? "Unknown",
+    eventType: "member",
+    summary: `left team "${team.name}"`,
+  });
+
+  res.status(204).send();
+}
+
 // POST .../teams/:teamId/members/invites/:inviteId/resend — same contract as
 // resendOrgInvite, scoped to the team.
 export async function resendTeamInvite(req: Request, res: Response): Promise<void> {

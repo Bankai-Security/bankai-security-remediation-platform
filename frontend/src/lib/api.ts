@@ -2,13 +2,24 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export class ApiError extends Error {
   readonly status: number;
+  // Validation failures send details as an array of field errors; other errors
+  // (e.g. the delete-guard 409) send an object. Keep the raw value in details
+  // and expose fieldErrors only when it's actually the array form.
+  readonly details?: unknown;
   readonly fieldErrors?: Array<{ path: string; message: string }>;
 
-  constructor(status: number, message: string, fieldErrors?: Array<{ path: string; message: string }>) {
+  constructor(status: number, message: string, details?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
-    this.fieldErrors = fieldErrors;
+    this.details = details;
+    this.fieldErrors = Array.isArray(details) ? (details as Array<{ path: string; message: string }>) : undefined;
+  }
+
+  // Number of projects a delete would detach, from the 409 delete-guard.
+  get projectCount(): number | null {
+    const d = this.details as { projectCount?: unknown } | undefined;
+    return typeof d?.projectCount === "number" ? d.projectCount : null;
   }
 }
 
@@ -663,8 +674,19 @@ export function listOrgActivity(orgId: string): Promise<{ activity: OrgActivityE
   return apiFetch(`/orgs/${orgId}/activity`, { method: "GET" });
 }
 
-export function deleteOrg(orgId: string): Promise<void> {
-  return apiFetch(`/orgs/${orgId}`, { method: "DELETE" });
+// force acknowledges that projects assigned to this org's teams will be
+// detached; without it the API 409s with { projectCount } in details.
+export function deleteOrg(orgId: string, force = false): Promise<void> {
+  return apiFetch(`/orgs/${orgId}`, { method: "DELETE", body: JSON.stringify({ force }) });
+}
+
+export function leaveOrg(orgId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/members/me`, { method: "DELETE" });
+}
+
+// Hands ownership to an existing member; the outgoing owner becomes an admin.
+export function transferOrgOwnership(orgId: string, userId: string): Promise<{ ok: true }> {
+  return apiFetch(`/orgs/${orgId}/transfer`, { method: "POST", body: JSON.stringify({ userId }) });
 }
 
 // --- Org members + invites (mirror the project members API) ---
@@ -772,8 +794,14 @@ export function updateTeam(orgId: string, teamId: string, input: { name: string 
   return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "PATCH", body: JSON.stringify(input) });
 }
 
-export function deleteTeam(orgId: string, teamId: string): Promise<void> {
-  return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE" });
+// force acknowledges that projects in this team will lose it; without it the
+// API 409s with { projectCount } in details.
+export function deleteTeam(orgId: string, teamId: string, force = false): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE", body: JSON.stringify({ force }) });
+}
+
+export function leaveTeam(orgId: string, teamId: string): Promise<void> {
+  return apiFetch(`/orgs/${orgId}/teams/${teamId}/members/me`, { method: "DELETE" });
 }
 
 // --- Team members + invites ---

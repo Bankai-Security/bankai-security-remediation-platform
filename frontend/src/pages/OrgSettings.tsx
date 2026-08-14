@@ -9,9 +9,11 @@ import {
   deleteTeam,
   getOrg,
   inviteOrgMember,
+  leaveOrg,
   listOrgActivity,
   listOrgMembers,
   listTeams,
+  transferOrgOwnership,
   removeOrgMember,
   resendOrgInvite,
   revokeOrgInvite,
@@ -68,6 +70,11 @@ export default function OrgSettings() {
   const [teamError, setTeamError] = useState<string | null>(null);
 
   const [activity, setActivity] = useState<OrgActivityEvent[] | null>(null);
+
+  const [transferTo, setTransferTo] = useState('');
+  const [transferring, setTransferring] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [dangerError, setDangerError] = useState<string | null>(null);
 
   // Keep the switcher's selection in sync with the URL.
   useEffect(() => {
@@ -139,14 +146,61 @@ export default function OrgSettings() {
     }
   };
 
-  const handleDelete = async () => {
+  // The API 409s with a project count the first time, so the impact is
+  // acknowledged explicitly before anything is detached.
+  const handleDelete = async (force = false) => {
     setDeleting(true);
+    setDangerError(null);
     try {
-      await deleteOrg(orgId);
+      await deleteOrg(orgId, force);
       refreshOrgs();
       navigate('/projects');
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.projectCount !== null) {
+        setDeleting(false);
+        if (window.confirm(`${err.projectCount} project assignment(s) will be removed with this organization. Continue?`)) {
+          void handleDelete(true);
+        }
+        return;
+      }
+      setDangerError(err instanceof ApiError ? err.message : 'Could not delete this organization.');
       setDeleting(false);
+    }
+  };
+
+  const handleLeave = async () => {
+    if (!window.confirm('Leave this organization? You will lose access to its teams and projects.')) return;
+    setLeaving(true);
+    setDangerError(null);
+    try {
+      await leaveOrg(orgId);
+      refreshOrgs();
+      navigate('/projects');
+    } catch (err) {
+      setDangerError(err instanceof ApiError ? err.message : 'Could not leave this organization.');
+      setLeaving(false);
+    }
+  };
+
+  const handleTransfer = async () => {
+    if (!transferTo) return;
+    const target = members.find((m) => m.userId === transferTo);
+    if (!window.confirm(`Transfer ownership to ${target?.email ?? target?.name ?? 'this member'}? You will become an admin.`)) return;
+    setTransferring(true);
+    setDangerError(null);
+    try {
+      await transferOrgOwnership(orgId, transferTo);
+      setTransferTo('');
+      // Ownership changed, so myRole and the roster both moved.
+      const { org: fresh } = await getOrg(orgId);
+      setOrg({ name: fresh.name, myRole: fresh.myRole });
+      reloadMembers();
+      reloadActivity();
+      refreshOrgs();
+    } catch (err) {
+      setDangerError(err instanceof ApiError ? err.message : 'Could not transfer ownership.');
+    } finally {
+      setTransferring(false);
     }
   };
 
@@ -167,13 +221,20 @@ export default function OrgSettings() {
     }
   };
 
-  const handleDeleteTeam = async (teamId: string) => {
+  const handleDeleteTeam = async (teamId: string, force = false) => {
     try {
-      await deleteTeam(orgId, teamId);
+      await deleteTeam(orgId, teamId, force);
       reloadTeams();
+      reloadActivity();
       refreshOrgs();
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.projectCount !== null) {
+        if (window.confirm(`${err.projectCount} project(s) will lose this team. Continue?`)) {
+          void handleDeleteTeam(teamId, true);
+        }
+        return;
+      }
+      setTeamError(err instanceof ApiError ? err.message : 'Could not delete the team.');
     }
   };
 
@@ -221,6 +282,42 @@ export default function OrgSettings() {
                 </div>
               ) : (
                 <div className="orgset-readonly">{org?.name}</div>
+              )}
+
+              {dangerError && <div className="mm-error" role="alert" style={{ marginTop: 16 }}>{dangerError}</div>}
+
+              {/* Non-owners can leave; the owner must transfer first (they have
+                  no membership row to delete). */}
+              {!isOwner && org && (
+                <div className="orgset-danger">
+                  <button type="button" className="ws-btn ws-btn-danger-outline" disabled={leaving} onClick={() => void handleLeave()}>
+                    {leaving ? 'Leaving…' : 'Leave organization'}
+                  </button>
+                </div>
+              )}
+
+              {isOwner && members.some((m) => m.role !== 'owner') && (
+                <div className="orgset-danger">
+                  <div className="orgset-danger-hint">
+                    Transfer ownership to another member. You&rsquo;ll become an admin of this organization.
+                  </div>
+                  <div className="orgset-inline-form">
+                    <select className="orgset-input" value={transferTo} onChange={(e) => setTransferTo(e.target.value)}>
+                      <option value="">Select a member…</option>
+                      {members.filter((m) => m.role !== 'owner').map((m) => (
+                        <option key={m.userId} value={m.userId}>{m.email ?? m.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="ws-btn ws-btn-secondary"
+                      disabled={transferring || !transferTo}
+                      onClick={() => void handleTransfer()}
+                    >
+                      {transferring ? 'Transferring…' : 'Transfer ownership'}
+                    </button>
+                  </div>
+                </div>
               )}
 
               {isOwner && (
