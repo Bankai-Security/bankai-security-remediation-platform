@@ -1,7 +1,8 @@
 import type { Job } from "bullmq";
 import { recordActivity } from "../lib/activity.js";
-import { generateFix, type FixFindingInput } from "../lib/gemini-fix.js";
+import { generateFix, isActionableFixCandidate, type FixFindingInput } from "../lib/gemini-fix.js";
 import { gatherRepoContext } from "../lib/repo-context.js";
+import { loadPythonDependencyContext } from "../lib/dependency-fix.js";
 import {
   commitFileToBranch,
   createPullRequestComment,
@@ -107,13 +108,24 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
   if (!finding || !finding.file_path) return;
   if (ticket.ci_fix_attempt >= MAX_FIX_ATTEMPTS) return;
 
-  const github = await loadGithubCreds(supabase, projectId);
-  if (!github) {
-    // GitHub was disconnected after this job was enqueued but before the
-    // worker picked it up — a real race, not a bug.
+  let github: Awaited<ReturnType<typeof loadGithubCreds>>;
+  try {
+    github = await loadGithubCreds(supabase, projectId);
+  } catch (err) {
+    logger.error({ err, ticketId, projectId }, "Could not decrypt GitHub credentials for a fix retry");
+    await setTicketError(ticketId, "Stored GitHub credentials could not be read. Reconnect GitHub for this project, then retry remediation.");
     return;
   }
-  const jira = await loadJiraCreds(supabase, projectId);
+  if (!github) {
+    await setTicketError(ticketId, "GitHub is not connected. Reconnect GitHub for this project, then retry remediation.");
+    return;
+  }
+  let jira: Awaited<ReturnType<typeof loadJiraCreds>> = null;
+  try {
+    jira = await loadJiraCreds(supabase, projectId);
+  } catch (err) {
+    logger.error({ err, ticketId, projectId }, "Could not decrypt Jira credentials; continuing the fix retry without Jira comments");
+  }
 
   const branch = ticket.github_branch_name;
   const findingInput: FixFindingInput = {
@@ -140,14 +152,17 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
     // never blocks the retry attempt (getJobLogs/getWorkflowRunJobs already
     // never throw).
     let failureLog: string | null = null;
-    const jobs = await getWorkflowRunJobs(github.creds, githubRunId).catch((err) => {
+    const jobs = githubRunId ? await getWorkflowRunJobs(github.creds, githubRunId).catch((err) => {
       logger.warn({ err, githubRunId, ticketId }, "Could not list workflow run jobs for a fix-retry attempt");
       return [];
-    });
+    }) : [];
     const failedJob = jobs.find((j) => j.name === failingStage);
     if (failedJob) {
       failureLog = await getJobLogs(github.creds, failedJob.id);
     }
+    if (job.data.securityFeedback) failureLog = [failureLog, job.data.securityFeedback].filter(Boolean).join("\n");
+    const dependencyContext = await loadPythonDependencyContext({ filePath: finding.file_path, fileContent, title: finding.title, affectedPackages: null });
+    if (dependencyContext) failureLog = [failureLog, dependencyContext].filter(Boolean).join("\n");
 
     const attemptNumber = ticket.ci_fix_attempt + 1;
     const repoContext = await gatherRepoContext({
@@ -158,26 +173,21 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
       failingLog: failureLog,
     });
 
-    const fix = await generateFix(
-      findingInput,
-      fileContent,
-      {
-        attempt: attemptNumber,
-        maxAttempts: MAX_FIX_ATTEMPTS,
-        failedStage: failingStage,
-        failureLog,
-      },
-      repoContext.formattedPromptContext,
-    );
+    const retryContext = {
+      attempt: attemptNumber,
+      maxAttempts: MAX_FIX_ATTEMPTS,
+      failedStage: failingStage,
+      failureLog,
+    };
+
+    const fix = await generateFix(findingInput, fileContent, retryContext, repoContext.formattedPromptContext);
 
     const reason = failedJob?.conclusion ? `concluded "${failedJob.conclusion}"` : "did not complete successfully";
 
-    if (!fix || !fix.confident || fix.fixedContent === fileContent) {
-      // Terminal — Gemini either couldn't improve the fix or explicitly
-      // flagged this as a dead end (e.g. the failing test requires the
-      // vulnerability to remain). Don't consume ci_fix_attempt further and
-      // don't re-dispatch CI; the ticket stays at its existing ci_status:
-      // "failed" from the pipeline run that triggered this job.
+    if (!fix || !isActionableFixCandidate(fix, fileContent)) {
+      // Terminal only when the model could not produce a changed candidate.
+      // Model confidence is advisory: changed low-confidence candidates are
+      // committed and judged by the deterministic security and CI gates.
       await setTicketError(ticketId, fix?.summary ?? "Could not generate a further automatic fix after a CI failure.");
 
       if (ticket.github_pr_number) {
@@ -209,7 +219,7 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
     const { commitSha } = await commitFileToBranch(github.creds, {
       branch,
       baseSha: headSha,
-      message: `fix: retry ${attemptNumber} — ${finding.title}\n\n${fix.summary}\n\nAutomatically regenerated by Bankai AI after a CI failure.`,
+      message: `fix: retry ${attemptNumber} — ${finding.title}\n\n${fix.summary}\n\nAutomatically regenerated by Bankai after a CI failure.`,
       files: filesToCommit,
     });
 
@@ -248,13 +258,15 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
       }
     }
 
-    // Fire-and-forget, same contract as fix-pr.job.ts's enqueuePipelineVerification
-    // call — ci_bootstrap_status is already 'ready' at this point (a full
-    // pipeline run already completed to get here), so processPipelineJob
-    // skips straight to dispatch.
-    enqueuePipelineRetry({ ticketId, projectId }).catch((err) => {
+    try {
+      await enqueuePipelineRetry({ ticketId, projectId });
+    } catch (err) {
       logger.error({ err, ticketId, projectId }, "Could not re-enqueue the CI verification pipeline after a fix retry");
-    });
+      await supabase
+        .from("tickets")
+        .update({ ci_status: "failed", ci_error: "Could not enqueue the post-retry CI verification. Check the Bankai worker and Redis." })
+        .eq("id", ticketId);
+    }
 
     await recordActivity(supabase, {
       projectId,

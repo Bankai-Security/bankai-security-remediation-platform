@@ -1,0 +1,47 @@
+--- a/src/quincy/remediation/loop.py
++++ b/src/quincy/remediation/loop.py
+@@ -598,10 +598,20 @@
+     result = await run_all_scanners_cached(scanners, repo_root, scan_configs, default_scan_config, cache_conn)
+     matches = [finding for finding in result.findings if finding.rule_id == rule_id]
+     snapshot = bankai_context.finding if bankai_context is not None else None
+-    if snapshot is not None:
++    if snapshot is not None:
+         # The same scanner rule can identify many unrelated locations. A Bankai
+         # ticket owns one file/location, not the first occurrence in the repo.
+-        matches = [item for item in matches if item.location.file == snapshot.file_path.replace("\\", "/")]
++        matches = [item for item in matches if item.location.file == snapshot.file_path.replace("\\", "/")]
++        if not matches and rule_id.startswith("bankai:") and snapshot.line_start:
++            cwes = set(_parse_bankai_cwe(snapshot.cwe))
++            correlated = [item for item in result.findings
++                          if item.location.file == snapshot.file_path.replace("\\", "/")
++                          and item.location.start_line <= (snapshot.line_end or snapshot.line_start)
++                          and item.location.end_line >= snapshot.line_start
++                          and cwes.intersection(item.cwe)]
++            # Only a unique exact-location/CWE match can replace a synthetic ID.
++            if len(correlated) == 1:
++                matches = correlated
+         if matches:
+             selected = min(matches, key=lambda item: abs(item.location.start_line - (snapshot.line_start or item.location.start_line)))
+             if snapshot.remediation_guidance:
+--- a/tests/unit/test_remediation_loop.py
++++ b/tests/unit/test_remediation_loop.py
+@@ -838,6 +838,19 @@
+     assert bundle.final_status == 'failed'
+     assert len(bundle.attempts) == 1
+     assert 'provider unavailable' in bundle.abort_reason
++
++
++async def test_synthetic_ticket_uses_unique_scanner_location_and_cwe(tmp_path: Path):
++    from quincy.remediation.loop import _discover_finding
++    repo = _write_repo(tmp_path)
++    scanner = FakeScanner([True])
++    config = ScanConfig(config_paths=[], timeout_seconds=30)
++    context = BankaiContext(external_request_id='ticket', tenant_id='project',
++                           finding=BankaiFindingContext(title='SQL injection', file_path='src/db.ts',
++                                                       line_start=2, line_end=2, cwe='CWE-89'))
++    finding = await _discover_finding(repo, 'bankai:ticket', [scanner], {scanner.name: config}, config,
++                                     _settings(), bankai_context=context)
++    assert finding.rule_id == 'BANKAI-001'
+ 
+ 
+ async def test_remediate_stops_early_when_gates_fail(tmp_path: Path) -> None:

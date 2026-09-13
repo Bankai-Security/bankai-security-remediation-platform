@@ -4,13 +4,16 @@ import { CI_BOOTSTRAP_BRANCH, CI_WORKFLOW_FILE, CI_WORKFLOW_PATH, PLACEHOLDER_MA
 import { decrypt } from "../lib/crypto.js";
 import {
   createPullRequestComment,
+  getPullRequest,
   getRepoFileContent,
+  getBranchHeadSha,
   getWorkflowRunJobs,
   type GithubCredentials,
   type WorkflowRunJob,
 } from "../lib/github.js";
 import { addPipelineEvidenceComment } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
+import { assessPipelineVerdict } from "../lib/pipeline-verdict.js";
 import { PIPELINE_STAGE_LABELS, type PipelineStageName } from "../lib/pipeline-types.js";
 import { enqueueFixPrResume, enqueueFixRetry, enqueuePipelineRetry, enqueueRepoScan } from "../lib/queue.js";
 import { supabaseAdmin } from "../lib/supabase.js";
@@ -47,6 +50,7 @@ interface GithubWorkflowRunPayload {
   workflow_run?: {
     id: number;
     head_branch: string;
+    head_sha: string;
     path: string;
     status: string;
     conclusion: string | null;
@@ -378,6 +382,23 @@ async function handleWorkflowRunEvent(projectId: string, rawBody: Buffer, res: R
     return;
   }
   const ticketId = ticketRow.id;
+  const github = await loadGithubCreds(supabaseAdmin, projectId);
+  let currentHeadSha: string | null = null;
+  if (github) {
+    try {
+      currentHeadSha = await getBranchHeadSha(github.creds, run.head_branch);
+    } catch {
+      // GitHub commonly deletes a merged PR branch before a delayed workflow
+      // webhook arrives. The PR record retains the immutable head SHA.
+      if (ticketRow.github_pr_number != null) {
+        currentHeadSha = (await getPullRequest(github.creds, ticketRow.github_pr_number))?.headSha ?? null;
+      }
+    }
+  }
+  if (!github || !run.head_sha || currentHeadSha !== run.head_sha) {
+    res.status(200).json({ ignored: true, reason: "Run does not verify the current remediation commit" });
+    return;
+  }
 
   // Find the pipeline_runs row the post-dispatch poll may have already
   // created for this run/ticket; fall back to one still missing its run id
@@ -424,7 +445,6 @@ async function handleWorkflowRunEvent(projectId: string, rawBody: Buffer, res: R
     }
   }
 
-  const github = await loadGithubCreds(supabaseAdmin, projectId);
   let stages: WorkflowRunJob[] = [];
   if (github) {
     try {
@@ -446,8 +466,15 @@ async function handleWorkflowRunEvent(projectId: string, rawBody: Buffer, res: R
     })
     .eq("id", pipelineRunId);
 
-  const passed = run.conclusion === "success";
-  await markTicketPipelineResult(supabaseAdmin, { projectId, ticketId, status: passed ? "passed" : "failed", runUrl: run.html_url });
+  const workflow = await getRepoFileContent(github.creds, CI_WORKFLOW_PATH, run.head_sha);
+  const verdict = assessPipelineVerdict({ conclusion: run.conclusion, workflow, stages });
+  const passed = verdict.status === "passed";
+  if (verdict.status === "pending_setup") {
+    await supabaseAdmin.from("tickets").update({ ci_status: verdict.status, ci_error: verdict.error, ci_run_url: run.html_url }).eq("id", ticketId).eq("project_id", projectId);
+  } else {
+    await markTicketPipelineResult(supabaseAdmin, { projectId, ticketId, status: verdict.status, runUrl: run.html_url });
+    if (verdict.error) await supabaseAdmin.from("tickets").update({ ci_error: verdict.error }).eq("id", ticketId).eq("project_id", projectId);
+  }
 
   // Self-healing retry: any code-level job is retryable by default —
   // including custom jobs a human added to a hand-edited bankai-verify.yml —

@@ -4,6 +4,7 @@ import { HttpError } from "../lib/http-error.js";
 import type { Severity } from "../lib/pipeline-types.js";
 import { computeSlaStatus } from "../lib/sla.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
+import { repairPrematureDoneTickets } from "../lib/ticketing.js";
 
 function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
@@ -14,6 +15,7 @@ const SEVERITY_ORDER: Severity[] = ["Critical", "High", "Medium", "Low"];
 export async function getOverview(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
   const projectId = req.project!.id;
+  await repairPrematureDoneTickets(supabase, projectId);
 
   const [findingsRes, ticketsRes, scansRes, activityRes] = await Promise.all([
     supabase

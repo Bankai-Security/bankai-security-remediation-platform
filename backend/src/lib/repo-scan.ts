@@ -10,6 +10,7 @@ import {
 import { analyzeFiles, type ScannableFile } from "./gemini.js";
 import { compareCommits, getBlobs, getBranchHeadSha, getTree, type GithubCredentials } from "./github.js";
 import { logger } from "./logger.js";
+import { runQuincyTriageScan } from "./quincy.js";
 import { filterScannableFiles, isScannablePath } from "./repo-file-filter.js";
 import type { SlaPolicyDays } from "./sla.js";
 import {
@@ -125,9 +126,15 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
     );
   }
 
-  const geminiFindings = files.length > 0 ? await analyzeFiles(files, { repo: github.creds.repo, commitSha }) : [];
+  const quincyResult = await runQuincyTriageScan({
+    repo: github.creds.repo,
+    ref: github.defaultBranch,
+    commitSha,
+  });
 
-  const rows: NormalizedFinding[] = geminiFindings.map((finding) => {
+  const geminiFindings = !quincyResult && files.length > 0 ? await analyzeFiles(files, { repo: github.creds.repo, commitSha }) : [];
+
+  const rows: NormalizedFinding[] = quincyResult ? quincyResult.findings : geminiFindings.map((finding) => {
     const anchor = finding.lineStart
       ? `#L${finding.lineStart}${finding.lineEnd && finding.lineEnd !== finding.lineStart ? `-L${finding.lineEnd}` : ""}`
       : "";

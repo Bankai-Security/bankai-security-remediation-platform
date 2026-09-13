@@ -4,6 +4,7 @@ import { requireRole } from "../lib/roles.js";
 import { computeSlaStatus, type SlaPolicyDays } from "../lib/sla.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import type { Bucket, Severity, TicketStatus } from "../lib/pipeline-types.js";
+import { repairPrematureDoneTickets } from "../lib/ticketing.js";
 import type { UpdateFindingInput } from "../schemas/finding.schema.js";
 
 function userScopedClient(req: Request) {
@@ -86,6 +87,7 @@ const SELECT_FINDING =
 
 export async function listFindings(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
+  await repairPrematureDoneTickets(supabase, req.project!.id);
   let query = supabase
     .from("findings")
     .select(SELECT_FINDING)

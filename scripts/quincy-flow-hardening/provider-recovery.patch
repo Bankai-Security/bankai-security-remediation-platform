@@ -1,0 +1,186 @@
+--- a/src/quincy/models/openrouter_adapter.py
++++ b/src/quincy/models/openrouter_adapter.py
+@@ -1,6 +1,8 @@
+ """OpenRouter transport for the shared security model workflows."""
+ 
+-from openai import AsyncOpenAI, LengthFinishReasonError
++import asyncio
++
++from openai import APIConnectionError, AsyncOpenAI, LengthFinishReasonError
+ from openai.types.chat import ChatCompletion
+ from pydantic import BaseModel
+ 
+@@ -38,7 +40,11 @@
+         response: ChatCompletion
+         total = TokenUsage()
+         detail = "no response"
+-        for attempt, max_tokens in enumerate((8096, 16384), start=1):
++        reasoning = self._reasoning_enabled or schema_model.__name__ == "FailureAnalysisOutput" or (
++            schema_model.__name__ == "PatchOutput" and "## Why the previous attempt failed" in prompt
++        )
++        budgets = (16384, 32768) if reasoning else (8096, 16384)
++        for attempt, max_tokens in enumerate(budgets, start=1):
+             logger.info(
+                 "openrouter_call_start",
+                 model=self.model_name,
+@@ -67,8 +73,13 @@
+                     seed=self._seed,
+                     # Reserve the completion budget for the structured artifact.
+                     # DeepSeek thinking can otherwise consume it all without a patch.
+-                    extra_body={"provider": {"require_parameters": True}, "reasoning": {"enabled": self._reasoning_enabled}},
+-                )
++                    extra_body={"provider": {"require_parameters": True}, "reasoning": {"enabled": reasoning}},
++                )
++            except APIConnectionError:
++                if attempt == len(budgets):
++                    raise
++                await asyncio.sleep(1)
++                continue
+             except LengthFinishReasonError as exc:
+                 # The SDK raises before returning a parsed response, but preserves usage.
+                 response = exc.completion
+--- a/src/quincy/remediation/loop.py
++++ b/src/quincy/remediation/loop.py
+@@ -305,14 +305,20 @@
+                 break
+ 
+             _call_start = time.monotonic()
+-            patch_result = await generate_patch(
+-                self._model,
+-                self._context_engine,
+-                finding,
+-                assessment,
+-                self._settings.context_token_budget,
+-                previous_attempt=previous_failure,
+-            )
++            try:
++                patch_result = await generate_patch(
++                    self._model,
++                    self._context_engine,
++                    finding,
++                    assessment,
++                    self._settings.context_token_budget,
++                    previous_attempt=previous_failure,
++                )
++            except Exception as exc:
++                abort_reason = f"Patch generation unavailable ({type(exc).__name__}): {exc}"
++                logger.warning("patch_generation_unavailable", job_id=job_id, attempt_number=attempt_number,
++                               error=abort_reason)
++                break
+             _record_call("generate_patch", attempt_number, patch_result, time.monotonic() - _call_start)
+             if self._cost_governor is not None:
+                 self._cost_governor.record(patch_result.usage)
+--- a/src/quincy/remediation/failure_analyzer.py
++++ b/src/quincy/remediation/failure_analyzer.py
+@@ -7,7 +7,7 @@
+ from quincy.models.protocol import SecurityModel
+ from quincy.schemas.assessment import FailureAnalysis
+ from quincy.schemas.evidence import ValidationResult
+-from quincy.schemas.model import ModelResult
++from quincy.schemas.model import ModelResult, TokenUsage
+ from quincy.schemas.patch import Patch
+ 
+ logger = get_logger(__name__)
+@@ -21,7 +21,21 @@
+         attempt_number=patch.attempt_number,
+         gates_passed=validation.gates_passed,
+     )
+-    result = await model.analyze_failure(patch, validation)
++    try:
++        result = await model.analyze_failure(patch, validation)
++    except Exception as exc:
++        logger.warning("failure_analysis_unavailable", error=type(exc).__name__)
++        reasons = [gate.message for gate in validation.gate_results if not gate.passed]
++        if validation.tests and not validation.tests.passed:
++            reasons.append(validation.tests.stderr[-3000:] or "Existing tests failed")
++        reasons.extend(f"New finding: {finding.rule_id}: {finding.message}" for finding in validation.new_findings)
++        if not reasons:
++            reasons.append("Validation did not prove the fix; inspect the original source and executable proof")
++        return ModelResult(
++            payload=FailureAnalysis(attempt_number=patch.attempt_number, failure_reasons=reasons,
++                                    guidance_for_next_attempt="\n".join(reasons), confidence_next_attempt_succeeds=0.5),
++            usage=TokenUsage(), provider="deterministic", model_name="validation-feedback",
++        )
+     logger.info(
+         "failure_analysis_done",
+         attempt_number=patch.attempt_number,
+--- a/src/quincy/reasoning/prompts/patch.md
++++ b/src/quincy/reasoning/prompts/patch.md
+@@ -40,3 +40,5 @@
+ - Prefer standard-library operations over starting a subprocess for logging or filesystem inspection. Do not introduce new security findings while removing the target.
+ 
+ - Do not remove an import unless the complete file is available and proves no remaining code references it. A function-level excerpt cannot establish that an import is unused.
++
++- If an existing test mocks the vulnerable mechanism itself, replace that implementation-specific assertion with a real behavior test for the safe implementation. Preserve useful functionality and coverage; never retain an unsafe shell call merely to satisfy a mocked subprocess expectation.
+--- a/tests/unit/test_openrouter_adapter.py
++++ b/tests/unit/test_openrouter_adapter.py
+@@ -112,9 +112,30 @@
+     assert model._client.chat.completions.parse.call_count == 1
+ 
+ 
+-async def test_empty_response_retries_are_bounded():
++async def test_empty_response_retries_are_bounded():
+     model = OpenRouterSecurityModel("test", "test-key")
+     model._client.chat.completions.parse = AsyncMock(return_value=_response())
+     with pytest.raises(ModelOutputError, match="content_chars=0"):
+         await model._call_structured("test", Output)
+-    assert model._client.chat.completions.parse.call_count == 2
++    assert model._client.chat.completions.parse.call_count == 2
++
++
++async def test_transient_connection_error_retries_without_resetting_workflow():
++    from openai import APIConnectionError
++    import httpx
++    model = OpenRouterSecurityModel('test', 'test-key')
++    success = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=Output(answer='ok')))], usage=None)
++    model._client.chat.completions.parse = AsyncMock(side_effect=[APIConnectionError(request=httpx.Request('POST', 'https://example.test')), success])
++    result, _ = await model._call_structured('test', Output)
++    assert result.answer == 'ok'
++    assert model._client.chat.completions.parse.call_count == 2
++
++
++async def test_patch_retry_gets_reasoning_budget():
++    from quincy.models._shared import PatchOutput
++    model = OpenRouterSecurityModel('test', 'test-key')
++    output = PatchOutput(summary='fix', rationale='fix')
++    model._client.chat.completions.parse = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=output))], usage=None))
++    await model._call_structured('## Why the previous attempt failed\nTests failed', PatchOutput)
++    assert model._client.chat.completions.parse.call_args.kwargs['extra_body']['reasoning']['enabled']
++    assert model._client.chat.completions.parse.call_args.kwargs['max_tokens'] == 16384
+--- a/tests/unit/test_remediation_loop.py
++++ b/tests/unit/test_remediation_loop.py
+@@ -796,7 +796,7 @@
+     assert bundle.pr is None
+ 
+ 
+-async def test_remediate_fails_after_max_attempts(tmp_path: Path) -> None:
++async def test_remediate_fails_after_max_attempts(tmp_path: Path) -> None:
+     repo = _write_repo(tmp_path)
+     finding = _finding()
+     # baseline + 3 attempts, finding never actually gets fixed (fake model produces empty diffs)
+@@ -820,7 +820,24 @@
+     assert len(bundle.attempts) == 3
+     assert [a.attempt_number for a in bundle.attempts] == [1, 2, 3]
+     assert all(a.failure_analysis is not None for a in bundle.attempts)
+-    assert bundle.final_patch is None
++    assert bundle.final_patch is None
++
++
++async def test_provider_failure_preserves_completed_attempt_evidence(tmp_path: Path):
++    class FailingModel(FakeSecurityModel):
++        async def generate_patch(self, finding, assessment, context, previous_attempt=None):
++            if previous_attempt:
++                raise ConnectionError('provider unavailable')
++            return await super().generate_patch(finding, assessment, context, previous_attempt)
++    repo = _write_repo(tmp_path)
++    scanner = FakeScanner([True, True])
++    config = ScanConfig(config_paths=[], timeout_seconds=30)
++    service = RemediationService([scanner], {scanner.name: config}, config,
++                                 FakeSandboxRunner([_ok(), _ok()]), FailingModel(), _StubContextEngine(), _settings())
++    bundle = await service.remediate(repo, _finding(), job_id='provider-outage')
++    assert bundle.final_status == 'failed'
++    assert len(bundle.attempts) == 1
++    assert 'provider unavailable' in bundle.abort_reason
+ 
+ 
+ async def test_remediate_stops_early_when_gates_fail(tmp_path: Path) -> None:

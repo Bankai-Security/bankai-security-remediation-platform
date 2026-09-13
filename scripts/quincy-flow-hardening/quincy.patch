@@ -1,0 +1,2143 @@
+--- /dev/null
++++ b/src/quincy/validation/runtime.py
+@@ -0,0 +1,37 @@
++"""Resolve built-in validation defaults per finding without mutating global settings."""
++from pathlib import Path
++
++from quincy.config import Settings
++
++
++def resolve_runtime(settings: Settings, repo_root: Path, target: str) -> Settings:
++    # An explicit custom image/command remains the operator's responsibility.
++    # The built-in Node defaults must not leak into Python jobs in a monorepo.
++    if settings.sandbox_image.split(":", 1)[0] != "quincy-sandbox-node" or settings.test_command != ["npm", "test"]:
++        return settings.model_copy(deep=True)
++    suffix = Path(target).suffix.lower()
++    if suffix == ".py" or Path(target).name in {"requirements.txt", "pyproject.toml", "Pipfile", "poetry.lock"}:
++        parent = (repo_root / target).parent
++        while parent.is_relative_to(repo_root):
++            tests = parent / "tests"
++            if tests.is_dir():
++                command = ["python", "-m", "unittest", "discover", "-s", tests.relative_to(repo_root).as_posix()]
++                break
++            if parent == repo_root:
++                command = ["python", "-m", "unittest", "discover"]
++                break
++            parent = parent.parent
++        return settings.model_copy(update={"sandbox_image": "quincy-sandbox-python:latest", "test_command": command})
++    if suffix == ".go" or Path(target).name == "go.mod":
++        return settings.model_copy(update={"sandbox_image": "quincy-sandbox-go:latest", "test_command": ["go", "test", "./..."]})
++    if suffix in {".js", ".jsx", ".ts", ".tsx"} or Path(target).name in {"package.json", "package-lock.json"}:
++        parent = (repo_root / target).parent
++        while parent.is_relative_to(repo_root):
++            if (parent / "package.json").is_file():
++                relative = parent.relative_to(repo_root).as_posix()
++                command = ["npm", "test"] if relative == "." else ["npm", "--prefix", relative, "test"]
++                return settings.model_copy(update={"test_command": command})
++            if parent == repo_root:
++                break
++            parent = parent.parent
++    return settings.model_copy(deep=True)
+--- a/src/quincy/validation/patching.py
++++ b/src/quincy/validation/patching.py
+@@ -1,142 +1,155 @@
+-"""Applies a model-generated unified diff to file content, and reads a
+-repo's files into the in-memory form the sandbox and scanner both need.
+-
+-The patch is untrusted AI output, so parsing is defensive: a hunk that
+-doesn't parse or doesn't apply cleanly raises rather than silently
+-producing wrong content — a validator that "proves" a patch against the
+-wrong file content isn't proving anything.
+-"""
+-
+-from __future__ import annotations
+-
+-import re
+-from pathlib import Path
+-
+-from quincy.ingestion.detect import iter_source_files
+-from quincy.schemas.patch import Patch
+-
+-_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+-
+-
+-class PatchApplyError(ValueError):
+-    pass
+-
+-
+-class _Hunk:
+-    __slots__ = ("lines", "old_start")
+-
+-    def __init__(self, old_start: int) -> None:
+-        self.old_start = old_start
+-        self.lines: list[str] = []
+-
+-
+-def _parse_hunks(diff_text: str) -> list[_Hunk]:
+-    hunks: list[_Hunk] = []
+-    current: _Hunk | None = None
+-    for line in diff_text.splitlines():
+-        if line.startswith(("--- ", "+++ ")):
+-            continue
+-        match = _HUNK_HEADER.match(line)
+-        if match:
+-            current = _Hunk(old_start=int(match.group(1)))
+-            hunks.append(current)
+-            continue
+-        if current is None:
+-            continue
+-        if line and line[0] in " +-":
+-            current.lines.append(line)
+-        elif line == "":
+-            current.lines.append(" ")
+-    return hunks
+-
+-
+-def _old_hunk_lines(hunk: _Hunk) -> list[str]:
+-    return [line[1:] for line in hunk.lines if line and line[0] in " -"]
+-
+-
+-def _find_hunk_start(original_lines: list[str], hunk: _Hunk, cursor: int) -> int:
+-    expected = _old_hunk_lines(hunk)
+-    if not expected:
+-        return max(hunk.old_start - 1, cursor)
+-
+-    preferred = max(hunk.old_start - 1, cursor)
+-    if original_lines[preferred : preferred + len(expected)] == expected:
+-        return preferred
+-
+-    for index in range(cursor, len(original_lines) - len(expected) + 1):
+-        if original_lines[index : index + len(expected)] == expected:
+-            return index
+-
+-    preview = expected[0] if expected else "<empty>"
+-    raise PatchApplyError(f"hunk context not found from line {cursor + 1}: starts with {preview!r}")
+-
+-
+-def _apply_hunks(original_text: str, hunks: list[_Hunk]) -> str:
+-    original_lines = original_text.splitlines()
+-    result: list[str] = []
+-    cursor = 0
+-    for hunk in hunks:
+-        start = _find_hunk_start(original_lines, hunk, cursor)
+-        if start > len(original_lines):
+-            raise PatchApplyError(f"hunk starts at line {hunk.old_start}, file has {len(original_lines)} lines")
+-        result.extend(original_lines[cursor:start])
+-        cursor = start
+-        for line in hunk.lines:
+-            tag, content = line[0], line[1:]
+-            if tag == " ":
+-                if cursor >= len(original_lines) or original_lines[cursor] != content:
+-                    actual = original_lines[cursor] if cursor < len(original_lines) else "<EOF>"
+-                    raise PatchApplyError(
+-                        f"context mismatch at line {cursor + 1}: expected {content!r}, found {actual!r}"
+-                    )
+-                result.append(content)
+-                cursor += 1
+-            elif tag == "-":
+-                if cursor >= len(original_lines) or original_lines[cursor] != content:
+-                    actual = original_lines[cursor] if cursor < len(original_lines) else "<EOF>"
+-                    raise PatchApplyError(
+-                        f"deletion mismatch at line {cursor + 1}: expected {content!r}, found {actual!r}"
+-                    )
+-                cursor += 1
+-            elif tag == "+":
+-                result.append(content)
+-    result.extend(original_lines[cursor:])
+-    text = "\n".join(result)
+-    if result:
+-        text += "\n"
+-    return text
+-
+-
+-def apply_file_diff(original_text: str, diff: str) -> str:
+-    hunks = _parse_hunks(diff)
+-    if not hunks:
+-        raise PatchApplyError("diff contains no recognizable hunks")
+-    return _apply_hunks(original_text, hunks)
+-
+-
+-def apply_patch(original_files: dict[str, bytes], patch: Patch, *, diffs: list[str] | None = None) -> dict[str, bytes]:
+-    """Returns a new file map with `patch`'s diffs applied on top of
+-    `original_files`. Pass `diffs` (a subset of paths) to apply only some of
+-    the patch's diffs — e.g. the proof-of-vulnerability test without the
+-    source fix."""
+-    patched = dict(original_files)
+-    target_diffs = patch.all_diffs if diffs is None else [d for d in patch.all_diffs if d.path in diffs]
+-    for file_diff in target_diffs:
+-        original_bytes = patched.get(file_diff.path, b"")
+-        try:
+-            original_text = original_bytes.decode("utf-8")
+-        except UnicodeDecodeError as exc:
+-            raise PatchApplyError(f"{file_diff.path} is not valid UTF-8 text") from exc
+-        patched[file_diff.path] = apply_file_diff(original_text, file_diff.diff).encode("utf-8")
+-    return patched
+-
+-
+-def read_repo_files(root: Path) -> dict[str, bytes]:
+-    """Reads every non-ignored file under `root` into an in-memory map,
+-    keyed by repo-relative posix path — the form both the scanner (written
+-    to a scratch dir) and the sandbox (staged via stdin) consume."""
+-    files: dict[str, bytes] = {}
+-    for path in iter_source_files(root):
+-        rel_path = path.relative_to(root).as_posix()
+-        files[rel_path] = path.read_bytes()
+-    return files
++"""Applies a model-generated unified diff to file content, and reads a
+
++repo's files into the in-memory form the sandbox and scanner both need.
+
++
+
++The patch is untrusted AI output, so parsing is defensive: a hunk that
+
++doesn't parse or doesn't apply cleanly raises rather than silently
+
++producing wrong content — a validator that "proves" a patch against the
+
++wrong file content isn't proving anything.
+
++"""
+
++
+
++from __future__ import annotations
+
++
+
++import re
+
++from pathlib import Path
+
++
+
++from quincy.ingestion.detect import iter_source_files
+
++from quincy.schemas.patch import Patch
+
++
+
++_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
++
+
++
+
++class PatchApplyError(ValueError):
+
++    pass
+
++
+
++
+
++class _Hunk:
+
++    __slots__ = ("lines", "old_start")
+
++
+
++    def __init__(self, old_start: int) -> None:
+
++        self.old_start = old_start
+
++        self.lines: list[str] = []
+
++
+
++
+
++def _parse_hunks(diff_text: str) -> list[_Hunk]:
+
++    hunks: list[_Hunk] = []
+
++    current: _Hunk | None = None
+
++    for line in diff_text.splitlines():
+
++        if current is None and line.startswith(("--- ", "+++ ")):
+
++            continue
+
++        match = _HUNK_HEADER.match(line)
+
++        if match:
+
++            current = _Hunk(old_start=int(match.group(1)))
+
++            hunks.append(current)
+
++            continue
+
++        if current is None:
+
++            continue
+
++        if line and line[0] in " +-":
+
++            current.lines.append(line)
+
++        elif line == "":
+
++            current.lines.append(" ")
+
++        elif line == "\\ No newline at end of file":
+
++            continue
+
++        else:
+
++            raise PatchApplyError(f"invalid hunk line (missing diff prefix): {line!r}")
+
++    return hunks
+
++
+
++
+
++def _old_hunk_lines(hunk: _Hunk) -> list[str]:
+
++    return [line[1:] for line in hunk.lines if line and line[0] in " -"]
+
++
+
++
+
++def _find_hunk_start(original_lines: list[str], hunk: _Hunk, cursor: int) -> int:
+
++    expected = _old_hunk_lines(hunk)
+
++    if not expected:
+
++        return max(hunk.old_start - 1, cursor)
+
++
+
++    preferred = max(hunk.old_start - 1, cursor)
+
++    if original_lines[preferred : preferred + len(expected)] == expected:
+
++        return preferred
+
++
+
++    matches = [index for index in range(cursor, len(original_lines) - len(expected) + 1)
+
++               if original_lines[index : index + len(expected)] == expected]
+
++    if len(matches) == 1:
+
++        return matches[0]
+
++    if len(matches) > 1:
+
++        raise PatchApplyError("ambiguous hunk context; provide more exact surrounding lines")
+
++
+
++    preview = expected[0] if expected else "<empty>"
+
++    raise PatchApplyError(f"hunk context not found from line {cursor + 1}: starts with {preview!r}")
+
++
+
++
+
++def _apply_hunks(original_text: str, hunks: list[_Hunk]) -> str:
+
++    original_lines = original_text.splitlines()
+
++    result: list[str] = []
+
++    cursor = 0
+
++    for hunk in hunks:
+
++        start = _find_hunk_start(original_lines, hunk, cursor)
+
++        if start > len(original_lines):
+
++            raise PatchApplyError(f"hunk starts at line {hunk.old_start}, file has {len(original_lines)} lines")
+
++        result.extend(original_lines[cursor:start])
+
++        cursor = start
+
++        for line in hunk.lines:
+
++            tag, content = line[0], line[1:]
+
++            if tag == " ":
+
++                if cursor >= len(original_lines) or original_lines[cursor] != content:
+
++                    actual = original_lines[cursor] if cursor < len(original_lines) else "<EOF>"
+
++                    raise PatchApplyError(
+
++                        f"context mismatch at line {cursor + 1}: expected {content!r}, found {actual!r}"
+
++                    )
+
++                result.append(content)
+
++                cursor += 1
+
++            elif tag == "-":
+
++                if cursor >= len(original_lines) or original_lines[cursor] != content:
+
++                    actual = original_lines[cursor] if cursor < len(original_lines) else "<EOF>"
+
++                    raise PatchApplyError(
+
++                        f"deletion mismatch at line {cursor + 1}: expected {content!r}, found {actual!r}"
+
++                    )
+
++                cursor += 1
+
++            elif tag == "+":
+
++                result.append(content)
+
++    result.extend(original_lines[cursor:])
+
++    text = "\n".join(result)
+
++    if result:
+
++        text += "\n"
+
++    return text
+
++
+
++
+
++def apply_file_diff(original_text: str, diff: str) -> str:
+
++    hunks = _parse_hunks(diff)
+
++    if not hunks:
+
++        raise PatchApplyError("diff contains no recognizable hunks")
+
++    return _apply_hunks(original_text, hunks)
+
++
+
++
+
++def apply_patch(original_files: dict[str, bytes], patch: Patch, *, diffs: list[str] | None = None) -> dict[str, bytes]:
+
++    """Returns a new file map with `patch`'s diffs applied on top of
+
++    `original_files`. Pass `diffs` (a subset of paths) to apply only some of
+
++    the patch's diffs — e.g. the proof-of-vulnerability test without the
+
++    source fix."""
+
++    patched = dict(original_files)
+
++    target_diffs = patch.all_diffs if diffs is None else [d for d in patch.all_diffs if d.path in diffs]
+
++    for file_diff in target_diffs:
+
++        path = Path(file_diff.path)
+
++        if path.is_absolute() or ".." in path.parts or "\\" in file_diff.path or ":" in file_diff.path:
+
++            raise PatchApplyError(f"unsafe patch path: {file_diff.path!r}")
+
++        original_bytes = patched.get(file_diff.path, b"")
+
++        try:
+
++            original_text = original_bytes.decode("utf-8")
+
++        except UnicodeDecodeError as exc:
+
++            raise PatchApplyError(f"{file_diff.path} is not valid UTF-8 text") from exc
+
++        try:
+
++            patched[file_diff.path] = apply_file_diff(original_text, file_diff.diff).encode("utf-8")
+
++        except PatchApplyError as exc:
+
++            raise PatchApplyError(f"{file_diff.path}: {exc}") from exc
+
++    return patched
+
++
+
++
+
++def read_repo_files(root: Path) -> dict[str, bytes]:
+
++    """Reads every non-ignored file under `root` into an in-memory map,
+
++    keyed by repo-relative posix path — the form both the scanner (written
+
++    to a scratch dir) and the sandbox (staged via stdin) consume."""
+
++    files: dict[str, bytes] = {}
+
++    for path in iter_source_files(root):
+
++        rel_path = path.relative_to(root).as_posix()
+
++        files[rel_path] = path.read_bytes()
+
++    return files
+
+--- a/src/quincy/validation/poc.py
++++ b/src/quincy/validation/poc.py
+@@ -1,62 +1,69 @@
+-"""Proof-of-vulnerability: an executable test that fails against the
+-unpatched code (the exploit reproduces) and passes once the patch is
+-applied. The model is asked to include exactly one such test, taken by
+-convention as the first entry in `Patch.test_diffs`.
+-
+-Reuses the differential run's "after" test result instead of re-executing
+-the full suite a third time per attempt — this function only needs one
+-additional sandbox run: original source + the new test file(s), without
+-the source fix.
+-"""
+-
+-from __future__ import annotations
+-
+-from pathlib import Path
+-
+-from quincy.config import Settings
+-from quincy.sandbox.runner import SandboxRunner
+-from quincy.schemas.evidence import PoVResult, TestRunResult
+-from quincy.schemas.patch import Patch
+-from quincy.validation.patching import PatchApplyError, apply_patch, read_repo_files
+-from quincy.validation.sandbox_exec import build_sandbox_spec, pick_test_command
+-
+-
+-async def run_proof_of_vulnerability(
+-    repo_root: Path,
+-    patch: Patch,
+-    sandbox: SandboxRunner,
+-    settings: Settings,
+-    after_tests: TestRunResult,
+-) -> PoVResult | None:
+-    if not patch.test_diffs:
+-        return None
+-    pov_path = patch.test_diffs[0].path
+-
+-    original_files = read_repo_files(repo_root)
+-    test_only_paths = [d.path for d in patch.test_diffs]
+-    try:
+-        before_files = apply_patch(original_files, patch, diffs=test_only_paths)
+-    except PatchApplyError as exc:
+-        before_tests = TestRunResult(
+-            command=pick_test_command(pov_path, settings.test_command),
+-            passed=True,
+-            exit_code=0,
+-            stdout="",
+-            stderr=f"proof-of-vulnerability test did not apply: {exc}",
+-            duration_seconds=0.0,
+-        )
+-        return PoVResult(test_path=pov_path, ran_before_patch=before_tests, ran_after_patch=after_tests)
+-
+-    command = pick_test_command(pov_path, settings.test_command)
+-    spec = build_sandbox_spec(settings, before_files, command)
+-    sandbox_result = await sandbox.run(spec)
+-    before_tests = TestRunResult(
+-        command=command,
+-        passed=sandbox_result.succeeded,
+-        exit_code=sandbox_result.exit_code,
+-        stdout=sandbox_result.stdout,
+-        stderr=sandbox_result.stderr,
+-        duration_seconds=sandbox_result.duration_seconds,
+-    )
+-
+-    return PoVResult(test_path=pov_path, ran_before_patch=before_tests, ran_after_patch=after_tests)
++"""Proof-of-vulnerability: an executable test that fails against the
+
++unpatched code (the exploit reproduces) and passes once the patch is
+
++applied. The model is asked to include exactly one such test, taken by
+
++convention as the first entry in `Patch.test_diffs`.
+
++
+
++Reuses the differential run's "after" test result instead of re-executing
+
++the full suite a third time per attempt â€” this function only needs one
+
++additional sandbox run: original source + the new test file(s), without
+
++the source fix.
+
++"""
+
++
+
++from __future__ import annotations
+
++
+
++from pathlib import Path
+
++
+
++from quincy.config import Settings
+
++from quincy.sandbox.runner import SandboxRunner
+
++from quincy.schemas.evidence import PoVResult, TestRunResult
+
++from quincy.schemas.patch import Patch
+
++from quincy.validation.patching import PatchApplyError, apply_patch, read_repo_files
+
++from quincy.validation.sandbox_exec import build_sandbox_spec, pick_test_command
+
++
+
++
+
++async def run_proof_of_vulnerability(
+
++    repo_root: Path,
+
++    patch: Patch,
+
++    sandbox: SandboxRunner,
+
++    settings: Settings,
+
++    after_tests: TestRunResult,
+
++) -> PoVResult | None:
+
++    if not patch.test_diffs:
+
++        return None
+
++    pov_path = patch.test_diffs[0].path
+
++
+
++    original_files = read_repo_files(repo_root)
+
++    test_only_paths = [d.path for d in patch.test_diffs]
+
++    try:
+
++        before_files = apply_patch(original_files, patch, diffs=test_only_paths)
+
++        after_files = apply_patch(original_files, patch)
+
++    except PatchApplyError as exc:
+
++        before_tests = TestRunResult(
+
++            command=pick_test_command(pov_path, settings.test_command),
+
++            passed=True,
+
++            exit_code=0,
+
++            stdout="",
+
++            stderr=f"proof-of-vulnerability test did not apply: {exc}",
+
++            duration_seconds=0.0,
+
++        )
+
++        return PoVResult(test_path=pov_path, ran_before_patch=before_tests, ran_after_patch=after_tests)
+
++
+
++    command = pick_test_command(pov_path, settings.test_command)
+
++    spec = build_sandbox_spec(settings, before_files, command)
+
++    sandbox_result = await sandbox.run(spec)
+
++    before_tests = TestRunResult(
+
++        command=command,
+
++        passed=sandbox_result.succeeded,
+
++        exit_code=sandbox_result.exit_code,
+
++        stdout=sandbox_result.stdout,
+
++        stderr=sandbox_result.stderr,
+
++        duration_seconds=sandbox_result.duration_seconds,
+
++    )
+
++
+
++    after_result = await sandbox.run(build_sandbox_spec(settings, after_files, command))
+
++    proof_after = TestRunResult(
+
++        command=command, passed=after_result.succeeded, exit_code=after_result.exit_code,
+
++        stdout=after_result.stdout, stderr=after_result.stderr,
+
++        duration_seconds=after_result.duration_seconds,
+
++    )
+
++    return PoVResult(test_path=pov_path, ran_before_patch=before_tests, ran_after_patch=proof_after)
+
+--- a/src/quincy/remediation/loop.py
++++ b/src/quincy/remediation/loop.py
+@@ -46,23 +46,43 @@
+ from quincy.remediation.safety import repeated_gate_failure
+
+ from quincy.sandbox.runner import SandboxRunner, resolve_image_digest
+
+ from quincy.scanners.base import ScanConfig, Scanner
+
+-from quincy.scanners.cache import cache_db_path_for_repo, open_cache, run_all_scanners_cached
+
++from quincy.scanners.cache import (
+
++    cache_db_path_for_repo,
+
++    open_cache,
+
++    run_all_scanners_cached,
+
++)
+
+ from quincy.schemas.assessment import FailureAnalysis, PatchReview
+
+-from quincy.schemas.bankai import BankaiContext, BankaiExecutionOptions, BankaiFindingContext
+
+-from quincy.schemas.evidence import AttemptEvidence, EvidenceBundle, RedTeamResult, ValidationResult
+
++from quincy.schemas.bankai import (
+
++    BankaiContext,
+
++    BankaiExecutionOptions,
+
++    BankaiFindingContext,
+
++)
+
++from quincy.schemas.evidence import (
+
++    AttemptEvidence,
+
++    EvidenceBundle,
+
++    GateResult,
+
++    RedTeamResult,
+
++    ValidationResult,
+
++)
+
+ from quincy.schemas.finding import Finding, FindingKind, Location, Severity
+
+ from quincy.schemas.github import GitHubPRConfig
+
+ from quincy.schemas.model import ModelResult, TokenUsage
+
+ from quincy.schemas.patch import Patch
+
+ from quincy.schemas.policy import PolicyContext
+
+ from quincy.schemas.repo import RepoRef
+
+-from quincy.schemas.transcript import ModelCallRecord, ModelCallType, RemediationTranscript
+
++from quincy.schemas.transcript import (
+
++    ModelCallRecord,
+
++    ModelCallType,
+
++    RemediationTranscript,
+
++)
+
+ from quincy.validation.baseline import run_baseline
+
+ from quincy.validation.differential import run_differential
+
+ from quincy.validation.gates import run_gates
+
+ from quincy.validation.net_negative import compute_new_findings
+
++from quincy.validation.patching import PatchApplyError, apply_patch, read_repo_files
+
+ from quincy.validation.poc import run_proof_of_vulnerability
+
+ from quincy.validation.red_team import run_red_team
+
++from quincy.validation.runtime import resolve_runtime
+
+ 
+
+ logger = get_logger(__name__)
+
+ 
+
+@@ -176,7 +196,8 @@
+         self._execution_options = execution_options
+
+ 
+
+     async def remediate(self, repo_root: Path, finding: Finding, job_id: str) -> EvidenceBundle:
+
+-        baseline = await run_baseline(
+
++        self._settings = resolve_runtime(self._settings, repo_root, finding.location.file)
+
++        baseline = await run_baseline(
+             repo_root,
+
+             finding,
+
+             self._scanners,
+
+@@ -184,8 +205,23 @@
+             self._default_scan_config,
+
+             self._sandbox,
+
+             self._settings,
+
+-            cache_conn=self._scan_cache_conn,
+
+-        )
+
++            cache_conn=self._scan_cache_conn,
++        )
++
++        baseline_output = (baseline.tests.stdout + "\n" + baseline.tests.stderr).lower()
++        if not baseline.tests.passed and (
++            baseline.tests.exit_code in {126, 127}
++            or any(message in baseline_output for message in (
++                "command not found", "executable file not found", "modulenotfounderror",
++                "failed to import test module", "enoent",
++            ))
++        ):
++            return EvidenceBundle(
++                job_id=job_id, finding=finding, baseline=baseline, attempts=[], final_status="failed",
++                abort_reason=f"Validation runtime unavailable: image={self._settings.sandbox_image}, "
++                f"command={self._settings.test_command!r}. Provision the required runtime and dependencies; "
++                "do not change application code to repair the harness. " + baseline.tests.stderr[-1500:],
++            )
+ 
+
+         if self._cost_governor is not None and self._cost_governor.is_exceeded:
+
+             logger.warning("remediation_aborted_before_start_cost_budget", job_id=job_id)
+
+@@ -287,6 +323,10 @@
+                 model_usage.insert(0, assessment_result.usage)
+
+ 
+
+             gate_results = run_gates(patch, self._settings.max_patch_diff_lines)
+
++            try:
+
++                apply_patch(read_repo_files(repo_root), patch)
+
++            except PatchApplyError as exc:
+
++                gate_results.append(GateResult(name="patch_apply", passed=False, message=str(exc)))
+
+             gates_passed = all(gate.passed for gate in gate_results)
+
+ 
+
+             review: PatchReview | None = None
+
+@@ -371,11 +411,22 @@
+                         or item in validation.new_findings
+
+                     ]}) if validation.scan else None,
+
+                 })
+
++                patch_errors = [gate.message for gate in gate_results if gate.name == "patch_apply" and not gate.passed]
+
+                 failure_result = await analyze_failure(self._model, patch, retry_validation)
+
+                 _record_call("analyze_failure", attempt_number, failure_result, time.monotonic() - _call_start)
+
+                 if self._cost_governor is not None:
+
+                     self._cost_governor.record(failure_result.usage)
+
+                 failure_analysis = failure_result.payload
+
++                if patch_errors:
+
++                    failure_analysis = failure_analysis.model_copy(update={
+
++                        "attempt_number": attempt_number,
+
++                        "guidance_for_next_attempt": "Patch application failed against the ORIGINAL snapshot: "
+
++                        + "\n".join(patch_errors)
+
++                        + "\nRegenerate narrow hunks using exact target_file context. No failed changes have been applied. "
+
++                        "Prefix EVERY removed line with '-' and EVERY context line with a space. "
+
++                        "Do not change project manifests or test commands to repair the validation harness.",
+
++                        "confidence_next_attempt_succeeds": 0.5,
+
++                    })
+
+                 previous_failure = failure_analysis
+
+                 model_usage.append(failure_result.usage)
+
+ 
+
+--- a/src/quincy/schemas/evidence.py
++++ b/src/quincy/schemas/evidence.py
+@@ -84,7 +84,15 @@
+ 
+     @property
+     def proves_vulnerability(self) -> bool:
+-        return not self.ran_before_patch.passed
++        before = self.ran_before_patch
++        output = (before.stdout + "\n" + before.stderr).lower()
++        infrastructure_errors = (
++            "modulenotfounderror", "importerror", "syntaxerror", "command not found",
++            "executable file not found", "no such file or directory", "failed to import test module",
++            "ran 0 tests",
++        )
++        return (not before.passed and before.exit_code == 1
++                and not any(error in output for error in infrastructure_errors))
+ 
+     @property
+     def proves_fix(self) -> bool:
+--- /dev/null
++++ b/tests/unit/test_flow_hardening.py
+@@ -0,0 +1,44 @@
++from pathlib import Path
++import pytest
++from quincy.config import Settings
++from quincy.validation.runtime import resolve_runtime
++from quincy.validation.patching import apply_file_diff, PatchApplyError
++from quincy.schemas.evidence import PoVResult, TestRunResult as ProofRun
++
++
++def test_python_monorepo_runtime_does_not_mutate_node_defaults(tmp_path: Path):
++    (tmp_path / 'backend/tests').mkdir(parents=True)
++    settings = Settings(_env_file=None, model_provider='fake')
++    resolved = resolve_runtime(settings, tmp_path, 'backend/app/utils/report_export.py')
++    assert resolved.sandbox_image == 'quincy-sandbox-python:latest'
++    assert resolved.test_command == ['python', '-m', 'unittest', 'discover', '-s', 'backend/tests']
++    assert settings.test_command == ['npm', 'test']
++    assert settings.sandbox_image == 'quincy-sandbox-node:latest'
++
++
++def test_nested_node_project(tmp_path: Path):
++    (tmp_path / 'frontend').mkdir()
++    (tmp_path / 'frontend/package.json').write_text('{}')
++    settings = Settings(_env_file=None, model_provider='fake')
++    assert resolve_runtime(settings, tmp_path, 'frontend/src/app.ts').test_command == ['npm', '--prefix', 'frontend', 'test']
++
++
++def test_custom_runtime_is_preserved(tmp_path: Path):
++    settings = Settings(_env_file=None, model_provider='fake', sandbox_image='custom-python', test_command=['pytest'])
++    assert resolve_runtime(settings, tmp_path, 'app.py').test_command == ['pytest']
++
++
++def test_missing_diff_prefix_is_rejected_instead_of_silently_ignored():
++    with pytest.raises(PatchApplyError, match='missing diff prefix'):
++        apply_file_diff('def preview():\n    pass\n', '@@ -1,2 +1,1 @@\ndef preview():\n-    pass\n+    return 1\n')
++
++
++def test_ambiguous_offset_hunk_is_rejected():
++    with pytest.raises(PatchApplyError, match='ambiguous'):
++        apply_file_diff('intro\na\na\n', '@@ -1 +1 @@\n-a\n+b\n')
++
++
++@pytest.mark.parametrize('code,error', [(127, 'python unavailable'), (1, 'ModuleNotFoundError: app'), (1, 'SyntaxError: invalid syntax')])
++def test_environment_failure_does_not_prove_a_vulnerability(code, error):
++    result = ProofRun(command=['python'], passed=False, exit_code=code, stdout='', stderr=error, duration_seconds=0)
++    assert not PoVResult(test_path='test.py', ran_before_patch=result).proves_vulnerability
+--- a/tests/unit/test_remediation_loop.py
++++ b/tests/unit/test_remediation_loop.py
+@@ -298,7 +298,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])  # baseline: present, differential: gone
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])  # baseline, differential, pov-before
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])  # baseline, differential, pov-before
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -318,7 +318,7 @@
+     assert bundle.attempts[0].succeeded is True
+
+     assert bundle.final_patch is not None
+
+     assert scanner.call_count == 2
+
+-    assert sandbox.call_count == 3
+
++    assert sandbox.call_count == 4
+
+ 
+
+ 
+
+ async def test_remediate_red_team_blocks_a_fix_that_passes_but_is_bypassable(tmp_path: Path) -> None:
+
+@@ -326,7 +326,7 @@
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])  # baseline: present, differential: gone -- the primary scan is clean
+
+     # baseline, differential-tests, pov-before (exploit reproduces), red-team variant (bypass succeeds -> test fails)
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok(), _fail()])
+
+     variant = FileDiff(
+
+         path="tests/variant.test.ts",
+
+         diff="--- /dev/null\n+++ b/tests/variant.test.ts\n@@ -0,0 +1,1 @@\n+test('variant', () => {});\n",
+
+@@ -356,14 +356,14 @@
+     assert attempt.validation.red_team.bypassed is True
+
+     assert attempt.validation.red_team.attempted_variants == 1
+
+     assert attempt.validation.succeeded is False
+
+-    assert sandbox.call_count == 4
+
++    assert sandbox.call_count == 5
+
+ 
+
+ 
+
+ async def test_remediate_red_team_allows_a_fix_when_no_bypass_found(tmp_path: Path) -> None:
+
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])  # baseline, differential, pov-before
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])  # baseline, differential, pov-before
+
+     # ScriptedModel with no red_team_variant delegates to FakeSecurityModel's
+
+     # empty-variant-tests verdict -- run_red_team short-circuits for free,
+
+     # no extra sandbox call.
+
+@@ -380,14 +380,14 @@
+     assert attempt.validation.red_team is not None
+
+     assert attempt.validation.red_team.attempted_variants == 0
+
+     assert attempt.validation.red_team.bypassed is False
+
+-    assert sandbox.call_count == 3  # confirms no extra sandbox call for the empty-variant short-circuit
+
++    assert sandbox.call_count == 4  # confirms no extra sandbox call for the empty-variant short-circuit
+
+ 
+
+ 
+
+ async def test_remediate_bundle_carries_blast_radius_for_a_successful_job(tmp_path: Path) -> None:
+
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     symbol_conn = build_index(repo)
+
+@@ -415,7 +415,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     symbol_conn = build_index(repo)
+
+@@ -449,7 +449,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     symbol_conn = build_index(repo)
+
+@@ -492,7 +492,7 @@
+         )
+
+ 
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(auth_fixing_patch)
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -511,7 +511,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -529,7 +529,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     private_hex, public_hex = generate_signing_keypair()
+
+@@ -556,7 +556,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -601,7 +601,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -656,7 +656,7 @@
+         )
+
+ 
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(auth_fixing_patch)
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -706,7 +706,7 @@
+         )
+
+ 
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(patch_touching_a_manifest)
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -742,7 +742,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -775,7 +775,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -906,7 +906,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])  # baseline: present, differential: gone
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])  # baseline, differential, pov-before
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])  # baseline, differential, pov-before
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -991,7 +991,7 @@
+     # target gone, but a genuinely new finding appeared -- net-negative
+
+     # delta must reject this even though the target itself was fixed.
+
+     scanner = SequencedFindingsScanner([[target_raw], [introduced_raw]])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])  # baseline, differential, pov-before
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])  # baseline, differential, pov-before
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -1163,7 +1163,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -1197,7 +1197,7 @@
+     repo = _write_repo(tmp_path)
+
+     finding = _finding()
+
+     scanner = FakeScanner([True, False])  # baseline: present, differential: gone
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])  # baseline, differential, pov-before
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])  # baseline, differential, pov-before
+
+     model = ScriptedModel(_fixing_patch(finding.fingerprint))
+
+     default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
+     service = RemediationService(
+
+@@ -1246,7 +1246,7 @@
+     # result -- only the differential scan (a different, patched temp dir)
+
+     # actually calls the scanner again.
+
+     scanner = FakeScanner([True, False])  # discover (cached for baseline), differential
+
+-    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail()])  # baseline, differential, pov-before
+
++    sandbox = FakeSandboxRunner([_ok(), _ok(), _fail(), _ok()])  # baseline, differential, pov-before
+
+ 
+
+     raw = RawFinding(
+
+         scanner="semgrep",
+
+--- a/tests/unit/test_validation_pipeline.py
++++ b/tests/unit/test_validation_pipeline.py
+@@ -1,256 +1,257 @@
+-from pathlib import Path
+-
+-from quincy.config import Settings
+-from quincy.scanners.base import RawFinding, ScanConfig
+-from quincy.schemas.evidence import TestRunResult as PytestSuiteRunResult
+-from quincy.schemas.finding import Finding, Location, Severity
+-from quincy.schemas.patch import FileDiff, Patch
+-from quincy.schemas.sandbox import SandboxJobSpec, SandboxResult
+-from quincy.validation.baseline import run_baseline
+-from quincy.validation.differential import run_differential
+-from quincy.validation.poc import run_proof_of_vulnerability
+-
+-
+-class FakeScanner:
+-    name = "fake-scanner"
+-
+-    def __init__(self, findings: list[RawFinding]) -> None:
+-        self._findings = findings
+-
+-    async def scan(self, repo_path: Path, config: ScanConfig) -> list[RawFinding]:
+-        return self._findings
+-
+-
+-class FakeSandboxRunner:
+-    def __init__(self, results: list[SandboxResult]) -> None:
+-        self._results = list(results)
+-        self.calls: list[SandboxJobSpec] = []
+-
+-    async def run(self, spec: SandboxJobSpec) -> SandboxResult:
+-        self.calls.append(spec)
+-        return self._results.pop(0)
+-
+-
+-def _finding() -> Finding:
+-    return Finding.build(
+-        rule_id="BANKAI-001",
+-        rule_version="1.0.0",
+-        title="SQL Injection",
+-        severity=Severity.HIGH,
+-        location=Location(file="src/db.ts", start_line=2, end_line=2),
+-        message="unparameterized query",
+-        code_snippet='db.query("SELECT * FROM users WHERE id = " + id)',
+-        scanner="semgrep",
+-        raw_scanner_id="semgrep:bankai-001-sql-injection",
+-        severity_as_reported="ERROR",
+-        cwe=["CWE-89"],
+-    )
+-
+-
+-def _raw_finding_matching(finding: Finding) -> RawFinding:
+-    return RawFinding(
+-        scanner="semgrep",
+-        check_id="bankai-001-sql-injection",
+-        file=finding.location.file,
+-        start_line=finding.location.start_line,
+-        end_line=finding.location.end_line,
+-        message=finding.message,
+-        severity="ERROR",
+-        code_snippet=finding.code_snippet,
+-        metadata={"rule_id": "BANKAI-001"},
+-    )
+-
+-
+-def _write_repo(tmp_path: Path) -> Path:
+-    (tmp_path / "src").mkdir()
+-    (tmp_path / "src" / "db.ts").write_text(
+-        "export function getUser(db, id) {\n"
+-        '  return db.query("SELECT * FROM users WHERE id = " + id);\n'
+-        "}\n"
+-    )
+-    return tmp_path
+-
+-
+-def _ok_sandbox_result() -> SandboxResult:
+-    return SandboxResult(exit_code=0, stdout="ok", stderr="", timed_out=False, duration_seconds=1.0)
+-
+-
+-def _fail_sandbox_result() -> SandboxResult:
+-    return SandboxResult(exit_code=1, stdout="fail", stderr="", timed_out=False, duration_seconds=1.0)
+-
+-
+-async def test_run_baseline_reports_finding_present_and_tests(tmp_path: Path) -> None:
+-    repo = _write_repo(tmp_path)
+-    finding = _finding()
+-    scanner = FakeScanner([_raw_finding_matching(finding)])
+-    sandbox = FakeSandboxRunner([_ok_sandbox_result()])
+-    settings = Settings(model_provider="fake")
+-    default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+-
+-    evidence = await run_baseline(
+-        repo, finding, [scanner], {scanner.name: default_config}, default_config, sandbox, settings
+-    )
+-
+-    assert evidence.scan.finding_present is True
+-    assert evidence.tests.passed is True
+-    assert len(sandbox.calls) == 1
+-
+-
+-async def test_run_differential_shows_finding_gone_and_tests_passing(tmp_path: Path) -> None:
+-    repo = _write_repo(tmp_path)
+-    finding = _finding()
+-    # after the patch, semgrep no longer finds the pattern
+-    scanner = FakeScanner([])
+-    sandbox = FakeSandboxRunner([_ok_sandbox_result()])
+-    settings = Settings(model_provider="fake")
+-
+-    patch = Patch(
+-        finding_fingerprint=finding.fingerprint,
+-        attempt_number=1,
+-        summary="parameterize",
+-        rationale="avoid string concat",
+-        file_diffs=[
+-            FileDiff(
+-                path="src/db.ts",
+-                diff=(
+-                    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,3 +1,3 @@\n"
+-                    " export function getUser(db, id) {\n"
+-                    '-  return db.query("SELECT * FROM users WHERE id = " + id);\n'
+-                    '+  return db.query("SELECT * FROM users WHERE id = ?", [id]);\n'
+-                    " }\n"
+-                ),
+-            )
+-        ],
+-    )
+-
+-    default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+-    result = await run_differential(
+-        repo, finding, patch, [scanner], {scanner.name: default_config}, default_config, sandbox, settings
+-    )
+-
+-    assert result.scan.finding_present is False
+-    assert result.tests.passed is True
+-    assert b"?" in result.patched_files["src/db.ts"]
+-
+-
+-async def test_run_differential_reports_patch_apply_error_as_failed_validation(tmp_path: Path) -> None:
+-    repo = _write_repo(tmp_path)
+-    finding = _finding()
+-    scanner = FakeScanner([])
+-    sandbox = FakeSandboxRunner([])
+-    settings = Settings(model_provider="fake")
+-    patch = Patch(
+-        finding_fingerprint=finding.fingerprint,
+-        attempt_number=1,
+-        summary="bad hunk",
+-        rationale="context does not match",
+-        file_diffs=[
+-            FileDiff(
+-                path="src/db.ts",
+-                diff=(
+-                    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,3 +1,3 @@\n"
+-                    " export function getUser(db, id) {\n"
+-                    "-  return db.query(\"wrong\");\n"
+-                    "+  return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);\n"
+-                    " }\n"
+-                ),
+-            )
+-        ],
+-    )
+-
+-    default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+-    result = await run_differential(
+-        repo, finding, patch, [scanner], {scanner.name: default_config}, default_config, sandbox, settings
+-    )
+-
+-    assert result.scan.finding_present is True
+-    assert result.tests.passed is False
+-    assert "patch did not apply" in result.tests.stderr
+-    assert sandbox.calls == []
+-
+-
+-async def test_run_proof_of_vulnerability_returns_none_without_test_diffs(tmp_path: Path) -> None:
+-    repo = _write_repo(tmp_path)
+-    finding = _finding()
+-    patch = Patch(finding_fingerprint=finding.fingerprint, attempt_number=1, summary="s", rationale="r")
+-    sandbox = FakeSandboxRunner([])
+-    settings = Settings(model_provider="fake")
+-    after_tests = PytestSuiteRunResult(
+-        command=["npm", "test"], passed=True, exit_code=0, stdout="", stderr="", duration_seconds=1.0
+-    )
+-
+-    result = await run_proof_of_vulnerability(repo, patch, sandbox, settings, after_tests)
+-    assert result is None
+-    assert sandbox.calls == []
+-
+-
+-async def test_run_proof_of_vulnerability_runs_before_scenario_and_reuses_after(tmp_path: Path) -> None:
+-    repo = _write_repo(tmp_path)
+-    finding = _finding()
+-    after_tests = PytestSuiteRunResult(
+-        command=["npm", "test"], passed=True, exit_code=0, stdout="after-ok", stderr="", duration_seconds=1.0
+-    )
+-    patch = Patch(
+-        finding_fingerprint=finding.fingerprint,
+-        attempt_number=1,
+-        summary="s",
+-        rationale="r",
+-        test_diffs=[
+-            FileDiff(
+-                path="tests/pov.test.ts",
+-                diff="--- /dev/null\n+++ b/tests/pov.test.ts\n@@ -0,0 +1,1 @@\n+test('exploit', () => {});\n",
+-            )
+-        ],
+-    )
+-    sandbox = FakeSandboxRunner([_fail_sandbox_result()])
+-    settings = Settings(model_provider="fake")
+-
+-    result = await run_proof_of_vulnerability(repo, patch, sandbox, settings, after_tests)
+-
+-    assert result is not None
+-    assert result.test_path == "tests/pov.test.ts"
+-    assert result.ran_before_patch.passed is False
+-    assert result.ran_after_patch is after_tests
+-    assert result.proves_vulnerability is True
+-    assert result.proves_fix is True
+-    assert len(sandbox.calls) == 1
+-    assert sandbox.calls[0].command == [
+-        "node",
+-        "--experimental-strip-types",
+-        "--test",
+-        "tests/pov.test.ts",
+-    ]
+-
+-
+-async def test_run_proof_of_vulnerability_reports_unapplied_test_diff_without_crashing(tmp_path: Path) -> None:
+-    repo = _write_repo(tmp_path)
+-    after_tests = PytestSuiteRunResult(
+-        command=["npm", "test"], passed=True, exit_code=0, stdout="after-ok", stderr="", duration_seconds=1.0
+-    )
+-    patch = Patch(
+-        finding_fingerprint="fp",
+-        attempt_number=1,
+-        summary="bad test hunk",
+-        rationale="context does not match",
+-        test_diffs=[
+-            FileDiff(
+-                path="src/db.ts",
+-                diff=(
+-                    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,3 +1,3 @@\n"
+-                    " export function getUser(db, id) {\n"
+-                    "-  return db.query(\"wrong\");\n"
+-                    "+  return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);\n"
+-                    " }\n"
+-                ),
+-            )
+-        ],
+-    )
+-    sandbox = FakeSandboxRunner([])
+-    settings = Settings(model_provider="fake")
+-
+-    result = await run_proof_of_vulnerability(repo, patch, sandbox, settings, after_tests)
+-
+-    assert result is not None
+-    assert result.proves_vulnerability is False
+-    assert "did not apply" in result.ran_before_patch.stderr
+-    assert sandbox.calls == []
++from pathlib import Path
+
++
+
++from quincy.config import Settings
+
++from quincy.scanners.base import RawFinding, ScanConfig
+
++from quincy.schemas.evidence import TestRunResult as PytestSuiteRunResult
+
++from quincy.schemas.finding import Finding, Location, Severity
+
++from quincy.schemas.patch import FileDiff, Patch
+
++from quincy.schemas.sandbox import SandboxJobSpec, SandboxResult
+
++from quincy.validation.baseline import run_baseline
+
++from quincy.validation.differential import run_differential
+
++from quincy.validation.poc import run_proof_of_vulnerability
+
++
+
++
+
++class FakeScanner:
+
++    name = "fake-scanner"
+
++
+
++    def __init__(self, findings: list[RawFinding]) -> None:
+
++        self._findings = findings
+
++
+
++    async def scan(self, repo_path: Path, config: ScanConfig) -> list[RawFinding]:
+
++        return self._findings
+
++
+
++
+
++class FakeSandboxRunner:
+
++    def __init__(self, results: list[SandboxResult]) -> None:
+
++        self._results = list(results)
+
++        self.calls: list[SandboxJobSpec] = []
+
++
+
++    async def run(self, spec: SandboxJobSpec) -> SandboxResult:
+
++        self.calls.append(spec)
+
++        return self._results.pop(0)
+
++
+
++
+
++def _finding() -> Finding:
+
++    return Finding.build(
+
++        rule_id="BANKAI-001",
+
++        rule_version="1.0.0",
+
++        title="SQL Injection",
+
++        severity=Severity.HIGH,
+
++        location=Location(file="src/db.ts", start_line=2, end_line=2),
+
++        message="unparameterized query",
+
++        code_snippet='db.query("SELECT * FROM users WHERE id = " + id)',
+
++        scanner="semgrep",
+
++        raw_scanner_id="semgrep:bankai-001-sql-injection",
+
++        severity_as_reported="ERROR",
+
++        cwe=["CWE-89"],
+
++    )
+
++
+
++
+
++def _raw_finding_matching(finding: Finding) -> RawFinding:
+
++    return RawFinding(
+
++        scanner="semgrep",
+
++        check_id="bankai-001-sql-injection",
+
++        file=finding.location.file,
+
++        start_line=finding.location.start_line,
+
++        end_line=finding.location.end_line,
+
++        message=finding.message,
+
++        severity="ERROR",
+
++        code_snippet=finding.code_snippet,
+
++        metadata={"rule_id": "BANKAI-001"},
+
++    )
+
++
+
++
+
++def _write_repo(tmp_path: Path) -> Path:
+
++    (tmp_path / "src").mkdir()
+
++    (tmp_path / "src" / "db.ts").write_text(
+
++        "export function getUser(db, id) {\n"
+
++        '  return db.query("SELECT * FROM users WHERE id = " + id);\n'
+
++        "}\n"
+
++    )
+
++    return tmp_path
+
++
+
++
+
++def _ok_sandbox_result() -> SandboxResult:
+
++    return SandboxResult(exit_code=0, stdout="ok", stderr="", timed_out=False, duration_seconds=1.0)
+
++
+
++
+
++def _fail_sandbox_result() -> SandboxResult:
+
++    return SandboxResult(exit_code=1, stdout="fail", stderr="", timed_out=False, duration_seconds=1.0)
+
++
+
++
+
++async def test_run_baseline_reports_finding_present_and_tests(tmp_path: Path) -> None:
+
++    repo = _write_repo(tmp_path)
+
++    finding = _finding()
+
++    scanner = FakeScanner([_raw_finding_matching(finding)])
+
++    sandbox = FakeSandboxRunner([_ok_sandbox_result()])
+
++    settings = Settings(model_provider="fake")
+
++    default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
++
+
++    evidence = await run_baseline(
+
++        repo, finding, [scanner], {scanner.name: default_config}, default_config, sandbox, settings
+
++    )
+
++
+
++    assert evidence.scan.finding_present is True
+
++    assert evidence.tests.passed is True
+
++    assert len(sandbox.calls) == 1
+
++
+
++
+
++async def test_run_differential_shows_finding_gone_and_tests_passing(tmp_path: Path) -> None:
+
++    repo = _write_repo(tmp_path)
+
++    finding = _finding()
+
++    # after the patch, semgrep no longer finds the pattern
+
++    scanner = FakeScanner([])
+
++    sandbox = FakeSandboxRunner([_ok_sandbox_result()])
+
++    settings = Settings(model_provider="fake")
+
++
+
++    patch = Patch(
+
++        finding_fingerprint=finding.fingerprint,
+
++        attempt_number=1,
+
++        summary="parameterize",
+
++        rationale="avoid string concat",
+
++        file_diffs=[
+
++            FileDiff(
+
++                path="src/db.ts",
+
++                diff=(
+
++                    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,3 +1,3 @@\n"
+
++                    " export function getUser(db, id) {\n"
+
++                    '-  return db.query("SELECT * FROM users WHERE id = " + id);\n'
+
++                    '+  return db.query("SELECT * FROM users WHERE id = ?", [id]);\n'
+
++                    " }\n"
+
++                ),
+
++            )
+
++        ],
+
++    )
+
++
+
++    default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
++    result = await run_differential(
+
++        repo, finding, patch, [scanner], {scanner.name: default_config}, default_config, sandbox, settings
+
++    )
+
++
+
++    assert result.scan.finding_present is False
+
++    assert result.tests.passed is True
+
++    assert b"?" in result.patched_files["src/db.ts"]
+
++
+
++
+
++async def test_run_differential_reports_patch_apply_error_as_failed_validation(tmp_path: Path) -> None:
+
++    repo = _write_repo(tmp_path)
+
++    finding = _finding()
+
++    scanner = FakeScanner([])
+
++    sandbox = FakeSandboxRunner([])
+
++    settings = Settings(model_provider="fake")
+
++    patch = Patch(
+
++        finding_fingerprint=finding.fingerprint,
+
++        attempt_number=1,
+
++        summary="bad hunk",
+
++        rationale="context does not match",
+
++        file_diffs=[
+
++            FileDiff(
+
++                path="src/db.ts",
+
++                diff=(
+
++                    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,3 +1,3 @@\n"
+
++                    " export function getUser(db, id) {\n"
+
++                    "-  return db.query(\"wrong\");\n"
+
++                    "+  return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);\n"
+
++                    " }\n"
+
++                ),
+
++            )
+
++        ],
+
++    )
+
++
+
++    default_config = ScanConfig(config_paths=[], timeout_seconds=30)
+
++    result = await run_differential(
+
++        repo, finding, patch, [scanner], {scanner.name: default_config}, default_config, sandbox, settings
+
++    )
+
++
+
++    assert result.scan.finding_present is True
+
++    assert result.tests.passed is False
+
++    assert "patch did not apply" in result.tests.stderr
+
++    assert sandbox.calls == []
+
++
+
++
+
++async def test_run_proof_of_vulnerability_returns_none_without_test_diffs(tmp_path: Path) -> None:
+
++    repo = _write_repo(tmp_path)
+
++    finding = _finding()
+
++    patch = Patch(finding_fingerprint=finding.fingerprint, attempt_number=1, summary="s", rationale="r")
+
++    sandbox = FakeSandboxRunner([])
+
++    settings = Settings(model_provider="fake")
+
++    after_tests = PytestSuiteRunResult(
+
++        command=["npm", "test"], passed=True, exit_code=0, stdout="", stderr="", duration_seconds=1.0
+
++    )
+
++
+
++    result = await run_proof_of_vulnerability(repo, patch, sandbox, settings, after_tests)
+
++    assert result is None
+
++    assert sandbox.calls == []
+
++
+
++
+
++async def test_run_proof_of_vulnerability_runs_same_proof_before_and_after(tmp_path: Path) -> None:
+
++    repo = _write_repo(tmp_path)
+
++    finding = _finding()
+
++    after_tests = PytestSuiteRunResult(
+
++        command=["npm", "test"], passed=True, exit_code=0, stdout="after-ok", stderr="", duration_seconds=1.0
+
++    )
+
++    patch = Patch(
+
++        finding_fingerprint=finding.fingerprint,
+
++        attempt_number=1,
+
++        summary="s",
+
++        rationale="r",
+
++        test_diffs=[
+
++            FileDiff(
+
++                path="tests/pov.test.ts",
+
++                diff="--- /dev/null\n+++ b/tests/pov.test.ts\n@@ -0,0 +1,1 @@\n+test('exploit', () => {});\n",
+
++            )
+
++        ],
+
++    )
+
++    sandbox = FakeSandboxRunner([_fail_sandbox_result(), _ok_sandbox_result()])
+
++    settings = Settings(model_provider="fake")
+
++
+
++    result = await run_proof_of_vulnerability(repo, patch, sandbox, settings, after_tests)
+
++
+
++    assert result is not None
+
++    assert result.test_path == "tests/pov.test.ts"
+
++    assert result.ran_before_patch.passed is False
+
++    assert result.ran_after_patch is not after_tests
+
++    assert sandbox.calls[0].command == sandbox.calls[1].command
+
++    assert result.proves_vulnerability is True
+
++    assert result.proves_fix is True
+
++    assert len(sandbox.calls) == 2
+
++    assert sandbox.calls[0].command == [
+
++        "node",
+
++        "--experimental-strip-types",
+
++        "--test",
+
++        "tests/pov.test.ts",
+
++    ]
+
++
+
++
+
++async def test_run_proof_of_vulnerability_reports_unapplied_test_diff_without_crashing(tmp_path: Path) -> None:
+
++    repo = _write_repo(tmp_path)
+
++    after_tests = PytestSuiteRunResult(
+
++        command=["npm", "test"], passed=True, exit_code=0, stdout="after-ok", stderr="", duration_seconds=1.0
+
++    )
+
++    patch = Patch(
+
++        finding_fingerprint="fp",
+
++        attempt_number=1,
+
++        summary="bad test hunk",
+
++        rationale="context does not match",
+
++        test_diffs=[
+
++            FileDiff(
+
++                path="src/db.ts",
+
++                diff=(
+
++                    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,3 +1,3 @@\n"
+
++                    " export function getUser(db, id) {\n"
+
++                    "-  return db.query(\"wrong\");\n"
+
++                    "+  return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);\n"
+
++                    " }\n"
+
++                ),
+
++            )
+
++        ],
+
++    )
+
++    sandbox = FakeSandboxRunner([])
+
++    settings = Settings(model_provider="fake")
+
++
+
++    result = await run_proof_of_vulnerability(repo, patch, sandbox, settings, after_tests)
+
++
+
++    assert result is not None
+
++    assert result.proves_vulnerability is False
+
++    assert "did not apply" in result.ran_before_patch.stderr
+
++    assert sandbox.calls == []
+

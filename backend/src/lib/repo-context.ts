@@ -177,7 +177,10 @@ export async function gatherRepoContext(options: GatherContextOptions): Promise<
     const logTestPaths = logBlamedPaths.filter((p) => p !== targetFilePath && isTestFilePath(p));
     const logImportPaths = logBlamedPaths.filter((p) => p !== targetFilePath && !isTestFilePath(p));
 
-    const importCandidates = dedupOrdered([...logImportPaths, ...extractImportedPaths(targetFilePath, vulnerableFileContent, allTreePaths)]);
+    const runtimePaths = /(^|\/)requirements[-\w]*\.txt$/.test(targetFilePath)
+      ? tree.filter((e) => e.type === "blob" && /(^|\/)(Dockerfile|\.python-version|runtime\.txt|pyproject\.toml)$|^\.github\/workflows\/[^/]+\.ya?ml$/.test(e.path)).map((e) => e.path)
+      : [];
+    const importCandidates = dedupOrdered([...logImportPaths, ...runtimePaths, ...extractImportedPaths(targetFilePath, vulnerableFileContent, allTreePaths)]);
     const testCandidates = dedupOrdered([...logTestPaths, ...findRelatedTestFiles(targetFilePath, tree).map((e) => e.path)]);
 
     const entryByPath = new Map(tree.map((e) => [e.path, e]));

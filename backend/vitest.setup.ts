@@ -10,3 +10,4 @@ process.env.FRONTEND_ORIGIN ??= "http://localhost:5173";
 process.env.GEMINI_API_KEY ??= "test-gemini-key";
 process.env.GITHUB_OAUTH_CLIENT_ID ??= "test-github-client-id";
 process.env.GITHUB_OAUTH_CLIENT_SECRET ??= "test-github-client-secret";
+process.env.AI_PROVIDER = "gemini";

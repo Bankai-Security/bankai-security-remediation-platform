@@ -1,0 +1,32 @@
+[
+  {
+    "path": "src/quincy/models/openrouter_adapter.py",
+    "before_sha256": "d0f5aa52f7094fefbff2241cee5cbedf49c691f18d9b4eb18a017d3da958cb2c",
+    "after_sha256": "8878482731ac53b9290fbb3bd89f5c9a4dc81e993de680dce98420aca487bd03"
+  },
+  {
+    "path": "src/quincy/remediation/loop.py",
+    "before_sha256": "eb29d1b06e99c1ea587462c1319b3a5a0eeb70cd8efad8ebdcf7449bfa829b2a",
+    "after_sha256": "b9210732216fbada7d461839bfe59f32e8f3cd23643cd8cce0863d19abd440fa"
+  },
+  {
+    "path": "src/quincy/remediation/failure_analyzer.py",
+    "before_sha256": "fad4544846ec2fca77dcdcb919a375cf56af31c2035a3d147886f60284f74955",
+    "after_sha256": "95a9c185f04b7d22a3336f60115e52c2e7937ff61c3510698f5c14187e305042"
+  },
+  {
+    "path": "src/quincy/reasoning/prompts/patch.md",
+    "before_sha256": "4d5025deac5fc38bd0fff304015428deed3e3b1d5dd78f893926d7a56fe69e68",
+    "after_sha256": "e6fb85ab12fcfe2915a4b09dff3919eac256e9ef48a7d0d9222dc7bf9ff239fc"
+  },
+  {
+    "path": "tests/unit/test_openrouter_adapter.py",
+    "before_sha256": "22d8505b653b5cb21f3d8b405041b84237cbef5a7cb655e3d77f2fe69bbc83cc",
+    "after_sha256": "2a3f65562a3e4af79a5857465692307d71216505e6e46b92783f72823700432a"
+  },
+  {
+    "path": "tests/unit/test_remediation_loop.py",
+    "before_sha256": "da429f53f7ce584f85834501cad69d82c8f0485c702dd5486d24c16b19f06dd5",
+    "after_sha256": "f4ae900347def3c8bc01869af789c7aa48c67b142b4d98eef4b31b3cbcb7793b"
+  }
+]

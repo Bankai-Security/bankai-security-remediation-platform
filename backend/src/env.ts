@@ -1,9 +1,16 @@
 import { z } from "zod";
 
+const optionalNonEmptyString = z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional());
+const optionalUrl = z.preprocess((value) => (value === "" ? undefined : value), z.url().optional());
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  APP_ENV: z.enum(["development", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
 
+  // Label the Supabase project these credentials belong to. This is a
+  // fail-fast guard against pointing local development at production data.
+  SUPABASE_ENV: z.enum(["development", "production"]).default("development"),
   SUPABASE_URL: z.url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
@@ -20,10 +27,24 @@ const envSchema = z.object({
   COOKIE_DOMAIN: z.string().optional(),
   COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
 
-  // Powers AI repo scanning (backend/src/lib/gemini.ts). Get a key from
-  // https://aistudio.google.com/apikey.
-  GEMINI_API_KEY: z.string().min(1),
+  // Shared AI settings for repository scans, remediation, and CI retries.
+  AI_PROVIDER: z.enum(["openrouter", "gemini"]).default("openrouter"),
+  OPENROUTER_API_KEY: optionalNonEmptyString,
+  OPENROUTER_REASONING_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  OPENROUTER_MODEL_NAME: z.string().min(1).default("deepseek/deepseek-v4-flash-0731"),
+  OPENROUTER_BASE_URL: z.url().default("https://openrouter.ai/api/v1"),
+  AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  GEMINI_API_KEY: optionalNonEmptyString,
   GEMINI_MODEL: z.string().min(1).default("gemini-pro-latest"),
+
+  // Optional Quincy Security Engine integration. When configured, repo scans
+  // prefer Quincy's deterministic scanner/triage API and fall back to the configured AI provider
+  // if the engine is unavailable or cannot access the repo.
+  QUINCY_API_URL: optionalUrl,
+  QUINCY_API_TOKEN: optionalNonEmptyString,
+  QUINCY_ALLOW_FALLBACK: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  QUINCY_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
+  QUINCY_REMEDIATION_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
 
   // Backs the repo-scan job queue (backend/src/lib/queue.ts) — required by
   // both the API server (to enqueue) and the worker (backend/src/worker.ts,
@@ -57,6 +78,24 @@ const envSchema = z.object({
   // {BACKEND_PUBLIC_URL or http://localhost:PORT}/api/auth/github/callback.
   GITHUB_OAUTH_CLIENT_ID: z.string().min(1),
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1),
+}).superRefine((env, ctx) => {
+  const key = env.AI_PROVIDER === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
+  if (!env[key]) ctx.addIssue({ code: "custom", path: [key], message: `required for AI_PROVIDER=${env.AI_PROVIDER}` });
+  if (env.NODE_ENV === "production" && env.APP_ENV !== "production") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["APP_ENV"],
+      message: "must be production when NODE_ENV is production",
+    });
+  }
+
+  if (env.APP_ENV !== env.SUPABASE_ENV) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["SUPABASE_ENV"],
+      message: `must match APP_ENV (${env.APP_ENV})`,
+    });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -66,4 +105,13 @@ if (!parsed.success) {
   throw new Error(`Invalid environment configuration:\n${issues}`);
 }
 
-export const env = parsed.data;
+const parsedEnv = parsed.data;
+
+// Local Bankai + Quincy is the default development shape. An empty
+// QUINCY_API_URL in backend/.env used to silently skip every
+// POST /workflows/remediations even when Quincy was healthy on :8000.
+export const env = {
+  ...parsedEnv,
+  QUINCY_API_URL:
+    parsedEnv.QUINCY_API_URL ?? (parsedEnv.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined),
+};

@@ -442,6 +442,8 @@ export interface CreatedPullRequest {
   number: number;
   url: string;
   state: "open" | "closed";
+  headRef: string | null;
+  headSha: string | null;
   // GitHub's own distinction: a PR's `state` becomes "closed" both when
   // merged and when closed unmerged — `merged` is the only field that tells
   // those apart. Always false for createPullRequest (a PR is never merged
@@ -454,10 +456,18 @@ interface GithubPullRequestApiBody {
   html_url: string;
   state: string;
   merged?: boolean;
+  head?: { ref?: string; sha?: string };
 }
 
 function toCreatedPullRequest(body: GithubPullRequestApiBody): CreatedPullRequest {
-  return { number: body.number, url: body.html_url, state: body.state === "closed" ? "closed" : "open", merged: body.merged ?? false };
+  return {
+    number: body.number,
+    url: body.html_url,
+    state: body.state === "closed" ? "closed" : "open",
+    headRef: body.head?.ref ?? null,
+    headSha: body.head?.sha ?? null,
+    merged: body.merged ?? false,
+  };
 }
 
 // Idempotent like createBranch: GitHub 422s "A pull request already exists
@@ -497,7 +507,14 @@ export async function createPullRequest(
         // definition still open (a merged/closed PR can't 422 as "already
         // exists" for a new one), so false is correct here, not a guess.
         if (match) {
-          return { number: match.number, url: match.html_url, state: match.state === "closed" ? "closed" : "open", merged: false };
+          return {
+            number: match.number,
+            url: match.html_url,
+            state: match.state === "closed" ? "closed" : "open",
+            headRef: match.head?.ref ?? null,
+            headSha: match.head?.sha ?? null,
+            merged: false,
+          };
         }
       }
     }

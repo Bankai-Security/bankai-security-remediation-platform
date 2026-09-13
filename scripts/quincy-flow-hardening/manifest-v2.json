@@ -1,0 +1,47 @@
+[
+  {
+    "path": "src/quincy/validation/runtime.py",
+    "before_sha256": "af4306679ff0c34a3bd0842dbb159e48b1198af8cc790fa1c91884734eaed61e",
+    "after_sha256": "303d9dc5e95fff9f643246789c2e29effa6cafd9b968d74732740513f961e77d"
+  },
+  {
+    "path": "src/quincy/validation/python_environment.py",
+    "before_sha256": null,
+    "after_sha256": "deb48d56968cdd98751878006e9282eae200d852968cda26c1ee6a3ea1254ed9"
+  },
+  {
+    "path": "src/quincy/validation/sandbox_exec.py",
+    "before_sha256": "7a8f7ea8d7ebe1563e77cad2e39441f062928982cca40e683b6d8bedad5f160d",
+    "after_sha256": "d72c0e960ff53d4e84f91d8cd4f58d98bd84a3aa7cb461690d81fed8eb50bf5a"
+  },
+  {
+    "path": "src/quincy/validation/patching.py",
+    "before_sha256": "03da7a23ce9db4ac3e4863e2960601ae373e99b624402b3f4975cc6029976ee2",
+    "after_sha256": "6afadcccb89aedbd95813a47927815231fbf7273f6f4a09472196032c79a0cf8"
+  },
+  {
+    "path": "src/quincy/sandbox/runner.py",
+    "before_sha256": "19ad1bf14fb72a5e3239d1eebcfabc1fe87eb4787b00725aa2af0190637d12ae",
+    "after_sha256": "e98b5f4c19821c33301c05f48a6bc3ec481100d6b25f6f9524ca5fb609b5d90b"
+  },
+  {
+    "path": "src/quincy/schemas/patch.py",
+    "before_sha256": "eaacbc7ef7c1d96e3f645f20ee7a0f382face1ccbb64ee28bd132ea35cba0252",
+    "after_sha256": "3b7b51ddd8713fc463109b709962d87d733e9da7ae3608e91e2ccd1cc4c3e98c"
+  },
+  {
+    "path": "src/quincy/remediation/loop.py",
+    "before_sha256": "f9feb8e83149398685aa02160f937e67d9ce06370a4c9ed9eed3824b5a58e2b0",
+    "after_sha256": "eb29d1b06e99c1ea587462c1319b3a5a0eeb70cd8efad8ebdcf7449bfa829b2a"
+  },
+  {
+    "path": "src/quincy/reasoning/prompts/patch.md",
+    "before_sha256": "c8aaa001b457da49ca27f1acf498405e8a54ed4dfaf0266d7c29b3da745614f4",
+    "after_sha256": "68a2c62f82b8764293b508f3c9f492055205f7c2c98feb3a43da954658f086cb"
+  },
+  {
+    "path": "tests/unit/test_flow_hardening.py",
+    "before_sha256": "22c6084c42c8c0de5c6773f8ca9ebdd0b19bea82326668374fc91031660c44d8",
+    "after_sha256": "cf09c5bc01371f0530d46c57699f9a4f3648eebfc3bb155c96323949231c4844"
+  }
+]

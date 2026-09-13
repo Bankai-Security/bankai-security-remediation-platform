@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Severity } from "./pipeline-types.js";
 import { computeSlaStatus, type SlaPolicyDays } from "./sla.js";
+import { statusAllowedByCompletionGate } from "./ticket-status-sync.js";
 
 export interface ProjectStats {
   totalCvits: number;
@@ -16,7 +17,10 @@ export async function computeProjectStats(supabase: SupabaseClient, projectId: s
       .select("severity, bucket, sla_due_date, source")
       .eq("project_id", projectId)
       .neq("source", "jira_import"),
-    supabase.from("tickets").select("status").eq("project_id", projectId),
+    supabase
+      .from("tickets")
+      .select("status, github_branch_name, github_pr_number, github_pr_state, ci_status")
+      .eq("project_id", projectId),
     supabase
       .from("scans")
       .select("created_at")
@@ -36,7 +40,15 @@ export async function computeProjectStats(supabase: SupabaseClient, projectId: s
   // SLA breach rate stays scoped to still-open findings: a resolved finding
   // can't breach, so it must not sit in the denominator.
   const slaBreachedPct = open.length > 0 ? Math.round((missed / open.length) * 1000) / 10 : 0;
-  const openTickets = (ticketsRes.data ?? []).filter((t) => t.status !== "Done").length;
+  const openTickets = (ticketsRes.data ?? []).filter(
+    (ticket) =>
+      statusAllowedByCompletionGate(ticket.status, {
+        githubBranchName: ticket.github_branch_name,
+        githubPrNumber: ticket.github_pr_number,
+        githubPrState: ticket.github_pr_state,
+        ciStatus: ticket.ci_status,
+      }) !== "Done",
+  ).length;
 
   return {
     totalCvits,

@@ -36,6 +36,7 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
 
       # Deploy step is a placeholder — wire up to your hosting target

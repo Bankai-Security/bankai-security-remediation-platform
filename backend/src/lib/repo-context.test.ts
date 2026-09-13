@@ -21,6 +21,13 @@ describe("gatherRepoContext", () => {
     getBlobs.mockReset();
   });
 
+  it("includes Docker and CI runtimes for dependency repairs", async () => {
+    getTree.mockResolvedValue([entry("backend/requirements.txt"), entry("Dockerfile"), entry(".github/workflows/ci.yml")]);
+    getBlobs.mockImplementation(async (_creds, files) => files.map((f) => ({ path: f.path, content: "Python 3.9" })));
+    const result = await gatherRepoContext({ creds: CREDS, ref: "main", targetFilePath: "backend/requirements.txt", vulnerableFileContent: "fastapi==0.78.0" });
+    expect(result.importedFiles.map((f) => f.path)).toEqual(["Dockerfile", ".github/workflows/ci.yml"]);
+  });
+
   it("fails open (returns empty context, never throws) when the tree fetch fails", async () => {
     getTree.mockRejectedValue(new Error("network down"));
 

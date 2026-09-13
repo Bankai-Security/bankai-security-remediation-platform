@@ -1,0 +1,67 @@
+--- a/src/quincy/validation/patching.py
++++ b/src/quincy/validation/patching.py
+@@ -28,8 +28,8 @@
+     def materialize(file_diff):
+         if not file_diff.edits:
+             return file_diff
+-        if file_diff.diff:
+-            raise PatchApplyError(f"{file_diff.path}: provide edits OR a diff, not both")
++        # Exact edits are authoritative. Some structured-output providers emit
++        # the optional legacy diff as well; never execute that redundant text.
+         original = original_files.get(file_diff.path, b'').decode('utf-8').replace('\r\n', '\n')
+         updated = original
+         for edit in file_diff.edits:
+@@ -48,8 +48,13 @@
+         diff = ''.join(difflib.unified_diff([line + '\n' for line in original.splitlines()], [line + '\n' for line in updated.splitlines()],
+                        fromfile='a/' + file_diff.path, tofile='b/' + file_diff.path))
+         return file_diff.model_copy(update={'diff': diff, 'edits': []})
+-    return patch.model_copy(update={'file_diffs': [materialize(d) for d in patch.file_diffs],
+-                                    'test_diffs': [materialize(d) for d in patch.test_diffs]})
++    from quincy.indexing.queries import is_test_file
++    source = []
++    tests = []
++    for file_diff in patch.file_diffs:
++        (tests if is_test_file(file_diff.path) else source).append(materialize(file_diff))
++    tests.extend(materialize(d) for d in patch.test_diffs)
++    return patch.model_copy(update={'file_diffs': source, 'test_diffs': tests})
+ 
+ 
+ class _Hunk:
+--- a/src/quincy/reasoning/prompts/patch.md
++++ b/src/quincy/reasoning/prompts/patch.md
+@@ -23,11 +23,12 @@
+ 1. A source fix (`file_diffs`) as unified diffs against the existing file content.
+ 2. A new or modified executable test (`test_diffs`) that proves the vulnerability: it must FAIL against the current (vulnerable) code and PASS once your fix is applied.
+ 
+-Prefer `edits` for each file: leave `diff` empty and provide exact `old_text` and `new_text` strings. Quincy generates the unified diff itself. Copy `old_text` exactly from the original source context, including whitespace, with enough context to match exactly once. For a new test file, use one edit with empty `old_text` and the complete test in `new_text`. Never supply both a diff and edits. Legacy diffs must be valid unified diff format (`--- a/path`, `+++ b/path`, `@@` hunks).
++Use `edits` for each file: leave `diff` empty and provide exact `old_text` and `new_text` strings. Quincy generates the unified diff itself. Copy `old_text` exactly from the original source context, including whitespace, with enough context to match exactly once. For a new test file, use one edit with empty `old_text` and the complete test in `new_text`. When edits are supplied they are authoritative and any redundant legacy diff is ignored. Legacy diffs must be valid unified diff format (`--- a/path`, `+++ b/path`, `@@` hunks).
+ 
+ Patch discipline:
+ 
+-- Preserve existing function and method signatures unless the provided context proves every implementation and call site supports a signature change.
++- Preserve existing function and method signatures unless the provided context proves every implementation and call site supports a signature change.
++- Preserve the target function and its useful safe behavior. Do not remove the function, replace it with unconditional rejection, or weaken tests simply to remove a scanner finding. Replace unsafe mechanisms with direct language/library operations appropriate to the function's purpose.
+ - When a dependency or helper API is shown in context, match that API exactly.
+ - Prefer adding a focused new test over rewriting large existing test blocks.
+ - If you modify an existing test file, use narrow hunks with exact surrounding context from the provided file; keep parentheses, indentation, and trailing commas balanced.
+--- a/tests/unit/test_flow_hardening.py
++++ b/tests/unit/test_flow_hardening.py
+@@ -96,3 +96,18 @@
+     patch = Patch(finding_fingerprint='x', attempt_number=1, summary='fix', rationale='fix',
+                   test_diffs=[FileDiff(path='test.py', edits=[TextEdit(old_text='', new_text='assert True\n')])])
+     assert apply_patch({}, patch) == {'test.py': b'assert True\n'}
++
++
++def test_redundant_model_diff_is_never_executed_when_exact_edits_exist():
++    patch = Patch(finding_fingerprint='x', attempt_number=1, summary='fix', rationale='fix',
++                  file_diffs=[FileDiff(path='app.py', diff='malformed redundant diff',
++                                      edits=[TextEdit(old_text='unsafe()', new_text='safe()')])])
++    assert apply_patch({'app.py': b'unsafe()\n'}, patch)['app.py'] == b'safe()\n'
++
++
++def test_misclassified_test_edits_remain_in_proof_only_partition():
++    patch = Patch(finding_fingerprint='x', attempt_number=1, summary='fix', rationale='fix',
++                  file_diffs=[FileDiff(path='tests/test_app.py', edits=[TextEdit(old_text='', new_text='assert True\n')])])
++    result = materialize_patch({}, patch)
++    assert not result.file_diffs
++    assert result.test_diffs[0].path == 'tests/test_app.py'

@@ -37,6 +37,42 @@ export async function enqueueRepoScan(data: RepoScanJobData, jobId: string): Pro
 export interface FixPrJobData {
   ticketId: string;
   projectId: string;
+  quincyJobId?: string;
+}
+
+export interface RemediationProgress {
+  summary: string;
+  activeAttempt: number;
+  completedAttempts: number;
+  updatedAt: string | null;
+}
+
+export async function saveRemediationProgress(data: FixPrJobData, progress: RemediationProgress): Promise<void> {
+  await redisConnection.set(`bankai:progress:${data.projectId}:${data.ticketId}`, JSON.stringify(progress), "EX", 3600);
+}
+
+export async function getRemediationProgress(projectId: string, ticketIds: string[]): Promise<(RemediationProgress | null)[]> {
+  if (!ticketIds.length) return [];
+  const values = await redisConnection.mget(...ticketIds.map(id => `bankai:progress:${projectId}:${id}`));
+  return values.map(value => {
+    try { return value ? JSON.parse(value) as RemediationProgress : null; } catch { return null; }
+  });
+}
+
+function quincyCheckpointKey(data: FixPrJobData): string {
+  return `bankai:quincy:${data.projectId}:${data.ticketId}`;
+}
+
+export async function loadQuincyCheckpoint(data: FixPrJobData): Promise<string | undefined> {
+  return (await redisConnection.get(quincyCheckpointKey(data))) ?? data.quincyJobId;
+}
+
+export async function saveQuincyCheckpoint(data: FixPrJobData, jobId: string): Promise<void> {
+  await redisConnection.set(quincyCheckpointKey(data), jobId);
+}
+
+export async function clearQuincyCheckpoint(data: FixPrJobData, jobId: string): Promise<void> {
+  await redisConnection.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0", 1, quincyCheckpointKey(data), jobId);
 }
 
 export const FIX_PR_QUEUE_NAME = "fix-pr";
@@ -62,11 +98,14 @@ export async function enqueueFixPr(data: FixPrJobData): Promise<void> {
 // successfully when it marked the ticket pending_setup, so its deduped
 // `fix-pr-${ticketId}` id can still be retained in Redis. A resume must use
 // a fresh BullMQ id or it may silently no-op.
-export async function enqueueFixPrResume(data: FixPrJobData): Promise<void> {
-  await fixPrQueue.add("fix-pr", data, {
+export async function enqueueFixPrResume(data: FixPrJobData, delay = 0): Promise<{ id?: string }> {
+  const job = await fixPrQueue.add("fix-pr", data, {
+    delay,
+    ...(data.quincyJobId ? { deduplication: { id: `quincy-poll-${data.ticketId}`, keepLastIfActive: true } } : {}),
     removeOnComplete: { age: 24 * 60 * 60 },
     removeOnFail: { age: 7 * 24 * 60 * 60 },
   });
+  return job.id ? { id: job.id } : {};
 }
 
 export interface PipelineJobData {
@@ -110,6 +149,8 @@ export interface FixRetryJobData {
   projectId: string;
   githubRunId: number;
   failingStage: PipelineStageName;
+  securityFeedback?: string;
+  securityCommitSha?: string;
 }
 
 export const FIX_RETRY_QUEUE_NAME = "fix-retry";
@@ -123,7 +164,7 @@ export const fixRetryQueue = new Queue<FixRetryJobData>(FIX_RETRY_QUEUE_NAME, { 
 // guard, same idempotency contract as the rest of this file.
 export async function enqueueFixRetry(data: FixRetryJobData): Promise<void> {
   await fixRetryQueue.add("fix-retry", data, {
-    jobId: `fix-retry-${data.ticketId}-${data.githubRunId}`,
+    jobId: `fix-retry-${data.ticketId}-${data.securityCommitSha ?? data.githubRunId}`,
     removeOnComplete: { age: 24 * 60 * 60 },
     removeOnFail: { age: 7 * 24 * 60 * 60 },
   });

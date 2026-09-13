@@ -18,8 +18,10 @@ import {
 } from "./jira.js";
 import { logger } from "./logger.js";
 import type { Bucket, Severity, TicketStatus } from "./pipeline-types.js";
-import { enqueueFixPr } from "./queue.js";
+import { enqueueFixPrResume, FIX_PR_QUEUE_NAME } from "./queue.js";
 import { computeSlaDueDate, computeSlaStatus, ttrStatusLabel, type SlaPolicyDays } from "./sla.js";
+import { supabaseAdmin } from "./supabase.js";
+import { statusAllowedByCompletionGate } from "./ticket-status-sync.js";
 
 // The per-finding "create a ticket, best-effort sync it to Jira, best-effort
 // create a remediation branch" core, shared by two callers with very
@@ -99,6 +101,50 @@ export function toPublicTicket(row: TicketRow) {
 
 export const SELECT_TICKET =
   "id, key, title, service, severity, status, due_date, finding_id, created_at, jira_issue_key, jira_issue_url, jira_sync_error, github_branch_name, github_branch_url, github_branch_error, github_pr_number, github_pr_url, github_pr_state, github_pr_error, github_pr_low_confidence, ci_status, ci_run_url, ci_error, findings ( external_id )";
+
+// Repairs legacy or racing writes that marked a ticket Done before both
+// completion signals existed. The database trigger provides the hard guard;
+// this read-boundary repair also fixes rows created before that migration.
+export async function repairPrematureDoneTickets(supabase: SupabaseClient, projectId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("id, github_branch_name, github_pr_number, github_pr_state, ci_status")
+    .eq("project_id", projectId)
+    .eq("status", "Done");
+
+  if (error) {
+    logger.error({ err: error, projectId }, "Could not inspect Done tickets for completion drift");
+    return 0;
+  }
+
+  const repairs = (data ?? []).flatMap((ticket) => {
+    const status = statusAllowedByCompletionGate("Done", {
+      githubBranchName: ticket.github_branch_name,
+      githubPrNumber: ticket.github_pr_number,
+      githubPrState: ticket.github_pr_state,
+      ciStatus: ticket.ci_status,
+    });
+    return status === "Done" ? [] : [{ id: ticket.id as string, status }];
+  });
+
+  let repaired = 0;
+  for (const repair of repairs) {
+    const { error: updateError, count } = await supabase
+      .from("tickets")
+      .update({ status: repair.status }, { count: "exact" })
+      .eq("id", repair.id)
+      .eq("project_id", projectId)
+      .eq("status", "Done");
+    if (updateError) {
+      logger.error({ err: updateError, projectId, ticketId: repair.id }, "Could not repair a premature Done ticket");
+    } else {
+      repaired += count ?? 0;
+    }
+  }
+
+  if (repaired > 0) logger.warn({ projectId, repaired }, "Repaired tickets that reached Done before merge and CI completion");
+  return repaired;
+}
 
 export interface ProjectJiraRow {
   jira_site: string | null;
@@ -303,21 +349,42 @@ export async function attemptBranchCreation(
   }
 }
 
-// Fire-and-forget enqueue of the fix-pr job whenever attemptBranchCreation
-// actually produced a branch — covers every path that creates a branch
-// today (createTicketForFinding, both syncTickets loops) without a manual
-// "Generate Fix" trigger. Never throws: enqueue failures (e.g. Redis
-// unreachable) must not fail ticket/branch creation, same best-effort
-// contract as everything else in this file — logged and swallowed.
-export function maybeEnqueueFixPrJob(
+// Best-effort enqueue of the fix-pr job whenever a ticket needs automated
+// remediation. Uses a fresh BullMQ id each time so a stale completed/failed
+// `fix-pr-${ticketId}` job cannot silently suppress a new assignment/retry.
+export async function maybeEnqueueFixPrJob(
   ticketId: string,
   projectId: string,
   findingSource?: "csv" | "github_ai" | "jira_import" | null,
-): void {
-  if (findingSource === "jira_import") return;
-  enqueueFixPr({ ticketId, projectId }).catch((err) => {
-    logger.error({ err, ticketId, projectId }, "Could not enqueue the fix-pr job");
-  });
+): Promise<boolean> {
+  try {
+    const job = await enqueueFixPrResume({ ticketId, projectId });
+    const { error: statusError } = await supabaseAdmin
+      .from("tickets")
+      .update({ status: "In Progress", github_pr_error: null })
+      .eq("id", ticketId)
+      .eq("project_id", projectId);
+    if (statusError) {
+      logger.error({ err: statusError, ticketId, projectId }, "Could not mark an enqueued remediation ticket In Progress");
+    }
+    logger.info(
+      { ticketId, projectId, findingSource: findingSource ?? null, queue: FIX_PR_QUEUE_NAME, jobId: job.id ?? null },
+      "Enqueued fix-pr job",
+    );
+    return true;
+  } catch (err) {
+    logger.error({ err, ticketId, projectId, queue: FIX_PR_QUEUE_NAME }, "Could not enqueue the fix-pr job");
+    const { error: persistError } = await supabaseAdmin
+      .from("tickets")
+      .update({
+        github_pr_error: "Could not enqueue the automated remediation job. Check the Bankai worker and Redis.",
+      })
+      .eq("id", ticketId);
+    if (persistError) {
+      logger.error({ err: persistError, ticketId, projectId }, "Could not persist fix-pr enqueue failure on the ticket");
+    }
+    return false;
+  }
 }
 
 export interface FindingForTicket {
@@ -383,8 +450,8 @@ export interface CreateTicketForFindingInput {
 export async function createTicketForFinding(
   supabase: SupabaseClient,
   input: CreateTicketForFindingInput,
-): Promise<{ ticket: ReturnType<typeof toPublicTicket> }> {
-  const { projectId, finding, jira, github, actor, rpcName, formatContext, slaPolicyDays } = input;
+): Promise<{ ticket: ReturnType<typeof toPublicTicket>; remediationQueued: boolean }> {
+  const { projectId, finding, jira, actor, rpcName, formatContext, slaPolicyDays } = input;
 
   const { data: ticket, error: rpcError } = await supabase.rpc(rpcName, {
     p_project_id: projectId,
@@ -487,13 +554,12 @@ export async function createTicketForFinding(
     }
   }
 
-  // Kick off the branch → AI fix → PR → CI pipeline whenever GitHub is
-  // connected — independent of Jira. The fix-pr job creates the remediation
-  // branch itself, so a Jira-free project gets the full remediation loop.
-  // Fire-and-forget and already skips jira_import findings.
-  if (github) {
-    maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source);
-  }
+  // Always enqueue. The worker loads GitHub creds with
+  // the service role, so a user-scoped loadGithubCreds miss here must not
+  // silently skip Quincy/Gemini remediation.
+  const enqueued = await maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source);
+  const { data: updated } = await supabase.from("tickets").select(SELECT_TICKET).eq("id", ticketRow.id).single();
+  if (updated) ticketRow = updated as TicketRow;
 
   const publicTicket = toPublicTicket(ticketRow);
 
@@ -508,22 +574,11 @@ export async function createTicketForFinding(
     meta: input.activityMeta ?? `${finding.title} · from a marked-for-Jira finding`,
   });
 
-  return { ticket: publicTicket };
+  return { ticket: publicTicket, remediationQueued: enqueued };
 }
 
-// Called wherever findings get marked Resolved (a rescan no longer detects
-// them) — a resolved finding means there's no more remediation work to do,
-// so any ticket still open for it should close too, in both Bankai and
-// (best-effort, same contract as every other Jira call in this file) Jira.
-//
-// Deliberately excludes tickets with an open (unmerged) PR: a rescan's
-// "not found this time" is the AI scanner's word, not proof the fix ever
-// landed on the default branch — the branch a human actually reviews and
-// merges is still open, so the real "no more remediation work to do" signal
-// (a PR merge, handled by markTicketPrMerged) hasn't fired yet. Without this
-// guard, a scan whose non-deterministic pass simply misses an
-// already-flagged, still-unfixed finding auto-closes the ticket (and pushes
-// Done to Jira) while the fix is still sitting in review.
+// A rescan omission alone cannot close a ticket. Reconcile completion only
+// after a fix PR has merged, including tickets that never received a PR.
 export async function closeTicketsForResolvedFindings(
   supabase: SupabaseClient,
   input: { projectId: string; resolvedFindingIds: string[]; jira: JiraCredentials | null },
@@ -533,7 +588,7 @@ export async function closeTicketsForResolvedFindings(
 
   const { data: candidates, error: selectError } = await supabase
     .from("tickets")
-    .select("id, jira_issue_key, github_pr_state")
+    .select("id, jira_issue_key, github_pr_state, ci_status")
     .eq("project_id", projectId)
     .in("finding_id", resolvedFindingIds)
     .neq("status", "Done");
@@ -543,12 +598,16 @@ export async function closeTicketsForResolvedFindings(
     return;
   }
 
-  const toClose = (candidates ?? []).filter((t) => t.github_pr_state !== "open");
+  // A missing scanner result is not proof of remediation. In particular,
+  // tickets without a PR must remain actionable until a fix actually lands.
+  const toClose = (candidates ?? []).filter((t) => t.github_pr_state === "merged" && t.ci_status === "passed");
   if (toClose.length === 0) return;
 
   const { data: closedRows, error } = await supabase
     .from("tickets")
     .update({ status: "Done" })
+    .eq("github_pr_state", "merged")
+    .eq("ci_status", "passed")
     .in(
       "id",
       toClose.map((t) => t.id),
@@ -567,33 +626,39 @@ export async function closeTicketsForResolvedFindings(
 }
 
 // Called from webhook.controller.ts's pull_request handler when a PR is
-// merged — the human-in-the-loop review step is complete, so the ticket
-// (and, best-effort, its linked Jira issue) moves to Done. The
-// .neq("status","Done") guard makes a replayed/duplicate webhook delivery a
-// harmless no-op (maybeSingle returns null, nothing else runs) rather than
-// re-transitioning an already-closed Jira issue.
+// merged. Completion is reconciled here, but only a prior passing CI result
+// can move the ticket (and Jira issue) to Done.
 export async function markTicketPrMerged(
   supabase: SupabaseClient,
   input: { projectId: string; prNumber: number },
 ): Promise<void> {
   const { data: ticket, error } = await supabase
     .from("tickets")
-    .update({ status: "Done", github_pr_state: "merged", github_pr_error: null })
+    .update({ github_pr_state: "merged", github_pr_error: null })
     .eq("project_id", input.projectId)
     .eq("github_pr_number", input.prNumber)
-    .neq("status", "Done")
-    .select("id, key, title, jira_issue_key")
+    .select("id, key, title, jira_issue_key, ci_status")
     .maybeSingle();
 
   if (error) {
-    logger.error({ err: error, ...input }, "Could not mark ticket Done after PR merge");
+    logger.error({ err: error, ...input }, "Could not record the merged PR on its ticket");
     return;
   }
-  if (!ticket) return; // no matching ticket, or it was already Done
+  if (!ticket) return;
+
+  const nextStatus = ticket.ci_status === "passed" ? "Done" : "In Review";
+  let completion = supabase.from("tickets").update({ status: nextStatus }).eq("id", ticket.id).neq("status", nextStatus);
+  completion = nextStatus === "Done" ? completion.eq("ci_status", "passed") : completion.or("ci_status.is.null,ci_status.neq.passed");
+  const { data: transitioned, error: transitionError } = await completion.select("id").maybeSingle();
+  if (transitionError) {
+    logger.error({ err: transitionError, ticketId: ticket.id }, "Could not reconcile completion after PR merge");
+    return;
+  }
+  if (!transitioned) return;
 
   if (ticket.jira_issue_key) {
     const jira = await loadJiraCreds(supabase, input.projectId);
-    if (jira) void transitionIssue(jira.creds, ticket.jira_issue_key, "Done");
+    if (jira) await transitionIssue(jira.creds, ticket.jira_issue_key, nextStatus);
   }
 
   await recordActivity(supabase, {
@@ -621,7 +686,7 @@ export async function reopenTicket(
 
   const { data: existing, error: loadError } = await supabase
     .from("tickets")
-    .select("id, key, title, status, jira_issue_key, findings ( bucket )")
+    .select("id, key, title, status, jira_issue_key, github_pr_number, findings ( bucket, source )")
     .eq("id", ticketId)
     .eq("project_id", projectId)
     .maybeSingle();
@@ -638,7 +703,7 @@ export async function reopenTicket(
 
   const findingRel = Array.isArray(existing.findings) ? existing.findings[0] : existing.findings;
   const bucket = (findingRel as { bucket: Bucket } | null | undefined)?.bucket ?? null;
-  if (bucket === "Resolved") {
+  if (bucket === "Resolved" && existing.github_pr_number != null) {
     throw new HttpError(422, "Cannot reopen a ticket whose finding is Resolved.");
   }
 
@@ -655,6 +720,11 @@ export async function reopenTicket(
   }
 
   const ticketRow = updated as TicketRow;
+  const reopenedFinding = Array.isArray(existing.findings) ? existing.findings[0] : existing.findings;
+  const reopenedSource = (reopenedFinding as { source?: FindingForTicket["source"] } | null | undefined)?.source ?? null;
+  if (existing.github_pr_number == null) {
+    await maybeEnqueueFixPrJob(ticketId, projectId, reopenedSource);
+  }
 
   if (ticketRow.jira_issue_key) {
     const jira = await loadJiraCreds(supabase, projectId);
@@ -710,7 +780,7 @@ export async function markTicketPipelineResult(
     .update({ ci_status: input.status, ci_run_url: input.runUrl, ci_error: null })
     .eq("id", input.ticketId)
     .eq("project_id", input.projectId)
-    .select("id, key, title")
+    .select("id, key, title, github_pr_state, github_pr_number")
     .maybeSingle();
 
   if (error) {
@@ -718,6 +788,10 @@ export async function markTicketPipelineResult(
     return;
   }
   if (!ticket) return;
+
+  if (ticket.github_pr_state === "merged" && ticket.github_pr_number != null) {
+    await markTicketPrMerged(supabase, { projectId: input.projectId, prNumber: ticket.github_pr_number });
+  }
 
   await recordActivity(supabase, {
     projectId: input.projectId,

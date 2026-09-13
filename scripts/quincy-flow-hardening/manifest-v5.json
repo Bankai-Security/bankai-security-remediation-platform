@@ -1,0 +1,12 @@
+[
+  {
+    "path": "src/quincy/remediation/loop.py",
+    "before_sha256": "b9210732216fbada7d461839bfe59f32e8f3cd23643cd8cce0863d19abd440fa",
+    "after_sha256": "9c05c0df866041d8a24cf17055783ec359d78a07bb197540456ce86e121007b0"
+  },
+  {
+    "path": "tests/unit/test_remediation_loop.py",
+    "before_sha256": "f4ae900347def3c8bc01869af789c7aa48c67b142b4d98eef4b31b3cbcb7793b",
+    "after_sha256": "9ad1943f92eaef16ab57165990c6cff1cfc5bb463dbf63c630a8b5d83a5bf36e"
+  }
+]

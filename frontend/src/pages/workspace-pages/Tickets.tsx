@@ -33,6 +33,49 @@ function formatDue(dueDate: string | null): string {
   return new Date(`${dueDate}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function formatRemediationStage(summary: string): string {
+  const stage = summary.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const labels: Record<string, string> = {
+    'Running baseline scan and tests': 'Checking code and tests',
+    'Assessing finding': 'Assessing vulnerability',
+    'Starting patch attempt': 'Preparing security fix',
+    'Generating patch': 'Generating security fix',
+    'Validating patch application and safety': 'Validating security fix',
+    'Running patched scan and tests': 'Verifying security fix',
+    'Analyzing validation failure': 'Reviewing validation results',
+    'Checking attack variants': 'Testing attack variants',
+    'Patch rejected; preparing retry': 'Refining security fix',
+    'Patch accepted': 'Security fix validated',
+  };
+  return labels[stage] ?? stage;
+}
+
+function RemediationProgress({ ticket, compact = false }: { ticket: Ticket; compact?: boolean }) {
+  const progress = ticket.remediationProgress;
+  if (!progress) return null;
+  const stage = formatRemediationStage(progress.summary);
+  const attempt = progress.activeAttempt > 0 ? `Attempt ${progress.activeAttempt}` : null;
+  return (
+    <span
+      className={`tickets-remediation-progress${compact ? ' tickets-remediation-progress--compact' : ''}`}
+      title={`Remediation in progress${attempt ? ` · ${attempt}` : ''}${progress.updatedAt ? ` · Updated ${new Date(progress.updatedAt).toLocaleString()}` : ''}`}
+    >
+      <span className="tickets-remediation-progress-spinner" aria-hidden="true" />
+      {compact ? (
+        <span className="tickets-remediation-progress-stage">{stage}</span>
+      ) : (
+        <span className="tickets-remediation-progress-content">
+          <span className="tickets-remediation-progress-header">
+            <span>Remediation in progress</span>
+            {attempt && <span className="tickets-remediation-progress-attempt">{attempt}</span>}
+          </span>
+          <span className="tickets-remediation-progress-stage">{stage}</span>
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Nothing re-triggers a stuck ticket's pipeline on its own — 'pending_setup'
 // can mean "genuinely waiting on a human to merge the bootstrap PR" or
 // "missed the one-time re-enqueue sweep", and 'failed'/a bare ciError both
@@ -81,6 +124,22 @@ export default function Tickets() {
     return () => {
       cancelled = true;
     };
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    let pending = false;
+    const timer = window.setInterval(async () => {
+      if (pending || document.hidden) return;
+      pending = true;
+      try {
+        const result = await listTickets(project.id);
+        if (!cancelled) setTickets(result.tickets);
+      } catch { /* Keep the last known ticket state during a temporary outage. */ }
+      finally { pending = false; }
+    }, 10_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [project?.id]);
 
   const services = useMemo(() => Array.from(new Set((tickets ?? []).map((t) => t.service))).sort(), [tickets]);
@@ -289,6 +348,7 @@ export default function Tickets() {
                           <span className={sevBadgeClass(t.severity)} style={{ padding: '2.5px 9px', fontSize: 10.5 }}>{t.severity}</span>
                         </div>
                         <div className="tickets-kanban-card-title">{t.title}</div>
+                        <RemediationProgress ticket={t} />
                         <div className="tickets-kanban-card-meta">
                           {t.service}
                           {t.findingExternalId && (
@@ -387,6 +447,7 @@ export default function Tickets() {
                     <span className="ws-mono tickets-table-key">{t.jiraIssueKey ?? t.key}</span>
                     <span className="tickets-table-title">
                       {t.title}
+                      <RemediationProgress ticket={t} compact />
                       <span className="tickets-table-actions">
                         {t.jiraIssueUrl ? (
                           <a

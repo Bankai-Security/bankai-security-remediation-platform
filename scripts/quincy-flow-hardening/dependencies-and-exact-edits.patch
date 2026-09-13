@@ -1,0 +1,358 @@
+--- a/src/quincy/validation/runtime.py
++++ b/src/quincy/validation/runtime.py
+@@ -1,5 +1,8 @@
+ """Resolve built-in validation defaults per finding without mutating global settings."""
+ from pathlib import Path
++import shlex
++
++import yaml
+ 
+ from quincy.config import Settings
+ 
+@@ -16,6 +19,13 @@
+             tests = parent / "tests"
+             if tests.is_dir():
+                 command = ["python", "-m", "unittest", "discover", "-s", tests.relative_to(repo_root).as_posix()]
++                if any('pytest' in file.read_text(encoding='utf-8', errors='replace') for file in tests.glob('*.py')):
++                    command = ["python", "-m", "pytest", tests.relative_to(repo_root).as_posix(), "-q"]
++                    # Reuse the existing CI's in-container setup/test sequence.
++                    # It runs only inside the same locked-down sandbox.
++                    ci_command = _ci_python_command(repo_root, parent)
++                    if ci_command:
++                        command = ci_command
+                 break
+             if parent == repo_root:
+                 command = ["python", "-m", "unittest", "discover"]
+@@ -35,3 +45,21 @@
+                 break
+             parent = parent.parent
+     return settings.model_copy(deep=True)
++
++
++def _ci_python_command(repo_root: Path, project: Path) -> list[str] | None:
++    workflows = repo_root / '.github/workflows'
++    for workflow in sorted(workflows.glob('*.y*ml')):
++        try:
++            document = yaml.safe_load(workflow.read_text(encoding='utf-8'))
++            for job in (document or {}).get('jobs', {}).values():
++                for step in job.get('steps', []):
++                    run = step.get('run', '')
++                    tokens = shlex.split(run)
++                    for index in range(len(tokens) - 2):
++                        if tokens[index:index + 2] == ['sh', '-c'] and 'python -m pytest' in tokens[index + 2]:
++                            return ['sh', '-c', 'cd "$1" && exec sh -c "$2"', 'quincy-tests',
++                                    project.relative_to(repo_root).as_posix(), tokens[index + 2]]
++        except (ValueError, AttributeError, TypeError, yaml.YAMLError):
++            continue
++    return None
+--- /dev/null
++++ b/src/quincy/validation/python_environment.py
+@@ -0,0 +1,63 @@
++"""Prepare Python dependencies separately from network-isolated code execution."""
++from __future__ import annotations
++
++import hashlib
++import io
++import re
++from pathlib import PurePosixPath
++
++from docker.errors import ImageNotFound
++
++from quincy.sandbox.workspace import build_tar_archive
++
++
++def project_directory(files: dict[str, bytes], command: list[str]) -> str:
++    for argument in command:
++        path = PurePosixPath(argument)
++        if path.is_absolute() or '..' in path.parts:
++            continue
++        if argument not in files and not any(name.startswith(argument.rstrip('/') + '/') for name in files):
++            continue
++        parent = path.parent if argument in files else path
++        for candidate in [parent, *parent.parents]:
++            if (candidate / 'requirements.txt').as_posix() in files or (candidate / 'pyproject.toml').as_posix() in files:
++                return candidate.as_posix()
++    manifests = [str(PurePosixPath(name).parent) for name in files if PurePosixPath(name).name == 'requirements.txt']
++    return manifests[0] if len(manifests) == 1 else '.'
++
++
++def prepare_python_image(client, image: str, files: dict[str, bytes], command: list[str]) -> str:
++    if image != 'quincy-sandbox-python:latest':
++        return image
++    project = project_directory(files, command)
++    manifest = files.get((PurePosixPath(project) / 'requirements.txt').as_posix())
++    if not manifest:
++        return image
++    # Never pass repository Dockerfiles or application code to the builder.
++    # Only ordinary package requirements are supported by this automatic path.
++    for line in manifest.decode('utf-8').splitlines():
++        value = line.strip()
++        if value and not value.startswith('#') and (
++            not re.match(r'^[A-Za-z0-9][A-Za-z0-9_.\[\],-]*(?:\s*[<>=!~;].*)?$', value)
++            or '://' in value or '@' in value
++        ):
++            raise ValueError('Automatic Python sandbox requires package-index requirements; configure a custom image for local, URL, or recursive requirements.')
++    version = '3.12'
++    dockerfile = files.get('Dockerfile', b'').decode('utf-8', errors='replace')
++    match = re.search(r'^FROM\s+python:(3\.(?:9|1[0-4]))(?:[.\s-]|$)', dockerfile, re.MULTILINE | re.IGNORECASE)
++    if match:
++        version = match.group(1)
++    recipe = (
++        f'FROM python:{version}-slim\n'
++        'COPY requirements.txt /opt/quincy/requirements.txt\n'
++        'RUN python -m pip install --no-cache-dir -r /opt/quincy/requirements.txt\n'
++        'USER 10001:10001\nWORKDIR /workspace\n'
++    ).encode()
++    tag = 'quincy-python-deps:' + hashlib.sha256(recipe + manifest).hexdigest()[:24]
++    try:
++        return client.images.get(tag).id
++    except ImageNotFound:
++        pass
++    archive = build_tar_archive({'Dockerfile': recipe, 'requirements.txt': manifest})
++    built, _ = client.images.build(fileobj=io.BytesIO(archive), custom_context=True, tag=tag, rm=True, timeout=300)
++    return built.id
+--- a/src/quincy/validation/sandbox_exec.py
++++ b/src/quincy/validation/sandbox_exec.py
+@@ -9,9 +9,14 @@
+ 
+ from quincy.config import Settings
+ from quincy.schemas.sandbox import SandboxJobSpec
++from quincy.validation.python_environment import project_directory
+ 
+ 
+ def build_sandbox_spec(settings: Settings, files: dict[str, bytes], command: list[str]) -> SandboxJobSpec:
++    sandbox_env = {}
++    if settings.sandbox_image == "quincy-sandbox-python:latest":
++        project = project_directory(files, command)
++        sandbox_env = {"PYTHONPATH": f"/workspace/{project}", "TMPDIR": "/workspace", "HOME": "/workspace"}
+     return SandboxJobSpec(
+         image=settings.sandbox_image,
+         files=files,
+@@ -21,6 +26,7 @@
+         memory_limit_mb=settings.sandbox_memory_limit_mb,
+         pids_limit=settings.sandbox_pids_limit,
+         runtime=settings.sandbox_runtime,
++        env=sandbox_env,
+     )
+ 
+ 
+--- a/src/quincy/validation/patching.py
++++ b/src/quincy/validation/patching.py
+@@ -9,7 +9,8 @@
+ 
+ from __future__ import annotations
+ 
+-import re
++import re
++import difflib
+ from pathlib import Path
+ 
+ from quincy.ingestion.detect import iter_source_files
+@@ -18,8 +19,37 @@
+ _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+ 
+ 
+-class PatchApplyError(ValueError):
+-    pass
++class PatchApplyError(ValueError):
++    pass
++
++
++def materialize_patch(original_files: dict[str, bytes], patch: Patch) -> Patch:
++    """Turn exact source edits into diffs, without asking the model to count hunks."""
++    def materialize(file_diff):
++        if not file_diff.edits:
++            return file_diff
++        if file_diff.diff:
++            raise PatchApplyError(f"{file_diff.path}: provide edits OR a diff, not both")
++        original = original_files.get(file_diff.path, b'').decode('utf-8').replace('\r\n', '\n')
++        updated = original
++        for edit in file_diff.edits:
++            old = edit.old_text.replace('\r\n', '\n')
++            new = edit.new_text.replace('\r\n', '\n')
++            if old == '':
++                if file_diff.path in original_files or updated:
++                    raise PatchApplyError(f"{file_diff.path}: empty old_text is allowed only when creating a new file")
++                updated = new
++            else:
++                if updated.count(old) != 1:
++                    raise PatchApplyError(f"{file_diff.path}: old_text must match exactly once in the original source; found {updated.count(old)} matches")
++                updated = updated.replace(old, new, 1)
++        if updated == original:
++            raise PatchApplyError(f"{file_diff.path}: edits made no changes")
++        diff = ''.join(difflib.unified_diff([line + '\n' for line in original.splitlines()], [line + '\n' for line in updated.splitlines()],
++                       fromfile='a/' + file_diff.path, tofile='b/' + file_diff.path))
++        return file_diff.model_copy(update={'diff': diff, 'edits': []})
++    return patch.model_copy(update={'file_diffs': [materialize(d) for d in patch.file_diffs],
++                                    'test_diffs': [materialize(d) for d in patch.test_diffs]})
+ 
+ 
+ class _Hunk:
+@@ -121,12 +151,14 @@
+     return _apply_hunks(original_text, hunks)
+ 
+ 
+-def apply_patch(original_files: dict[str, bytes], patch: Patch, *, diffs: list[str] | None = None) -> dict[str, bytes]:
++def apply_patch(original_files: dict[str, bytes], patch: Patch, *, diffs: list[str] | None = None) -> dict[str, bytes]:
+     """Returns a new file map with `patch`'s diffs applied on top of
+     `original_files`. Pass `diffs` (a subset of paths) to apply only some of
+     the patch's diffs — e.g. the proof-of-vulnerability test without the
+     source fix."""
+-    patched = dict(original_files)
++    if any(file_diff.edits for file_diff in patch.all_diffs):
++        patch = materialize_patch(original_files, patch)
++    patched = dict(original_files)
+     target_diffs = patch.all_diffs if diffs is None else [d for d in patch.all_diffs if d.path in diffs]
+     for file_diff in target_diffs:
+         path = Path(file_diff.path)
+--- a/src/quincy/sandbox/runner.py
++++ b/src/quincy/sandbox/runner.py
+@@ -96,6 +96,10 @@
+ 
+     def _run_sync(self, spec: SandboxJobSpec) -> SandboxResult:
+         client = self._get_client()
++        from quincy.validation.python_environment import prepare_python_image
++
++        resolved_image = prepare_python_image(client, spec.image, spec.files, spec.command)
++        spec = spec.model_copy(update={"image": resolved_image})
+         container = None
+         start = time.monotonic()
+         timed_out = False
+--- a/src/quincy/schemas/patch.py
++++ b/src/quincy/schemas/patch.py
+@@ -5,11 +5,18 @@
+ from pydantic import BaseModel, ConfigDict, Field
+ 
+ 
++class TextEdit(BaseModel):
++    model_config = ConfigDict(frozen=True)
++    old_text: str = Field(description="Exact unique original text including indentation; empty only for a new file")
++    new_text: str = Field(description="Replacement text")
++
++
+ class FileDiff(BaseModel):
+     model_config = ConfigDict(frozen=True)
+ 
+     path: str = Field(description="Path relative to the repo root")
+-    diff: str = Field(description="Unified diff for this file")
++    diff: str = Field(default="", description="Legacy unified diff; leave empty when supplying edits")
++    edits: list[TextEdit] = Field(default_factory=list, description="Preferred exact text replacements; Quincy generates the unified diff deterministically")
+ 
+ 
+ class Patch(BaseModel):
+--- a/src/quincy/remediation/loop.py
++++ b/src/quincy/remediation/loop.py
+@@ -79,7 +79,7 @@
+ from quincy.validation.differential import run_differential
+ from quincy.validation.gates import run_gates
+ from quincy.validation.net_negative import compute_new_findings
+-from quincy.validation.patching import PatchApplyError, apply_patch, read_repo_files
++from quincy.validation.patching import PatchApplyError, apply_patch, materialize_patch, read_repo_files
+ from quincy.validation.poc import run_proof_of_vulnerability
+ from quincy.validation.red_team import run_red_team
+ from quincy.validation.runtime import resolve_runtime
+@@ -316,15 +316,22 @@
+             _record_call("generate_patch", attempt_number, patch_result, time.monotonic() - _call_start)
+             if self._cost_governor is not None:
+                 self._cost_governor.record(patch_result.usage)
+-            patch = _strip_test_diffs_when_pov_not_required(patch_result.payload, require_pov=require_pov)
+-            diff_stat = compute_diff_stat(patch)
++            patch = _strip_test_diffs_when_pov_not_required(patch_result.payload, require_pov=require_pov)
++            materialization_error = None
++            try:
++                patch = materialize_patch(read_repo_files(repo_root), patch)
++            except PatchApplyError as exc:
++                materialization_error = str(exc)
++            diff_stat = compute_diff_stat(patch)
+             model_usage: list[TokenUsage] = [patch_result.usage]
+             if attempt_number == 1:
+                 model_usage.insert(0, assessment_result.usage)
+ 
+             gate_results = run_gates(patch, self._settings.max_patch_diff_lines)
+-            try:
+-                apply_patch(read_repo_files(repo_root), patch)
++            try:
++                if materialization_error:
++                    raise PatchApplyError(materialization_error)
++                apply_patch(read_repo_files(repo_root), patch)
+             except PatchApplyError as exc:
+                 gate_results.append(GateResult(name="patch_apply", passed=False, message=str(exc)))
+             gates_passed = all(gate.passed for gate in gate_results)
+--- a/src/quincy/reasoning/prompts/patch.md
++++ b/src/quincy/reasoning/prompts/patch.md
+@@ -23,7 +23,7 @@
+ 1. A source fix (`file_diffs`) as unified diffs against the existing file content.
+ 2. A new or modified executable test (`test_diffs`) that proves the vulnerability: it must FAIL against the current (vulnerable) code and PASS once your fix is applied.
+ 
+-Diffs must be valid unified diff format (`--- a/path`, `+++ b/path`, `@@` hunks) so they can be applied directly to the repository.
++Prefer `edits` for each file: leave `diff` empty and provide exact `old_text` and `new_text` strings. Quincy generates the unified diff itself. Copy `old_text` exactly from the original source context, including whitespace, with enough context to match exactly once. For a new test file, use one edit with empty `old_text` and the complete test in `new_text`. Never supply both a diff and edits. Legacy diffs must be valid unified diff format (`--- a/path`, `+++ b/path`, `@@` hunks).
+ 
+ Patch discipline:
+ 
+--- a/tests/unit/test_flow_hardening.py
++++ b/tests/unit/test_flow_hardening.py
+@@ -4,6 +4,11 @@
+ from quincy.validation.runtime import resolve_runtime
+ from quincy.validation.patching import apply_file_diff, PatchApplyError
+ from quincy.schemas.evidence import PoVResult, TestRunResult as ProofRun
++from quincy.validation.python_environment import prepare_python_image, project_directory
++from unittest.mock import Mock
++from docker.errors import ImageNotFound
++from quincy.schemas.patch import Patch, FileDiff, TextEdit
++from quincy.validation.patching import apply_patch, materialize_patch
+ 
+ 
+ def test_python_monorepo_runtime_does_not_mutate_node_defaults(tmp_path: Path):
+@@ -42,3 +47,52 @@
+ def test_environment_failure_does_not_prove_a_vulnerability(code, error):
+     result = ProofRun(command=['python'], passed=False, exit_code=code, stdout='', stderr=error, duration_seconds=0)
+     assert not PoVResult(test_path='test.py', ran_before_patch=result).proves_vulnerability
++
++
++def test_python_dependencies_are_cached_by_manifest_and_not_application_source():
++    client = Mock()
++    client.images.get.side_effect = ImageNotFound('missing')
++    client.images.build.return_value = (Mock(id='sha256:built'), [])
++    files = {'backend/requirements.txt': b'pytest==7.1.2\n', 'backend/tests/test_app.py': b'import pytest', 'Dockerfile': b'FROM python:3.11-slim\n'}
++    assert prepare_python_image(client, 'quincy-sandbox-python:latest', files, ['python', '-m', 'pytest', 'backend/tests']) == 'sha256:built'
++    import tarfile
++    archive = client.images.build.call_args.kwargs['fileobj']
++    with tarfile.open(fileobj=archive) as tar:
++        assert set(tar.getnames()) == {'Dockerfile', 'requirements.txt'}
++        assert b'python:3.11-slim' in tar.extractfile('Dockerfile').read()
++    assert project_directory(files, ['python', '-m', 'unittest', 'backend/tests/test_app.py']) == 'backend'
++
++
++def test_python_uses_existing_ci_setup_sequence(tmp_path: Path):
++    (tmp_path / 'backend/tests').mkdir(parents=True)
++    (tmp_path / 'backend/tests/test_app.py').write_text('import pytest')
++    (tmp_path / '.github/workflows').mkdir(parents=True)
++    (tmp_path / '.github/workflows/verify.yml').write_text('jobs:\n  test:\n    steps:\n      - run: >-\n          docker run app sh -c \'python -c "print(1)" && python -m pytest tests -q\'\n')
++    settings = Settings(_env_file=None, model_provider='fake', sandbox_image='quincy-sandbox-node:test')
++    resolved = resolve_runtime(settings, tmp_path, 'backend/app.py')
++    assert resolved.sandbox_image == 'quincy-sandbox-python:latest'
++    assert resolved.test_command[-2] == 'backend'
++    assert resolved.test_command[-1] == 'python -c "print(1)" && python -m pytest tests -q'
++
++
++def test_exact_edits_generate_applicable_diff_without_model_hunks():
++    patch = Patch(finding_fingerprint='x', attempt_number=1, summary='fix', rationale='fix',
++                  file_diffs=[FileDiff(path='app.py', edits=[TextEdit(old_text='shell=True', new_text='shell=False')])])
++    original = {'app.py': b'run(command, shell=True)'}
++    materialized = materialize_patch(original, patch)
++    assert materialized.file_diffs[0].diff.startswith('--- a/app.py\n')
++    assert apply_patch(original, materialized)['app.py'] == b'run(command, shell=False)\n'
++
++
++@pytest.mark.parametrize('old', ['missing', 'a'])
++def test_exact_edits_reject_missing_or_ambiguous_original(old):
++    patch = Patch(finding_fingerprint='x', attempt_number=1, summary='fix', rationale='fix',
++                  file_diffs=[FileDiff(path='app.py', edits=[TextEdit(old_text=old, new_text='b')])])
++    with pytest.raises(PatchApplyError, match='match exactly once'):
++        materialize_patch({'app.py': b'a\na\n'}, patch)
++
++
++def test_new_proof_file_can_be_generated_from_exact_content():
++    patch = Patch(finding_fingerprint='x', attempt_number=1, summary='fix', rationale='fix',
++                  test_diffs=[FileDiff(path='test.py', edits=[TextEdit(old_text='', new_text='assert True\n')])])
++    assert apply_patch({}, patch) == {'test.py': b'assert True\n'}

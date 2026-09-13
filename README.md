@@ -66,7 +66,7 @@ Scan / Report  →  Findings  →  Triage  →  Tickets  →  Jira sync  →  AI
   differing vendor schemas (severity, CVSS, CWE, component, CVEs, affected/fixed
   versions, etc.) into one canonical finding shape.
 - **AI-driven repository scanning** — given a connected GitHub repo, Bankai walks the
-  tree (bounded by configurable file-count/size caps), sends relevant source to Gemini,
+  tree (bounded by configurable file-count/size caps), sends relevant source to DeepSeek,
   and produces findings with `remediation_guidance` and precise `line_start`/`line_end`
   locations attached.
 - **Jira import** — existing Jira issues can be pulled in as findings, keeping legacy
@@ -90,7 +90,7 @@ Done`) mirror pipeline progress, and Bankai posts fix/CI evidence back as Jira c
 For a ticket with a connected GitHub repo, Bankai:
 1. Creates a dedicated remediation branch and gathers targeted repo context (surrounding
    source, related tests, directory tree) bounded by configurable budgets.
-2. Calls **Gemini** to generate a concrete code fix for the finding.
+2. Calls **DeepSeek** to generate a concrete code fix for the finding.
 3. Commits the fix to the branch and opens a **pull request**, transitioning the linked
    Jira issue and recording the action in the project activity feed.
 4. On CI failure, automatically **parses build/test logs**, generates a corrected fix, and
@@ -150,7 +150,7 @@ flowchart LR
 
     GH["GitHub API"]
     JIRA["Jira Cloud API"]
-    GEMINI["Google Gemini"]
+    GEMINI["DeepSeek via OpenRouter"]
     ARCJET["Arcjet<br/>WAF / bot / rate limit"]
 
     FE -->|HTTPS| NGINX --> API
@@ -177,7 +177,7 @@ flowchart LR
 - **Supabase** — Postgres (with RLS as the primary authorization boundary) and Auth
   (email/password + Google/GitHub OAuth).
 - **External integrations** — GitHub (repo scanning, branch/commit/PR, webhooks),
-  Jira Cloud (issue sync, comments, transitions), Google Gemini (finding generation and
+  Jira Cloud (issue sync, comments, transitions), DeepSeek via OpenRouter (finding generation and
   fix generation), Arcjet (WAF, bot detection, rate limiting).
 
 ---
@@ -190,7 +190,7 @@ flowchart LR
 | Backend API | Node.js 22, Express 5, TypeScript, Zod |
 | Background jobs | BullMQ (Redis-backed) |
 | Database & Auth | Supabase (Postgres + Row-Level Security, Supabase Auth) |
-| AI | Google Gemini (`@google/genai`) |
+| AI | DeepSeek via OpenRouter; Quincy scanner and remediation engine |
 | Security | Arcjet (WAF, bot detection, rate limiting, email validation), helmet, httpOnly cookie sessions |
 | Integrations | GitHub REST API, Jira Cloud REST API |
 | Observability | Pino (structured logging), pino-http |
@@ -218,7 +218,7 @@ flowchart LR
 │       ├── middleware/           requireAuth, loadProject, origin-check, Arcjet baseline
 │       ├── schemas/               Zod request validation
 │       ├── jobs/                  BullMQ processors (repo-scan, fix-pr, fix-retry, ci-pipeline)
-│       ├── lib/                   GitHub/Jira/Gemini clients, crypto, CI template generation,
+│       ├── lib/                   GitHub/Jira/DeepSeek clients, crypto, CI template generation,
 │       │                          stack detection, log parsing, SLA logic, repo context assembly
 │       ├── server.ts              API entrypoint
 │       └── worker.ts              Background worker entrypoint
@@ -242,10 +242,10 @@ flowchart LR
 ### Prerequisites
 
 - Node.js **≥ 22.21**
-- A [Supabase](https://supabase.com) project
+- Two [Supabase](https://supabase.com) projects: one for development and one for production
 - A [Redis](https://redis.io) instance (local Docker/native install is fine for dev)
 - An [Arcjet](https://app.arcjet.com) site key
-- A [Google Gemini](https://aistudio.google.com/apikey) API key
+- A [DeepSeek via OpenRouter](https://openrouter.ai/settings/keys) API key
 - A GitHub OAuth App (for "Connect your GitHub account")
 
 ### Backend
@@ -253,7 +253,7 @@ flowchart LR
 ```bash
 cd backend
 npm install
-cp .env.example .env      # fill in Supabase, Arcjet, Gemini, GitHub OAuth, Redis
+cp .env.example .env      # fill in the development Supabase project, Arcjet, DeepSeek, GitHub OAuth, Redis
 npm run dev                # API on http://localhost:4000
 ```
 
@@ -275,8 +275,20 @@ npm run dev                # http://localhost:5173
 
 ### Database
 
-Apply the migrations in `supabase/migrations/` to your Supabase project (via the
-Supabase CLI or dashboard SQL editor), in filename order.
+Use separate Supabase projects for development and production. They should have
+the same schema, but separate data, users, Auth providers, redirect URLs, and
+service-role keys.
+
+1. Create a development Supabase project and a production Supabase project.
+2. Apply the migrations in `supabase/migrations/` to both projects, in filename order.
+3. Put only development Supabase credentials in `backend/.env`:
+   `APP_ENV=development` and `SUPABASE_ENV=development`.
+4. Put only production Supabase credentials in your deployment environment:
+   `APP_ENV=production` and `SUPABASE_ENV=production`.
+
+The backend validates this at startup and refuses to run if `APP_ENV` and
+`SUPABASE_ENV` do not match. It also refuses `NODE_ENV=production` unless
+`APP_ENV=production`.
 
 ### Tests & Checks
 
@@ -300,8 +312,10 @@ npm run build
 | Variable | Required | Description |
 | --- | --- | --- |
 | `NODE_ENV` | no | `development` \| `production` \| `test` |
+| `APP_ENV` | no | Runtime environment label, `development` or `production`; must be `production` when `NODE_ENV=production` |
 | `PORT` | no | API port (default `4000`) |
-| `SUPABASE_URL` | yes | Supabase project URL |
+| `SUPABASE_ENV` | no | Supabase project label, `development` or `production`; must match `APP_ENV` |
+| `SUPABASE_URL` | yes | Supabase project URL for the matching environment |
 | `SUPABASE_ANON_KEY` | yes | Supabase anon/public key |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Service-role key — **backend only, never exposed to the frontend** |
 | `ARCJET_KEY` | yes | Arcjet site key |
@@ -309,8 +323,10 @@ npm run build
 | `FRONTEND_ORIGIN` | yes | Exact frontend origin — used for CORS, CSRF origin checks, and email redirect links |
 | `COOKIE_DOMAIN` | no | Shared registrable domain for session cookies in production |
 | `COOKIE_SAMESITE` | no | `lax` (default) \| `strict` \| `none` |
-| `GEMINI_API_KEY` | yes | Google Gemini API key |
-| `GEMINI_MODEL` | no | Defaults to `gemini-pro-latest` |
+| `OPENROUTER_API_KEY` | yes | OpenRouter key, shared with Quincy |
+| `OPENROUTER_MODEL_NAME` | no | Defaults to `deepseek/deepseek-v4-flash-0731`, matching Quincy |
+| `AI_PROVIDER` | no | `openrouter` (default), or `gemini` for legacy compatibility |
+| `QUINCY_API_URL` / `QUINCY_API_TOKEN` | no | Quincy service URL and optional bearer token |
 | `REDIS_URL` | no | Defaults to `redis://localhost:6379` |
 | `BACKEND_PUBLIC_URL` | no | Publicly reachable backend URL, used to auto-register GitHub push webhooks |
 | `MAX_SCAN_FILES` / `MAX_SCAN_FILE_BYTES` / `MAX_SCAN_TOTAL_BYTES` | no | Bound repo-scan volume/latency |
@@ -427,7 +443,7 @@ Two distinct CI/CD surfaces exist in this repository:
 ### Docker Compose (production-like, local)
 
 ```bash
-SUPABASE_URL=... SUPABASE_ANON_KEY=... SUPABASE_SERVICE_ROLE_KEY=... ARCJET_KEY=... \
+APP_ENV=production SUPABASE_ENV=production SUPABASE_URL=... SUPABASE_ANON_KEY=... SUPABASE_SERVICE_ROLE_KEY=... ARCJET_KEY=... \
   docker compose up --build
 # Frontend (and /api, reverse-proxied to the backend) at http://localhost:8080
 ```

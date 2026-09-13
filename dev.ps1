@@ -32,11 +32,15 @@
     .\dev.ps1 -NoWorker           # skip the repo-scan worker and the Redis check
     .\dev.ps1 -Ngrok              # also tunnel the backend and refresh BACKEND_PUBLIC_URL in backend\.env
     .\dev.ps1 -Ngrok -NoWorker    # combine both
+    .\dev.ps1 -QuincyPath C:\path\to\quincy-security-engine
 #>
 
 param(
   [switch]$NoWorker,
-  [switch]$Ngrok
+  [switch]$Ngrok,
+  [string]$QuincyPath,
+  [string]$QuincyServiceApiToken = "",
+  [string]$QuincyDeepSeekModelName = "deepseek/deepseek-v4-flash-0731"
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,7 +54,7 @@ function Start-DevWindow {
     [string]$Command
   )
   $inner = "`$host.UI.RawUI.WindowTitle = '$Title'; Set-Location '$WorkingDirectory'; $Command"
-  Start-Process powershell -ArgumentList "-NoExit", "-Command", $inner | Out-Null
+  Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoExit", "-Command", $inner | Out-Null
   Write-Host "  Started: $Title" -ForegroundColor Green
 }
 
@@ -121,19 +125,24 @@ function Start-Ngrok {
 # Rewrites (or appends) BACKEND_PUBLIC_URL in backend\.env in place. Written
 # as UTF-8 without a BOM to match the file's existing encoding - Node's
 # --env-file-if-exists loader is picky about that.
-function Set-BackendPublicUrl {
-  param([string]$EnvPath, [string]$Url)
+function Set-EnvFileValue {
+  param([string]$EnvPath, [string]$Name, [string]$Value)
 
   if (-not (Test-Path $EnvPath)) {
-    Write-Host "backend\.env doesn't exist yet, so BACKEND_PUBLIC_URL couldn't be written - copy backend\.env.example to backend\.env first, then re-run with -Ngrok. The tunnel is up at $Url in the meantime." -ForegroundColor Yellow
+    Write-Host "backend\.env doesn't exist yet, so $Name couldn't be written - copy backend\.env.example to backend\.env first." -ForegroundColor Yellow
     return
   }
 
-  $lines = Get-Content -Path $EnvPath
-  $newLine = "BACKEND_PUBLIC_URL=$Url"
+  $envFile = Get-Item -LiteralPath $EnvPath
+  if ($envFile.Length -gt 1MB) {
+    throw "backend\.env is unexpectedly large ($([Math]::Round($envFile.Length / 1MB, 1)) MB). Refusing to rewrite it in memory. Move it aside, recreate it from backend\.env.example, then re-run this script."
+  }
+
+  $lines = [System.IO.File]::ReadAllLines($EnvPath)
+  $newLine = "$Name=$Value"
   $found = $false
   $updated = $lines | ForEach-Object {
-    if ($_ -match '^\s*BACKEND_PUBLIC_URL\s*=') {
+    if ($_ -match "^\s*$([regex]::Escape($Name))\s*=") {
       $found = $true
       $newLine
     } else {
@@ -145,7 +154,19 @@ function Set-BackendPublicUrl {
   }
 
   [System.IO.File]::WriteAllLines($EnvPath, [string[]]$updated, [System.Text.UTF8Encoding]::new($false))
-  Write-Host "Updated backend\.env: BACKEND_PUBLIC_URL=$Url" -ForegroundColor Green
+  Write-Host "Updated backend\.env: $Name=$Value" -ForegroundColor Green
+}
+
+function Set-BackendPublicUrl {
+  param([string]$EnvPath, [string]$Url)
+
+  Set-EnvFileValue -EnvPath $EnvPath -Name "BACKEND_PUBLIC_URL" -Value $Url
+}
+
+function Set-BackendEnvValue {
+  param([string]$EnvPath, [string]$Name, [string]$Value)
+
+  Set-EnvFileValue -EnvPath $EnvPath -Name $Name -Value $Value
 }
 
 if (-not (Test-Path (Join-Path $root "backend\node_modules"))) {
@@ -200,6 +221,33 @@ if ($Ngrok) {
   if ($ngrokUrl) {
     Set-BackendPublicUrl -EnvPath $backendEnvPath -Url $ngrokUrl
   }
+}
+
+if ($QuincyPath) {
+  $resolvedQuincy = (Resolve-Path -LiteralPath $QuincyPath).Path
+  $quincyUrl = "http://127.0.0.1:8000"
+  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "QUINCY_API_URL" -Value $quincyUrl
+  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "QUINCY_REMEDIATION_TIMEOUT_MS" -Value "900000"
+  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "QUINCY_API_TOKEN" -Value $QuincyServiceApiToken
+  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "OPENROUTER_MODEL_NAME" -Value $QuincyDeepSeekModelName
+  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "AI_PROVIDER" -Value "openrouter"
+
+  $quincyScript = Join-Path $root "scripts\start-quincy-deepseek.ps1"
+  $tokenArg = if ($QuincyServiceApiToken) { "-ServiceApiToken '$QuincyServiceApiToken'" } else { "" }
+  Start-DevWindow -Title "Bankai: Quincy DeepSeek engine (8000)" -WorkingDirectory $root -Command "& '$quincyScript' -QuincyPath '$resolvedQuincy' -DeepSeekModelName '$QuincyDeepSeekModelName' -RestartIfRunning $tokenArg"
+  $quincyReady = $false
+  $quincyDeadline = [DateTime]::UtcNow.AddSeconds(45)
+  while ([DateTime]::UtcNow -lt $quincyDeadline) {
+    try {
+      $health = Invoke-RestMethod -Uri "$quincyUrl/health" -TimeoutSec 2
+      if ($health.status -eq "ok" -and $health.service -eq "quincy-security-engine") {
+        $quincyReady = $true
+        break
+      }
+    } catch { }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $quincyReady) { throw "Quincy did not become healthy. Inspect the Quincy terminal before starting remediation workers." }
 }
 
 Write-Host "Starting Bankai dev environment..." -ForegroundColor Cyan

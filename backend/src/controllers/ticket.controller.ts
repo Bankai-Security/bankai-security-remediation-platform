@@ -13,11 +13,13 @@ import {
   transitionIssue,
 } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
+import { getRemediationProgress } from "../lib/queue.js";
 import { enqueueFixPrResume, enqueuePipelineRetry } from "../lib/queue.js";
 import { requireRole } from "../lib/roles.js";
 import { computeSlaStatus, ttrStatusLabel } from "../lib/sla.js";
 import { createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
-import type { Severity } from "../lib/pipeline-types.js";
+import type { Severity, TicketStatus } from "../lib/pipeline-types.js";
+import { reconciledTicketStatus } from "../lib/ticket-status-sync.js";
 import {
   closeTicketsForResolvedFindings,
   countOpenFindingsForService,
@@ -28,6 +30,7 @@ import {
   markTicketPrClosedWithoutMerge,
   markTicketPrMerged,
   maybeEnqueueFixPrJob,
+  repairPrematureDoneTickets,
   reconcileJiraTickets,
   reopenTicket,
   resolveRecommendations,
@@ -111,6 +114,7 @@ async function recoverPendingCiSetup(projectId: string, tickets: TicketRow[]): P
 
 export async function listTickets(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
+  await repairPrematureDoneTickets(supabase, req.project!.id);
   let query = supabase.from("tickets").select(SELECT_TICKET).eq("project_id", req.project!.id);
 
   const { service, severity, status } = req.query;
@@ -126,7 +130,11 @@ export async function listTickets(req: Request, res: Response): Promise<void> {
   const tickets = data as TicketRow[];
   void recoverPendingCiSetup(req.project!.id, tickets);
 
-  res.status(200).json({ tickets: tickets.map(toPublicTicket) });
+  const progress = await getRemediationProgress(req.project!.id, tickets.map(t => t.id)).catch(() => []);
+  res.status(200).json({ tickets: tickets.map((ticket, index) => ({
+    ...toPublicTicket(ticket),
+    remediationProgress: ticket.status === "In Progress" && !ticket.github_pr_number && !ticket.github_pr_error ? progress[index] ?? null : null,
+  })) });
 }
 
 export async function createTickets(req: Request, res: Response): Promise<void> {
@@ -135,10 +143,12 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
   const { findingIds } = req.body as CreateTicketsInput;
   const supabase = userScopedClient(req);
 
+  logger.info({ projectId: project.id, findingIdCount: findingIds.length, findingIds }, "createTickets received finding IDs");
+
   const { data: findings, error: findingsError } = await supabase
     .from("findings")
     .select(
-      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source, tickets ( id )",
+      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source, tickets ( id, status, github_pr_number, github_pr_state, ci_status )",
     )
     .eq("project_id", project.id)
     .in("id", findingIds);
@@ -147,24 +157,88 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
     throw new HttpError(500, "Could not load the selected findings.");
   }
 
+  const loadedFindings = findings ?? [];
+  const loadedIds = new Set(loadedFindings.map((finding) => finding.id));
+  const missingIds = findingIds.filter((id) => !loadedIds.has(id));
+  logger.info(
+    { projectId: project.id, requestedCount: findingIds.length, loadedCount: loadedFindings.length, missingIds },
+    "createTickets loaded findings",
+  );
+
   const jiraCreds = await loadJiraCreds(supabase, project.id);
   const targetSprintId = jiraCreds ? await getTargetSprintId(jiraCreds.creds, jiraCreds.projectKey) : null;
   const jira = jiraCreds ? { ...jiraCreds, targetSprintId } : null;
   const github = await loadGithubCreds(supabase, project.id);
+  logger.info(
+    { projectId: project.id, githubConnected: Boolean(github), jiraConnected: Boolean(jira) },
+    "createTickets integration status",
+  );
   const formatContext = await loadTicketFormatContext(supabase, project.id);
 
   const created: ReturnType<typeof toPublicTicket>[] = [];
   const skipped: string[] = [];
+  const queued: string[] = [];
+  const failed: string[] = [];
   const actorLabel = displayNameFromUser(req.user!);
 
-  for (const finding of findings ?? []) {
-    const alreadyTicketed = Array.isArray(finding.tickets) ? finding.tickets.length > 0 : !!finding.tickets;
+  for (const finding of loadedFindings) {
+    const tickets = Array.isArray(finding.tickets) ? finding.tickets : finding.tickets ? [finding.tickets] : [];
+    const alreadyTicketed = tickets.length > 0;
+    logger.info(
+      {
+        projectId: project.id,
+        findingId: finding.id,
+        source: finding.source,
+        alreadyTicketed,
+        ticketIds: tickets.map((ticket) => ticket?.id).filter(Boolean),
+        filePath: finding.file_path,
+        externalId: finding.external_id,
+      },
+      "createTickets processing finding",
+    );
     if (alreadyTicketed) {
       skipped.push(finding.id);
+      for (const ticket of tickets) {
+        if (!ticket) continue;
+        if (ticket.github_pr_state === "merged" && ticket.ci_status === "passed") {
+          logger.info(
+            {
+              projectId: project.id,
+              findingId: finding.id,
+              ticketId: ticket.id,
+              status: ticket.status,
+              githubPrNumber: ticket.github_pr_number,
+            },
+            "createTickets skipped remediation: ticket already has a merged PR and passing CI",
+          );
+          continue;
+        }
+        if (ticket.github_pr_number != null && ticket.github_pr_state === "open") {
+          try {
+            await enqueuePipelineRetry({ ticketId: ticket.id, projectId: project.id });
+            await supabase.from("tickets").update({ status: "In Review", ci_status: "queued", ci_error: null }).eq("id", ticket.id);
+            queued.push(finding.id);
+          } catch (err) {
+            logger.error({ err, ticketId: ticket.id, projectId: project.id }, "Could not enqueue pipeline verification for assigned ticket");
+            await supabase.from("tickets").update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." }).eq("id", ticket.id);
+            failed.push(finding.id);
+          }
+          continue;
+        }
+        if (ticket.github_pr_number != null) {
+          await supabase.from("tickets").update({ github_pr_error: "The previous pull request is closed. Reopen it or create a fresh ticket before retrying remediation." }).eq("id", ticket.id);
+          failed.push(finding.id);
+          continue;
+        }
+        logger.info({ projectId: project.id, findingId: finding.id, ticketId: ticket.id }, "createTickets calling maybeEnqueueFixPrJob for existing ticket");
+        const enqueued = await maybeEnqueueFixPrJob(ticket.id, project.id, finding.source);
+        (enqueued ? queued : failed).push(finding.id);
+        logger.info({ projectId: project.id, findingId: finding.id, ticketId: ticket.id, enqueued }, "createTickets existing-ticket enqueue result");
+      }
       continue;
     }
 
-    const { ticket } = await createTicketForFinding(supabase, {
+    const { ticket, remediationQueued } = await createTicketForFinding(supabase, {
       projectId: project.id,
       finding: finding as FindingForTicket,
       jira,
@@ -175,9 +249,10 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
       slaPolicyDays: project.slaPolicyDays,
     });
     created.push(ticket);
+    (remediationQueued ? queued : failed).push(finding.id);
   }
 
-  res.status(201).json({ tickets: created, skipped });
+  res.status(201).json({ tickets: created, skipped, queued, failed });
 }
 
 // Three-way, but all of it only runs when this is called (there's no
@@ -246,13 +321,13 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   // isn't connected — this sync only ever requires Jira.
   let prMerged = 0;
   let prClosed = 0;
+  const openPrTickets = new Set<string>();
   if (github) {
     const { data: prRows } = await supabase
       .from("tickets")
       .select("id, github_pr_number")
       .eq("project_id", project.id)
-      .not("github_pr_number", "is", null)
-      .neq("status", "Done");
+      .not("github_pr_number", "is", null);
 
     for (const row of prRows ?? []) {
       if (row.github_pr_number == null) continue;
@@ -265,6 +340,8 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
         } else if (pr.state === "closed") {
           await markTicketPrClosedWithoutMerge(supabase, { projectId: project.id, prNumber: row.github_pr_number });
           prClosed++;
+        } else if (pr.state === "open") {
+          openPrTickets.add(row.id);
         }
       } catch (err) {
         const message = err instanceof GithubApiError ? err.message : "Could not check this ticket's pull request status.";
@@ -276,7 +353,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   const { data: rows, error } = await supabase
     .from("tickets")
     .select(
-      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source )",
+      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, github_pr_number, github_pr_state, ci_status, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source )",
     )
     .eq("project_id", project.id);
 
@@ -301,10 +378,20 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
         // finding is still open. Only closeTicketsForResolvedFindings
         // (finding Resolved) and markTicketPrMerged (fix PR merged) may
         // mark a ticket Done.
-        const statusColumns =
-          snapshot.status && snapshot.status !== row.status && snapshot.status !== "Done"
-            ? { status: snapshot.status }
-            : null;
+        const nextStatus = reconciledTicketStatus(row.status as TicketStatus, snapshot.status, openPrTickets.has(row.id), {
+          githubBranchName: row.github_branch_name,
+          githubPrNumber: row.github_pr_number,
+          githubPrState: row.github_pr_state,
+          ciStatus: row.ci_status,
+        });
+        const statusColumns = nextStatus !== row.status ? { status: nextStatus } : null;
+        if (openPrTickets.has(row.id) && snapshot.status !== nextStatus) {
+          const transitioned = await transitionIssue(jira.creds, row.jira_issue_key, nextStatus);
+          if (!transitioned) {
+            failed++;
+            logger.warn({ ticketId: row.id }, "Could not reconcile Jira status with the open pull request");
+          }
+        }
         if (statusColumns) statusPulled++;
         if (statusColumns) {
           await supabase
@@ -313,7 +400,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
             .eq("id", row.id);
         }
         if (!row.github_branch_name) {
-          maybeEnqueueFixPrJob(row.id, project.id, findingRel?.source ?? null);
+          await maybeEnqueueFixPrJob(row.id, project.id, findingRel?.source ?? null);
         }
         continue;
       }
@@ -411,7 +498,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
           jira_sync_error: null,
         })
         .eq("id", row.id);
-      maybeEnqueueFixPrJob(row.id, project.id, findingRel.source);
+      await maybeEnqueueFixPrJob(row.id, project.id, findingRel.source);
       synced++;
     } catch (err) {
       const message = err instanceof JiraApiError ? err.message : "Could not create a Jira issue for this ticket.";
@@ -441,37 +528,47 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   const { status } = req.body as UpdateTicketInput;
   const supabase = userScopedClient(req);
 
-  // Done is reserved for real resolution signals (finding Resolved, or fix
-  // PR merged). Manual PATCH must not close a ticket that still has open
+  const { data: current, error: loadError } = await supabase
+    .from("tickets")
+    .select(
+      "id, key, github_pr_number, github_pr_state, github_branch_name, ci_status, jira_issue_key, findings ( fingerprint, cwe, file_path, bucket, source )",
+    )
+    .eq("id", req.params.ticketId)
+    .eq("project_id", req.project!.id)
+    .maybeSingle();
+  if (loadError) {
+    throw new HttpError(500, "Could not load this ticket.");
+  }
+  if (!current) {
+    throw new HttpError(404, "Ticket not found");
+  }
+
+  const findingRel = Array.isArray(current.findings) ? current.findings[0] : current.findings;
+  const finding = findingRel as
+    | {
+        fingerprint: string;
+        cwe: string | null;
+        file_path: string | null;
+        bucket: string | null;
+        source: "csv" | "github_ai" | "jira_import" | null;
+      }
+    | null
+    | undefined;
+  // Done requires a merged fix PR for automated tickets.
+  // Manual PATCH must not close a ticket that still has open
   // work — use reopenTicket to go the other direction.
   if (status === "Done") {
-    const { data: current, error: loadError } = await supabase
-      .from("tickets")
-      .select("id, github_pr_state, github_branch_name, jira_issue_key, findings ( bucket )")
-      .eq("id", req.params.ticketId)
-      .eq("project_id", req.project!.id)
-      .maybeSingle();
-    if (loadError) {
-      throw new HttpError(500, "Could not load this ticket.");
-    }
-    if (!current) {
-      throw new HttpError(404, "Ticket not found");
-    }
-    const findingRel = Array.isArray(current.findings) ? current.findings[0] : current.findings;
-    const bucket = (findingRel as { bucket: string } | null | undefined)?.bucket ?? null;
-    const resolvedSignal = bucket === "Resolved" || current.github_pr_state === "merged";
-    // A ticket with no remediation branch and no Jira issue is managed entirely
-    // by hand (CSV-only, no integrations) — let the user close it. Tickets under
-    // automated remediation (a branch/PR exists) or Jira tracking still require a
-    // real resolution signal, so an in-flight fix can't be closed out from under it.
-    const purelyManual = current.github_branch_name == null && current.jira_issue_key == null;
-    if (!resolvedSignal && !purelyManual) {
+    const resolvedSignal = current.github_pr_state === "merged" && current.ci_status === "passed";
+    if (!resolvedSignal) {
       throw new HttpError(
         422,
-        "A ticket can only be marked Done when its finding is Resolved, its fix pull request has merged, or it has no automated remediation in progress.",
+        "An automated ticket can only be marked Done after its fix pull request has merged and verification has passed.",
       );
     }
   }
+
+  // Assignment explicitly requests remediation; a scanner omission must not
+  // prevent the worker from validating the stored finding against the repo.
 
   const { data, error } = await supabase
     .from("tickets")
@@ -489,6 +586,23 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   }
 
   const ticketRow = data as TicketRow;
+
+  if (status === "In Progress" && ticketRow.github_pr_number != null && ticketRow.github_pr_state === "open") {
+    try {
+      await enqueuePipelineRetry({ ticketId: ticketRow.id, projectId: req.project!.id });
+      await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketRow.id);
+    } catch (err) {
+      logger.error({ err, ticketId: ticketRow.id, projectId: req.project!.id }, "Could not enqueue CI after ticket assignment");
+      await supabase
+        .from("tickets")
+        .update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." })
+        .eq("id", ticketRow.id);
+    }
+  }
+
+  if (status === "In Progress" && ticketRow.github_pr_number == null) {
+    await maybeEnqueueFixPrJob(ticketRow.id, req.project!.id, finding?.source ?? null);
+  }
 
   // Best-effort — a missing/mismatched Jira transition must not fail the
   // status update in Bankai.

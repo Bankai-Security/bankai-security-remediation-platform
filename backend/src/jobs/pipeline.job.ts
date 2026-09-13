@@ -1,15 +1,22 @@
 import type { Job } from "bullmq";
+import { env } from "../env.js";
+import { runQuincyTriageScan } from "../lib/quincy.js";
+import { securityRegression } from "../lib/security-regression.js";
+import { enqueueFixRetry } from "../lib/queue.js";
 import { ensureCiBootstrapReady } from "../lib/ci-bootstrap.js";
 import { CI_WORKFLOW_FILE, CI_WORKFLOW_PATH } from "../lib/ci-template.js";
 import {
   dispatchWorkflowRun,
   GithubApiError,
+  getRepoFileContent,
+  getBranchHeadSha,
   listWorkflowRuns,
   mergeBranchFromBase,
   repoFileExists,
   type WorkflowRunSummary,
 } from "../lib/github.js";
 import { logger } from "../lib/logger.js";
+import { hasPlaceholderChecks } from "../lib/pipeline-verdict.js";
 import type { PipelineJobData } from "../lib/queue.js";
 import { loadGithubCreds } from "../lib/ticketing.js";
 import { supabaseAdmin } from "../lib/supabase.js";
@@ -17,6 +24,16 @@ import { supabaseAdmin } from "../lib/supabase.js";
 interface PipelineTicketRow {
   id: string;
   github_branch_name: string | null;
+  ci_fix_attempt: number;
+  findings: PipelineFindingRow | PipelineFindingRow[] | null;
+}
+
+interface PipelineFindingRow {
+  external_id: string | null;
+  file_path: string | null;
+  cwe: string | null;
+  line_start: number | null;
+  line_end: number | null;
 }
 
 // workflow_dispatch's run doesn't appear in the list-runs API instantly —
@@ -50,7 +67,7 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
 
   const { data: ticketData, error: ticketError } = await supabase
     .from("tickets")
-    .select("id, github_branch_name")
+    .select("id, github_branch_name, ci_fix_attempt, findings(external_id, file_path, cwe, line_start, line_end)")
     .eq("id", ticketId)
     .eq("project_id", projectId)
     .maybeSingle();
@@ -62,15 +79,14 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
   const ticket = ticketData as PipelineTicketRow;
   if (!ticket.github_branch_name) return;
 
-  const github = await loadGithubCreds(supabase, projectId);
-  if (!github) {
-    // GitHub was disconnected after this job was enqueued but before the
-    // worker picked it up — a real race, not a bug.
-    return;
-  }
   const branch = ticket.github_branch_name;
 
   try {
+    const github = await loadGithubCreds(supabase, projectId);
+    if (!github) {
+      await setPipelineError(ticketId, "GitHub is not connected. Reconnect GitHub for this project, then retry CI.");
+      return;
+    }
     const bootstrapReady = await ensureCiBootstrapReady(supabase, projectId, github);
     if (!bootstrapReady) {
       // Either the bootstrap PR was just opened, or one is already open —
@@ -99,6 +115,39 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
       });
     }
 
+    const workflow = await getRepoFileContent(github.creds, CI_WORKFLOW_PATH, branch);
+    if (!workflow || hasPlaceholderChecks(workflow)) {
+      await supabase.from("tickets").update({ ci_status: "pending_setup", ci_error: "Replace placeholder workflow commands with real checks on the remediation branch, then retry CI." }).eq("id", ticketId);
+      return;
+    }
+
+    // Every commit, including a CI-generated repair, must remain secure.
+    if (env.QUINCY_API_URL) {
+      const headSha = await getBranchHeadSha(github.creds, branch);
+      const baseSha = await getBranchHeadSha(github.creds, github.defaultBranch);
+      const baseline = await runQuincyTriageScan({ repo: github.creds.repo, ref: baseSha, commitSha: baseSha, scoreFindings: false, githubToken: github.creds.token });
+      const current = await runQuincyTriageScan({ repo: github.creds.repo, ref: headSha, commitSha: headSha, scoreFindings: false, githubToken: github.creds.token });
+      if (!baseline || !current) {
+        await setPipelineError(ticketId, "Quincy security verification is unavailable. Retry CI when Quincy is healthy.");
+        return;
+      }
+      const finding = Array.isArray(ticket.findings) ? ticket.findings[0] : ticket.findings;
+      const regression = securityRegression(baseline.findings, current.findings, { externalId: finding?.external_id ?? null, filePath: finding?.file_path ?? null, cwe: finding?.cwe ?? null, lineStart: finding?.line_start ?? null, lineEnd: finding?.line_end ?? null });
+      if (regression) {
+        await setPipelineError(ticketId, regression);
+        if ((ticket.ci_fix_attempt ?? 1) < 3) {
+          await enqueueFixRetry({ ticketId, projectId, githubRunId: 0, failingStage: "build", securityFeedback: regression, securityCommitSha: headSha });
+        }
+        return;
+      }
+      if (await getBranchHeadSha(github.creds, branch) !== headSha) {
+        await setPipelineError(ticketId, "The PR changed during security verification. Retry CI for its latest commit.");
+        return;
+      }
+    }
+
+    // Exclude retained runs from older dispatches, even on the same branch.
+    const previousRunIds = new Set((await listWorkflowRuns(github.creds, { workflowFile: CI_WORKFLOW_FILE, branch })).map((run) => run.id));
     await dispatchWorkflowRun(github.creds, {
       workflowFile: CI_WORKFLOW_FILE,
       ref: branch,
@@ -109,7 +158,7 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
     for (let attempt = 0; attempt < RUN_POLL_ATTEMPTS && !run; attempt++) {
       if (attempt > 0) await sleep(RUN_POLL_DELAY_MS);
       const runs = await listWorkflowRuns(github.creds, { workflowFile: CI_WORKFLOW_FILE, branch });
-      run = runs[0];
+      run = runs.find((candidate) => !previousRunIds.has(candidate.id));
     }
 
     if (!run) {

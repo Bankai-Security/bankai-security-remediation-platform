@@ -1,3 +1,4 @@
+import { generateOpenRouterJson } from "./openrouter.js";
 import { GoogleGenAI, Type, type Schema } from "@google/genai";
 import { z } from "zod";
 import { env } from "../env.js";
@@ -116,7 +117,7 @@ let client: GoogleGenAI | null = null;
 // Exported so gemini-fix.ts's fix-generation calls reuse this same client
 // instead of constructing a second one.
 export function getGeminiClient(): GoogleGenAI {
-  if (!client) client = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+  if (!client) client = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! });
   return client;
 }
 
@@ -126,7 +127,7 @@ async function analyzeChunk(files: ScannableFile[], context: GeminiScanContext):
   for (let attempt = 1; attempt <= 2; attempt++) {
     let text: string | undefined;
     try {
-      const response = await getGeminiClient().models.generateContent({
+      const response = env.AI_PROVIDER === "openrouter" ? { text: await generateOpenRouterJson(SYSTEM_PROMPT, contents, GeminiScanResultSchema, attempt) } : await getGeminiClient().models.generateContent({
         model: env.GEMINI_MODEL,
         contents,
         config: {
@@ -142,12 +143,12 @@ async function analyzeChunk(files: ScannableFile[], context: GeminiScanContext):
       });
       text = response.text;
     } catch (err) {
-      logger.error({ err, attempt, files: files.map((f) => f.path) }, "Gemini request failed");
+      logger.error({ err, attempt, files: files.map((f) => f.path) }, "AI request failed");
       continue;
     }
 
     if (!text) {
-      logger.error({ attempt, files: files.map((f) => f.path) }, "Gemini returned an empty response");
+      logger.error({ attempt, files: files.map((f) => f.path) }, "AI returned an empty response");
       continue;
     }
 
@@ -155,7 +156,7 @@ async function analyzeChunk(files: ScannableFile[], context: GeminiScanContext):
     try {
       parsed = JSON.parse(text);
     } catch (err) {
-      logger.error({ err, attempt, files: files.map((f) => f.path) }, "Gemini response was not valid JSON");
+      logger.error({ err, attempt, files: files.map((f) => f.path) }, "AI response was not valid JSON");
       continue;
     }
 
@@ -163,7 +164,7 @@ async function analyzeChunk(files: ScannableFile[], context: GeminiScanContext):
     if (!result.success) {
       logger.error(
         { issues: result.error.issues, attempt, files: files.map((f) => f.path) },
-        "Gemini response did not match the expected findings schema",
+        "AI response did not match the expected findings schema",
       );
       continue;
     }
@@ -174,7 +175,7 @@ async function analyzeChunk(files: ScannableFile[], context: GeminiScanContext):
   // Best-effort, matching the rest of this codebase's philosophy for
   // external integrations: a chunk Gemini couldn't analyze after a retry is
   // dropped (logged above) rather than failing the whole scan.
-  logger.error({ files: files.map((f) => f.path) }, "Dropping this chunk after repeated Gemini failures");
+  logger.error({ files: files.map((f) => f.path) }, "Dropping this chunk after repeated AI failures");
   return [];
 }
 

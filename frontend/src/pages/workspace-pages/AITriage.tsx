@@ -48,6 +48,7 @@ export default function AITriage() {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const [fService, setFService] = useState('all');
   const [fSeverity, setFSeverity] = useState('all');
@@ -158,20 +159,31 @@ export default function AITriage() {
 
   const handleMarkForJira = async (findingIds: string[]) => {
     if (!project) return;
-    // Defensive filter — a finding that already has a ticket should never be
-    // re-submitted, whether it got here via a stale checkbox selection or a
-    // direct call. The backend also guards against duplicates, but this
-    // keeps it from even trying.
-    const eligibleIds = findingIds.filter((id) => !findings?.find((f) => f.id === id)?.ticketKey);
-    if (eligibleIds.length === 0) return;
+    // Send already-ticketed findings too so the backend can re-enqueue
+    // remediation when the ticket is still open and has no PR.
+    const eligibleIds = findingIds.filter((id) => {
+      const row = findings?.find((f) => f.id === id);
+      if (!row) return true;
+      if (!row.ticketKey) return true;
+      return row.ticketStatus !== 'Done';
+    });
+    if (eligibleIds.length === 0) {
+      setActionError('Every selected finding is already ticketed and Done.');
+      return;
+    }
 
     setBusy(true);
     setActionError(null);
+    setActionSuccess(null);
     try {
-      await createTickets(project.id, eligibleIds);
+      const result = await createTickets(project.id, eligibleIds);
       const { findings: refreshed } = await listFindings(project.id);
       setFindings(refreshed);
       setSelected({});
+      setActionSuccess(`${result.queued.length} ticket(s) assigned to remediation. Quincy validation, pull request creation, and CI will run automatically.`);
+      if (result.failed.length > 0) {
+        setActionError(`${result.failed.length} ticket(s) could not enter the queue. Open Tickets to see the stored error and retry.`);
+      }
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Could not create tickets for the selected findings.');
     } finally {
@@ -194,8 +206,7 @@ export default function AITriage() {
     }
   };
 
-  const canReopenTicket = (row: Finding) =>
-    row.bucket !== 'Resolved' && row.ticketStatus === 'Done' && !!row.ticketId;
+  const canReopenTicket = (row: Finding) => row.ticketStatus === 'Done' && !!row.ticketId;
 
   if (loadError) {
     return (
@@ -245,6 +256,7 @@ export default function AITriage() {
       </div>
 
       {actionError && <div className="new-project-error" role="alert" style={{ marginBottom: 14 }}>{actionError}</div>}
+      {actionSuccess && <div className="settings-success" role="status" style={{ marginBottom: 14 }}>{actionSuccess}</div>}
 
       {selCount > 0 && (
         <div className="triage-bulk-toolbar">
@@ -256,7 +268,7 @@ export default function AITriage() {
             disabled={busy || !canEdit(project?.myRole)}
             onClick={() => void handleMarkForJira(Object.keys(selected).filter((id) => selected[id]))}
           >
-            Create {selCount} ticket(s)
+            Assign & remediate {selCount} ticket(s)
           </button>
         </div>
       )}
@@ -497,7 +509,7 @@ export default function AITriage() {
                       ? `Reopen ticket · ${openRow.ticketKey}`
                       : openRow.ticketKey
                         ? `Ticketed · ${openRow.ticketKey}`
-                        : 'Mark for Jira'}
+                        : 'Assign & remediate'}
                   </button>
                 </>
               )}

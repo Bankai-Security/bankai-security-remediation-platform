@@ -402,6 +402,7 @@ export function reassignFindingService(projectId: string, findingId: string, ser
 // ---------------------------------------------------------------------
 
 export interface Ticket {
+  remediationProgress?: { summary: string; activeAttempt: number; completedAttempts: number; updatedAt: string | null } | null;
   id: string;
   key: string;
   title: string;
@@ -440,7 +441,10 @@ export function listTickets(projectId: string, filters: TicketFilters = {}): Pro
   return apiFetch(`/projects/${projectId}/tickets${toQueryString(filters)}`, { method: "GET" });
 }
 
-export function createTickets(projectId: string, findingIds: string[]): Promise<{ tickets: Ticket[]; skipped: string[] }> {
+export function createTickets(
+  projectId: string,
+  findingIds: string[],
+): Promise<{ tickets: Ticket[]; skipped: string[]; queued: string[]; failed: string[] }> {
   return apiFetch(`/projects/${projectId}/tickets`, { method: "POST", body: JSON.stringify({ findingIds }) });
 }
 

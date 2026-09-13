@@ -193,6 +193,7 @@ export async function listMyGithubRepos(req: Request, res: Response): Promise<vo
     if (err instanceof GithubApiError) {
       throw new HttpError(err.status === 401 ? 401 : 502, err.message);
     }
+    logger.error({ err, userId: req.user!.id }, "Could not list GitHub repositories");
     throw new HttpError(502, "Could not reach GitHub. Please try again.");
   }
 }

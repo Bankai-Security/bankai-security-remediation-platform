@@ -3,8 +3,28 @@ import { processFixPrJob } from "./jobs/fix-pr.job.js";
 import { processFixRetryJob } from "./jobs/fix-retry.job.js";
 import { processPipelineJob } from "./jobs/pipeline.job.js";
 import { processRepoScanJob } from "./jobs/repo-scan.job.js";
+import { env } from "./env.js";
 import { logger } from "./lib/logger.js";
 import { FIX_PR_QUEUE_NAME, FIX_RETRY_QUEUE_NAME, PIPELINE_QUEUE_NAME, redisConnection, REPO_SCAN_QUEUE_NAME } from "./lib/queue.js";
+
+function redisTarget(url: string): { host: string; pathname: string } {
+  try {
+    const parsed = new URL(url);
+    return { host: parsed.host, pathname: parsed.pathname || "/" };
+  } catch {
+    return { host: "(unparseable REDIS_URL)", pathname: "/" };
+  }
+}
+
+logger.info(
+  {
+    redis: redisTarget(env.REDIS_URL),
+    quincyConfigured: Boolean(env.QUINCY_API_URL),
+    quincyApiUrl: env.QUINCY_API_URL ?? null,
+    queues: [REPO_SCAN_QUEUE_NAME, FIX_PR_QUEUE_NAME, PIPELINE_QUEUE_NAME, FIX_RETRY_QUEUE_NAME],
+  },
+  "Bankai worker process starting",
+);
 
 // Separate process from the API server (backend/src/server.ts) —
 // Gemini calls + repo fetching are slow, and a scan job crashing or OOMing
@@ -31,6 +51,10 @@ logger.info(`Repo scan worker listening on queue "${REPO_SCAN_QUEUE_NAME}"`);
 const fixPrWorker = new Worker(FIX_PR_QUEUE_NAME, processFixPrJob, {
   connection: redisConnection,
   concurrency: 2,
+});
+
+fixPrWorker.on("active", (job) => {
+  logger.info({ jobId: job.id, data: job.data }, "Fix-PR job active");
 });
 
 fixPrWorker.on("completed", (job) => {

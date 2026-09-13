@@ -1,0 +1,67 @@
+[
+  {
+    "path": "src/quincy/progress.py",
+    "before": null,
+    "after": "5f1a43c1681c637a42910244501091a81a93ad9e44f1349f7cfb89882ddc2e90"
+  },
+  {
+    "path": "src/quincy/models/openrouter_adapter.py",
+    "before": "8878482731ac53b9290fbb3bd89f5c9a4dc81e993de680dce98420aca487bd03",
+    "after": "62a90f20afd9577c7cb11d40ffbc25818237793e4fe380c098e5871611e79966"
+  },
+  {
+    "path": "src/quincy/schemas/bankai.py",
+    "before": "1aee01d35db238dc9f3101bbe52a582a55bfbdecfdf0107ddd6ee75766f893f5",
+    "after": "3e582538f6545a8c9ccc29cf0f0d1c6de7c37b070ae8e8099c083db3edf310e5"
+  },
+  {
+    "path": "src/quincy/api/worker.py",
+    "before": "3b9e16c708fd79b6ff482886bddefd1e03d75f3b5bbec8a57b7ed0bf48385a83",
+    "after": "5a587c1e2a6eac853b6d0d38506a47d8ed0121a40868baa7f394fbc4ac0b86eb"
+  },
+  {
+    "path": "src/quincy/remediation/loop.py",
+    "before": "9c05c0df866041d8a24cf17055783ec359d78a07bb197540456ce86e121007b0",
+    "after": "74e61cbbcfd0a9efec88930e34a1681caebfaa252ff33931ec10843ab4655b1b"
+  },
+  {
+    "path": "src/quincy/api/routers/remediations.py",
+    "before": "ae17bc37c60ec1d6d320e54b2bfb33995f8df2cb20d9b95abba1ba72b05cea0a",
+    "after": "d1d29a3247ee42df22cffca463cc20d7d7893b397037763eafbd349f464cfe53"
+  },
+  {
+    "path": "tests/unit/test_openrouter_adapter.py",
+    "before": "2a3f65562a3e4af79a5857465692307d71216505e6e46b92783f72823700432a",
+    "after": "e96a8dde27716ba068434c8a3ec2706281da0e8ea95614cefee69a04b3118fc5"
+  },
+  {
+    "path": "tests/unit/test_live_progress.py",
+    "before": "f6b46e98a9fc61c98f0583a2b24f88ca958859067ed0081df8ae416eaccbc1d2",
+    "after": "91516f45c2ad8fdc53f2ad6169088773e350082701d8bad28f38043df8c6fcff"
+  },
+  {
+    "before": "88527f6416dd6bc664953d2e1363e17c8b3de359d80d8c0936354b74fe1d8f80",
+    "after": "6c8519751fa7c3a325e786662b385d43c34bee3ba45e211f440e37e4d752f7b4",
+    "path": "src/quincy/reasoning/prompts/patch.md"
+  },
+  {
+    "path": "src/quincy/validation/patching.py",
+    "before": "070c2f4ff2a3520c8d4619e825ae581b212ec05cc9dc26c7e9d69363c56a785b",
+    "after": "d1a2ef322c6cf5b965104b77575443029a8781d2c50a197ba3a44d72f0878865"
+  },
+  {
+    "path": "src/quincy/remediation/failure_analyzer.py",
+    "before": "95a9c185f04b7d22a3336f60115e52c2e7937ff61c3510698f5c14187e305042",
+    "after": "7152e722fea4043ff48fdd549372cdc7579efdab1535c3ecc093a1a801a87f66"
+  },
+  {
+    "path": "tests/unit/test_failure_feedback.py",
+    "before": "ba27104bf75e604e0ef33ea348362e550a6a78e1732af2e758a0aa91d952ed8a",
+    "after": "a89971b822d0788767e17e791f3a3ad7a149c8ee0ea09da075ac02c6f6240120"
+  },
+  {
+    "path": "src/quincy/schemas/evidence.py",
+    "before": "732a382f6c19169b31bfc2768608d405e7342dc26893a9b549950d8b6fe4398b",
+    "after": "4e6ea126a2fccc0a9111f44d9a25c9e5a462693bff39f54b08354704a012d435"
+  }
+]

@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { env } from "./env.js";
 import { logger } from "./lib/logger.js";
+import { fixPrQueue, pipelineQueue, redisConnection, repoScanQueue } from "./lib/queue.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { originCheck } from "./middleware/origin-check.js";
 import { authRouter } from "./routes/auth.routes.js";
@@ -48,8 +49,25 @@ export function createApp(): Express {
   );
   app.use(originCheck);
 
-  app.get("/healthz", (_req, res) => {
-    res.status(200).json({ status: "ok" });
+  app.get("/healthz", async (_req, res) => {
+    try {
+      const [redis, repoScan, fixPr, pipeline] = await Promise.all([
+        redisConnection.ping(),
+        repoScanQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        fixPrQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        pipelineQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+      ]);
+      res.status(200).json({
+        status: "ok",
+        redis,
+        quincyConfigured: Boolean(env.QUINCY_API_URL),
+        quincyApiUrl: env.QUINCY_API_URL ?? null,
+        queues: { repoScan, fixPr, pipeline },
+      });
+    } catch (err) {
+      logger.error({ err }, "Health check could not read queue status");
+      res.status(503).json({ status: "degraded", error: err instanceof Error ? err.message : "Queue health unavailable" });
+    }
   });
 
   app.use("/api/auth", authRouter);

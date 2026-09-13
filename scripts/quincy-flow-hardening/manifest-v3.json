@@ -1,0 +1,17 @@
+[
+  {
+    "path": "src/quincy/validation/patching.py",
+    "before_sha256": "6afadcccb89aedbd95813a47927815231fbf7273f6f4a09472196032c79a0cf8",
+    "after_sha256": "070c2f4ff2a3520c8d4619e825ae581b212ec05cc9dc26c7e9d69363c56a785b"
+  },
+  {
+    "path": "src/quincy/reasoning/prompts/patch.md",
+    "before_sha256": "68a2c62f82b8764293b508f3c9f492055205f7c2c98feb3a43da954658f086cb",
+    "after_sha256": "4d5025deac5fc38bd0fff304015428deed3e3b1d5dd78f893926d7a56fe69e68"
+  },
+  {
+    "path": "tests/unit/test_flow_hardening.py",
+    "before_sha256": "cf09c5bc01371f0530d46c57699f9a4f3648eebfc3bb155c96323949231c4844",
+    "after_sha256": "f6e511e0710f38476502e86b441480700ca3a2ec645e96f48ff50ad83272e896"
+  }
+]

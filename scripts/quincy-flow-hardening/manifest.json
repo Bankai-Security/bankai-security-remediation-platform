@@ -1,0 +1,42 @@
+[
+  {
+    "path": "src/quincy/validation/runtime.py",
+    "before_sha256": null,
+    "after_sha256": "2e9aaa71d422fc4853db8dfd406cba1c6b9604159eb5be2cc6ee20789f3f8d59"
+  },
+  {
+    "path": "src/quincy/validation/patching.py",
+    "before_sha256": "8a0e5158dcfd62995bb7cd9a86324132e18bdc8aef2099ab8fd54d64903def63",
+    "after_sha256": "03da7a23ce9db4ac3e4863e2960601ae373e99b624402b3f4975cc6029976ee2"
+  },
+  {
+    "path": "src/quincy/validation/poc.py",
+    "before_sha256": "00f5bd82ddba399c60443fc4de116af9a6c0605178af65900e65b025999cc18c",
+    "after_sha256": "788d66d6a93112a57b52bfc52ee90bf8c242242eb534051b7ec02d7ca657a69d"
+  },
+  {
+    "path": "src/quincy/remediation/loop.py",
+    "before_sha256": "4faf97d8b33ef79c308cbae4ed850f607b668d4eff8a472feed84462059da3bd",
+    "after_sha256": "f9feb8e83149398685aa02160f937e67d9ce06370a4c9ed9eed3824b5a58e2b0"
+  },
+  {
+    "path": "src/quincy/schemas/evidence.py",
+    "before_sha256": "82407e0be570f9937fb4a2e3bda72508565045858a50d2131891965479e4908f",
+    "after_sha256": "732a382f6c19169b31bfc2768608d405e7342dc26893a9b549950d8b6fe4398b"
+  },
+  {
+    "path": "tests/unit/test_flow_hardening.py",
+    "before_sha256": null,
+    "after_sha256": "22c6084c42c8c0de5c6773f8ca9ebdd0b19bea82326668374fc91031660c44d8"
+  },
+  {
+    "path": "tests/unit/test_remediation_loop.py",
+    "before_sha256": "85edc5f3013dfff8280e20416d6e9d0a0cd7e0b835a9a4dd32df85b0b238ebd9",
+    "after_sha256": "da429f53f7ce584f85834501cad69d82c8f0485c702dd5486d24c16b19f06dd5"
+  },
+  {
+    "path": "tests/unit/test_validation_pipeline.py",
+    "before_sha256": "43f40515e2cbd1cb0f34a80c125c48de7af12578682fb1495e42752cc0fe7a79",
+    "after_sha256": "6f14900a6517d7684f4eb722acc20cd564eac452c1a09af948ec4f926d0722e0"
+  }
+]
