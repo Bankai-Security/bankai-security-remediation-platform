@@ -203,6 +203,8 @@ export class BankaiFoundationStack extends cdk.Stack {
                   'aws s3 cp "s3://$QUINCY_JOB_BUCKET/$QUINCY_JOB_PREFIX/job.json" "$CODEBUILD_SRC_DIR/job/job.json"',
                   `aws ecr get-login-password --region ${this.region} | docker login --username AWS --password-stdin ${this.account}.dkr.ecr.${this.region}.${this.urlSuffix}`,
                   'docker pull "$QUINCY_IMAGE_URI"',
+                  'docker pull node:22-slim',
+                  'docker tag node:22-slim quincy-sandbox-node:latest',
                 ],
               },
               build: {

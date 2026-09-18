@@ -57,6 +57,11 @@ describe('BankaiFoundationStack', () => {
       Environment: Match.objectLike({ PrivilegedMode: true }),
       Source: Match.objectLike({ Type: 'NO_SOURCE' }),
     });
+
+    const projects = runtimeTemplate.findResources('AWS::CodeBuild::Project');
+    const buildSpec = JSON.stringify(Object.values(projects)[0]?.Properties?.Source?.BuildSpec);
+    expect(buildSpec).toContain('docker pull node:22-slim');
+    expect(buildSpec).toContain('docker tag node:22-slim quincy-sandbox-node:latest');
     runtimeTemplate.hasResourceProperties('AWS::ECS::Service', {
       ServiceName: 'bankai-nonprod-quincy',
       DesiredCount: 1,
