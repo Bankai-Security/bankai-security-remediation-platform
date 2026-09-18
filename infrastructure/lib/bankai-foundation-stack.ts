@@ -5,6 +5,7 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as efs from 'aws-cdk-lib/aws-efs';
@@ -43,7 +44,7 @@ export class BankaiFoundationStack extends cdk.Stack {
     const cluster = new ecs.Cluster(this, 'Cluster', {
       vpc,
       clusterName: `bankai-${stage}`,
-      containerInsightsV2: ecs.ContainerInsights.DISABLED,
+      containerInsightsV2: ecs.ContainerInsights.ENABLED,
       enableFargateCapacityProviders: true,
     });
 
@@ -312,6 +313,36 @@ export class BankaiFoundationStack extends cdk.Stack {
           cloudMapOptions: { name: 'quincy' },
         });
         quincyService.node.addDependency(fileSystem.mountTargetsAvailable);
+        new cloudwatch.Alarm(this, 'QuincyRunningTaskAlarm', {
+          alarmName: `bankai-${stage}-quincy-running-tasks`,
+          alarmDescription: 'Quincy has fewer running tasks than its desired minimum.',
+          metric: new cloudwatch.Metric({
+            namespace: 'ECS/ContainerInsights',
+            metricName: 'RunningTaskCount',
+            dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: quincyService.serviceName },
+            statistic: 'Minimum',
+            period: cdk.Duration.minutes(5),
+          }),
+          threshold: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+          evaluationPeriods: 1,
+          treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+        });
+        new cloudwatch.Alarm(this, 'CodeBuildFailureAlarm', {
+          alarmName: `bankai-${stage}-quincy-codebuild-failures`,
+          alarmDescription: 'At least one Quincy remediation CodeBuild execution failed.',
+          metric: new cloudwatch.Metric({
+            namespace: 'AWS/CodeBuild',
+            metricName: 'Builds',
+            dimensionsMap: { ProjectName: codeBuildProject.projectName, BuildStatus: 'FAILED' },
+            statistic: 'Sum',
+            period: cdk.Duration.minutes(5),
+          }),
+          threshold: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+          evaluationPeriods: 1,
+          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        });
         quincyApiUrl = `http://quincy.${stage}.bankai.local:8000`;
       }
 
@@ -405,6 +436,59 @@ export class BankaiFoundationStack extends cdk.Stack {
       });
       workerService.node.addDependency(redisService);
       if (quincyService) workerService.node.addDependency(quincyService);
+
+      const runningTaskAlarm = (id: string, name: string, service: ecs.FargateService, description: string) =>
+        new cloudwatch.Alarm(this, id, {
+          alarmName: `bankai-${stage}-${name}-running-tasks`,
+          alarmDescription: description,
+          metric: new cloudwatch.Metric({
+            namespace: 'ECS/ContainerInsights',
+            metricName: 'RunningTaskCount',
+            dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName },
+            statistic: 'Minimum',
+            period: cdk.Duration.minutes(5),
+          }),
+          threshold: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+          evaluationPeriods: 1,
+          treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+        });
+      runningTaskAlarm('WorkerRunningTaskAlarm', 'worker', workerService, 'The Bankai worker has no running task.');
+      runningTaskAlarm('RedisRunningTaskAlarm', 'redis', redisService, 'Redis has no running task.');
+
+      new cloudwatch.Alarm(this, 'ApiUnhealthyTargetAlarm', {
+        alarmName: `bankai-${stage}-api-unhealthy-targets`,
+        alarmDescription: 'The Bankai API load balancer has an unhealthy target.',
+        metric: new cloudwatch.Metric({
+          namespace: 'AWS/ApplicationELB',
+          metricName: 'UnHealthyHostCount',
+          dimensionsMap: {
+            LoadBalancer: api.loadBalancer.loadBalancerFullName,
+            TargetGroup: api.targetGroup.targetGroupFullName,
+          },
+          statistic: 'Maximum',
+          period: cdk.Duration.minutes(1),
+        }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 2,
+        treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+      });
+      new cloudwatch.Alarm(this, 'Alb5xxAlarm', {
+        alarmName: `bankai-${stage}-alb-5xx`,
+        alarmDescription: 'The Bankai API load balancer returned one or more 5xx responses.',
+        metric: new cloudwatch.Metric({
+          namespace: 'AWS/ApplicationELB',
+          metricName: 'HTTPCode_ELB_5XX_Count',
+          dimensionsMap: { LoadBalancer: api.loadBalancer.loadBalancerFullName },
+          statistic: 'Sum',
+          period: cdk.Duration.minutes(5),
+        }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
 
       new cdk.CfnOutput(this, 'ApiLoadBalancerDnsName', { value: api.loadBalancer.loadBalancerDnsName });
     } else if (props.backendImageTag || props.certificateArn) {

@@ -85,5 +85,19 @@ describe('BankaiFoundationStack', () => {
       }),
     });
     runtimeTemplate.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', 1);
+    runtimeTemplate.hasResourceProperties('AWS::ECS::Cluster', {
+      ClusterSettings: Match.arrayWith([Match.objectLike({ Name: 'containerInsights', Value: 'enabled' })]),
+    });
+    runtimeTemplate.resourceCountIs('AWS::CloudWatch::Alarm', 6);
+    for (const alarmName of [
+      'bankai-nonprod-api-unhealthy-targets',
+      'bankai-nonprod-quincy-running-tasks',
+      'bankai-nonprod-worker-running-tasks',
+      'bankai-nonprod-redis-running-tasks',
+      'bankai-nonprod-quincy-codebuild-failures',
+      'bankai-nonprod-alb-5xx',
+    ]) {
+      runtimeTemplate.hasResourceProperties('AWS::CloudWatch::Alarm', { AlarmName: alarmName });
+    }
   });
 });
