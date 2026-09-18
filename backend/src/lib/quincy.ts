@@ -146,6 +146,7 @@ function quincyFindingToNormalizedFinding(finding: QuincyFinding, repo: string, 
       : null;
   const details = [finding.message, priority, provenance].filter((part): part is string => Boolean(part));
 
+  const packageIdentity = metadataString(finding, "purl") ?? metadataString(finding, "package_purl") ?? metadataString(finding, "package_name");
   return {
     fingerprint: `quincy:${finding.fingerprint}`,
     externalId: finding.rule_id,
@@ -153,7 +154,7 @@ function quincyFindingToNormalizedFinding(finding: QuincyFinding, repo: string, 
     severity: normalizeSeverity(finding.severity, null),
     cvssScore: null,
     cwe: finding.cwe.length > 0 ? finding.cwe.join(", ") : null,
-    component: metadataString(finding, "package_name"),
+    component: packageIdentity,
     filePath: location.file,
     findingType: `Quincy ${finding.kind}`,
     sourceStatus: null,
@@ -164,7 +165,7 @@ function quincyFindingToNormalizedFinding(finding: QuincyFinding, repo: string, 
     service: null,
     environment: null,
     cves: finding.kind === "advisory" ? finding.rule_id : metadataString(finding, "advisory_id"),
-    affectedPackages: metadataString(finding, "package_name"),
+    affectedPackages: packageIdentity,
     currentVersions: metadataString(finding, "installed_version") ?? metadataString(finding, "package_version"),
     fixedVersions: metadataString(finding, "fixed_version"),
     recommendations: priority,

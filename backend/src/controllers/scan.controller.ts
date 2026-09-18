@@ -17,6 +17,7 @@ import {
   loadJiraCreds,
   updateTicketsForChangedFindings,
 } from "../lib/ticketing.js";
+import { reopenReappearedCollateralMitigations } from "../lib/collateral-remediation.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 
 function userScopedClient(req: Request) {
@@ -121,6 +122,11 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
       findingIds: (upsertedRows ?? []).map((r) => r.id),
       jira: jira?.creds ?? null,
       slaPolicyDays: project.slaPolicyDays,
+    });
+    await reopenReappearedCollateralMitigations(supabase, {
+      projectId: project.id,
+      findingIds: (upsertedRows ?? []).map((r) => r.id),
+      jira: jira?.creds ?? null,
     });
   }
 

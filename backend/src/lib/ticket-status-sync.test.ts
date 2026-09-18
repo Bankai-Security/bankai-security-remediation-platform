@@ -17,6 +17,10 @@ it("repairs a ticket that jumped to Done before its remediation completed", () =
   expect(statusAllowedByCompletionGate("Done", { githubPrNumber: 30, githubPrState: "merged", ciStatus: "failed" })).toBe("In Review");
   expect(statusAllowedByCompletionGate("Done", { githubPrNumber: 30, githubPrState: "merged", ciStatus: "passed" })).toBe("Done");
 });
+
+it("allows a ticket to complete from explicit collateral scanner evidence", () => {
+  expect(statusAllowedByCompletionGate("Done", { collateralResolutionEventId: "resolution-1" })).toBe("Done");
+});
 it("still imports manual Jira changes without an open PR", () => {
   expect(reconciledTicketStatus("To Do", "In Progress", false)).toBe("In Progress");
   expect(reconciledTicketStatus("In Review", null, false)).toBe("In Review");

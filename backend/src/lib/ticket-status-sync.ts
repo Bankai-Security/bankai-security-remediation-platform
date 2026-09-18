@@ -5,6 +5,7 @@ export interface TicketCompletionEvidence {
   githubPrNumber?: number | null;
   githubPrState?: string | null;
   ciStatus?: string | null;
+  collateralResolutionEventId?: string | null;
 }
 
 export function statusAllowedByCompletionGate(
@@ -13,6 +14,7 @@ export function statusAllowedByCompletionGate(
 ): TicketStatus {
   if (current !== "Done") return current;
   if (evidence.githubPrState === "merged" && evidence.ciStatus === "passed") return "Done";
+  if (evidence.collateralResolutionEventId) return "Done";
   return evidence.githubPrNumber != null ? "In Review" : "In Progress";
 }
 

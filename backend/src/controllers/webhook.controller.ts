@@ -472,7 +472,7 @@ async function handleWorkflowRunEvent(projectId: string, rawBody: Buffer, res: R
   if (verdict.status === "pending_setup") {
     await supabaseAdmin.from("tickets").update({ ci_status: verdict.status, ci_error: verdict.error, ci_run_url: run.html_url }).eq("id", ticketId).eq("project_id", projectId);
   } else {
-    await markTicketPipelineResult(supabaseAdmin, { projectId, ticketId, status: verdict.status, runUrl: run.html_url });
+    await markTicketPipelineResult(supabaseAdmin, { projectId, ticketId, status: verdict.status, runUrl: run.html_url, commitSha: run.head_sha });
     if (verdict.error) await supabaseAdmin.from("tickets").update({ ci_error: verdict.error }).eq("id", ticketId).eq("project_id", projectId);
   }
 

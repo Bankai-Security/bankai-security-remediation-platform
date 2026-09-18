@@ -427,6 +427,7 @@ export interface Ticket {
   ciStatus: "pending_setup" | "queued" | "running" | "passed" | "failed" | null;
   ciRunUrl: string | null;
   ciError: string | null;
+  collateralResolved: boolean;
   createdAt: string;
 }
 

@@ -516,7 +516,7 @@ export default function Tickets() {
                     <span className="tickets-table-service">{t.service}</span>
                     <span><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
                     <span className="ws-mono tickets-table-cvit">{t.findingExternalId ?? '—'}</span>
-                    <span className="ws-dot-status" style={{ color: sc.color }}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}</span>
+                    <span className="ws-dot-status" style={{ color: sc.color }} title={t.collateralResolved ? 'Scanner-verified as mitigated by another merged package remediation' : undefined}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}{t.collateralResolved ? ' · Package upgrade' : ''}</span>
                     <span className="ws-col-right tickets-table-due" style={{ color: t.overdue ? '#DC2626' : 'var(--color-text-muted)' }}>
                       {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
                     </span>

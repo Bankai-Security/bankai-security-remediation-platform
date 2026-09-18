@@ -144,6 +144,19 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
         await setPipelineError(ticketId, "The PR changed during security verification. Retry CI for its latest commit.");
         return;
       }
+      const { error: verificationError } = await supabase.from("remediation_security_verifications").upsert({
+        project_id: projectId,
+        ticket_id: ticketId,
+        commit_sha: headSha,
+        scanner: "quincy",
+        baseline_findings: baseline.findings,
+        current_findings: current.findings,
+        verified_at: new Date().toISOString(),
+      }, { onConflict: "ticket_id,commit_sha,scanner" });
+      if (verificationError) {
+        await setPipelineError(ticketId, "Security verification passed, but Bankai could not persist its evidence. Retry CI.");
+        return;
+      }
     }
 
     // Exclude retained runs from older dispatches, even on the same branch.

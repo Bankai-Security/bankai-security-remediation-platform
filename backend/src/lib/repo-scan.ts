@@ -19,6 +19,7 @@ import {
   loadJiraCreds,
   updateTicketsForChangedFindings,
 } from "./ticketing.js";
+import { reopenReappearedCollateralMitigations } from "./collateral-remediation.js";
 
 // The repo-scan pipeline: fetch code -> Gemini analysis -> diff against
 // existing findings -> upsert into `findings`, same as the CSV path.
@@ -215,6 +216,11 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
       findingIds: (upsertedRows ?? []).map((r) => r.id),
       jira: jiraCreds?.creds ?? null,
       slaPolicyDays,
+    });
+    await reopenReappearedCollateralMitigations(supabase, {
+      projectId,
+      findingIds: (upsertedRows ?? []).map((r) => r.id),
+      jira: jiraCreds?.creds ?? null,
     });
   }
 

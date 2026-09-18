@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordActivity } from "./activity.js";
+import { reconcileCollateralPackageMitigations } from "./collateral-remediation.js";
 import { normalizeDate, normalizeSeverity, type FindingUpsertRow } from "./csv-ingest.js";
 import { decrypt } from "./crypto.js";
 import { buildBranchName, createBranch, GithubApiError, type GithubCredentials } from "./github.js";
@@ -22,6 +23,21 @@ import { enqueueFixPrResume, FIX_PR_QUEUE_NAME } from "./queue.js";
 import { computeSlaDueDate, computeSlaStatus, ttrStatusLabel, type SlaPolicyDays } from "./sla.js";
 import { supabaseAdmin } from "./supabase.js";
 import { statusAllowedByCompletionGate } from "./ticket-status-sync.js";
+
+async function reconcileCollateralSafely(supabase: SupabaseClient, projectId: string, sourceTicketId: string): Promise<void> {
+  try {
+    await reconcileCollateralPackageMitigations(supabase, {
+      projectId,
+      sourceTicketId,
+      loadJira: async () => (await loadJiraCreds(supabase, projectId))?.creds ?? null,
+    });
+  } catch (err) {
+    // Direct ticket completion is authoritative and must not fail because an
+    // optional fan-out reconciliation could not run. Duplicate webhooks make
+    // the operation naturally retryable.
+    logger.error({ err, projectId, sourceTicketId }, "Could not reconcile collateral package mitigations");
+  }
+}
 
 // The per-finding "create a ticket, best-effort sync it to Jira, best-effort
 // create a remediation branch" core, shared by two callers with very
@@ -61,6 +77,7 @@ export interface TicketRow {
   ci_status: string | null;
   ci_run_url: string | null;
   ci_error: string | null;
+  collateral_resolution_event_id?: string | null;
   source?: "csv" | "github_ai" | "jira_import";
   // Only present when selected via SELECT_TICKET's join — absent on rows
   // returned directly from the create_project_ticket* RPCs.
@@ -95,12 +112,13 @@ export function toPublicTicket(row: TicketRow) {
     ciStatus: row.ci_status ?? null,
     ciRunUrl: row.ci_run_url ?? null,
     ciError: row.ci_error ?? null,
+    collateralResolved: !!row.collateral_resolution_event_id,
     createdAt: row.created_at,
   };
 }
 
 export const SELECT_TICKET =
-  "id, key, title, service, severity, status, due_date, finding_id, created_at, jira_issue_key, jira_issue_url, jira_sync_error, github_branch_name, github_branch_url, github_branch_error, github_pr_number, github_pr_url, github_pr_state, github_pr_error, github_pr_low_confidence, ci_status, ci_run_url, ci_error, findings ( external_id )";
+  "id, key, title, service, severity, status, due_date, finding_id, created_at, jira_issue_key, jira_issue_url, jira_sync_error, github_branch_name, github_branch_url, github_branch_error, github_pr_number, github_pr_url, github_pr_state, github_pr_error, github_pr_low_confidence, ci_status, ci_run_url, ci_error, collateral_resolution_event_id, findings ( external_id )";
 
 // Repairs legacy or racing writes that marked a ticket Done before both
 // completion signals existed. The database trigger provides the hard guard;
@@ -108,7 +126,7 @@ export const SELECT_TICKET =
 export async function repairPrematureDoneTickets(supabase: SupabaseClient, projectId: string): Promise<number> {
   const { data, error } = await supabase
     .from("tickets")
-    .select("id, github_branch_name, github_pr_number, github_pr_state, ci_status")
+    .select("id, github_branch_name, github_pr_number, github_pr_state, ci_status, collateral_resolution_event_id")
     .eq("project_id", projectId)
     .eq("status", "Done");
 
@@ -123,6 +141,7 @@ export async function repairPrematureDoneTickets(supabase: SupabaseClient, proje
       githubPrNumber: ticket.github_pr_number,
       githubPrState: ticket.github_pr_state,
       ciStatus: ticket.ci_status,
+      collateralResolutionEventId: ticket.collateral_resolution_event_id,
     });
     return status === "Done" ? [] : [{ id: ticket.id as string, status }];
   });
@@ -654,6 +673,9 @@ export async function markTicketPrMerged(
     logger.error({ err: transitionError, ticketId: ticket.id }, "Could not reconcile completion after PR merge");
     return;
   }
+  if (nextStatus === "Done") {
+    await reconcileCollateralSafely(supabase, input.projectId, ticket.id);
+  }
   if (!transitioned) return;
 
   if (ticket.jira_issue_key) {
@@ -773,11 +795,11 @@ export async function markTicketPrClosedWithoutMerge(
 // blocks a human from merging on GitHub; it only gates Bankai's own UI.
 export async function markTicketPipelineResult(
   supabase: SupabaseClient,
-  input: { projectId: string; ticketId: string; status: "passed" | "failed"; runUrl: string | null },
+  input: { projectId: string; ticketId: string; status: "passed" | "failed"; runUrl: string | null; commitSha?: string | null },
 ): Promise<void> {
   const { data: ticket, error } = await supabase
     .from("tickets")
-    .update({ ci_status: input.status, ci_run_url: input.runUrl, ci_error: null })
+    .update({ ci_status: input.status, ci_run_url: input.runUrl, ci_error: null, security_verified_commit_sha: input.status === "passed" ? input.commitSha ?? null : null })
     .eq("id", input.ticketId)
     .eq("project_id", input.projectId)
     .select("id, key, title, github_pr_state, github_pr_number")
