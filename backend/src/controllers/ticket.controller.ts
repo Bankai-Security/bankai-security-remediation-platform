@@ -650,9 +650,17 @@ export async function retryTicketPipeline(req: Request, res: Response): Promise<
     throw new HttpError(404, "Ticket not found");
   }
   if (data.github_branch_name && data.github_pr_number != null) {
-    await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id });
+    const job = await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id });
+    logger.info(
+      { ticketId: data.id, projectId: req.project!.id, jobId: job.id ?? null },
+      "Enqueued manual CI pipeline retry",
+    );
   } else {
-    await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id });
+    const job = await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id });
+    logger.info(
+      { ticketId: data.id, projectId: req.project!.id, jobId: job.id ?? null },
+      "Enqueued remediation resume from manual CI retry",
+    );
   }
 
   res.status(202).json({ queued: true });

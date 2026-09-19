@@ -37,6 +37,7 @@ function formatRemediationStage(summary: string): string {
   const stage = summary.replace(/\s*\([^)]*\)\s*$/, '').trim();
   const labels: Record<string, string> = {
     'Running baseline scan and tests': 'Checking code and tests',
+    'Starting Quincy remediation': 'Starting security remediation',
     'Assessing finding': 'Assessing vulnerability',
     'Starting patch attempt': 'Preparing security fix',
     'Generating patch': 'Generating security fix',
@@ -110,6 +111,9 @@ export default function Tickets() {
   const [dragOverCol, setDragOverCol] = useState<TicketStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const editable = canEdit(project?.myRole);
+  const hasActiveRemediation = tickets?.some(
+    (ticket) => ticket.status === 'In Progress' && !ticket.githubPrNumber && !ticket.githubPrError,
+  ) ?? false;
 
   useEffect(() => {
     if (!project) return;
@@ -138,9 +142,9 @@ export default function Tickets() {
         if (!cancelled) setTickets(result.tickets);
       } catch { /* Keep the last known ticket state during a temporary outage. */ }
       finally { pending = false; }
-    }, 10_000);
+    }, hasActiveRemediation ? 2_000 : 10_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [project?.id]);
+  }, [project?.id, hasActiveRemediation]);
 
   const services = useMemo(() => Array.from(new Set((tickets ?? []).map((t) => t.service))).sort(), [tickets]);
 

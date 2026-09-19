@@ -60,8 +60,8 @@ describe('BankaiFoundationStack', () => {
 
     const projects = runtimeTemplate.findResources('AWS::CodeBuild::Project');
     const buildSpec = JSON.stringify(Object.values(projects)[0]?.Properties?.Source?.BuildSpec);
-    expect(buildSpec).toContain('docker pull node:22-slim');
-    expect(buildSpec).toContain('docker tag node:22-slim quincy-sandbox-node:latest');
+    expect(buildSpec).not.toContain('docker pull node:22-slim');
+    expect(buildSpec).not.toContain('docker tag node:22-slim quincy-sandbox-node:latest');
     runtimeTemplate.hasResourceProperties('AWS::ECS::Service', {
       ServiceName: 'bankai-nonprod-quincy',
       DesiredCount: 1,
@@ -84,6 +84,19 @@ describe('BankaiFoundationStack', () => {
         ]),
       }),
     });
+    const iamPolicies = JSON.stringify(runtimeTemplate.findResources('AWS::IAM::Policy'));
+    expect(iamPolicies).toContain('s3:GetObject');
+    expect(iamPolicies).toContain('s3:PutObject');
+    expect(iamPolicies).toContain('s3:DeleteObject');
+    expect(iamPolicies).not.toContain('s3:ListBucket');
+    expect(iamPolicies).not.toContain('s3:AbortMultipartUpload');
+    expect(iamPolicies).not.toContain('elasticfilesystem:ClientRootAccess');
+    expect(iamPolicies).toContain('elasticfilesystem:AccessPointArn');
+
+    const fileSystems = JSON.stringify(runtimeTemplate.findResources('AWS::EFS::FileSystem'));
+    expect(fileSystems).toContain('elasticfilesystem:AccessedViaMountTarget');
+    expect(fileSystems).toContain('aws:SecureTransport');
+    expect(fileSystems).not.toContain('elasticfilesystem:ClientRootAccess');
     runtimeTemplate.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', 1);
     runtimeTemplate.hasResourceProperties('AWS::ECS::Cluster', {
       ClusterSettings: Match.arrayWith([Match.objectLike({ Name: 'containerInsights', Value: 'enabled' })]),

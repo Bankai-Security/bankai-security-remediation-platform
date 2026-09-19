@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { env } from "../env.js";
@@ -137,11 +138,13 @@ export async function enqueuePipelineVerification(data: PipelineJobData): Promis
 // `ci-pipeline-${ticketId}` id in Redis until removeOnComplete's 24h TTL
 // expires; re-adding that same id would silently no-op instead of actually
 // retrying. A human clicking "retry" always means "run it again now."
-export async function enqueuePipelineRetry(data: PipelineJobData): Promise<void> {
-  await pipelineQueue.add("verify", data, {
+export async function enqueuePipelineRetry(data: PipelineJobData): Promise<{ id?: string }> {
+  const job = await pipelineQueue.add("verify", data, {
+    jobId: `ci-pipeline-retry-${data.ticketId}-${randomUUID()}`,
     removeOnComplete: { age: 24 * 60 * 60 },
     removeOnFail: { age: 7 * 24 * 60 * 60 },
   });
+  return job.id ? { id: job.id } : {};
 }
 
 export interface FixRetryJobData {

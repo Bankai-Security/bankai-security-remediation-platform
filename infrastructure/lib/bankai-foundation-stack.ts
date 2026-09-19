@@ -204,8 +204,6 @@ export class BankaiFoundationStack extends cdk.Stack {
                   'aws s3 cp "s3://$QUINCY_JOB_BUCKET/$QUINCY_JOB_PREFIX/job.json" "$CODEBUILD_SRC_DIR/job/job.json"',
                   `aws ecr get-login-password --region ${this.region} | docker login --username AWS --password-stdin ${this.account}.dkr.ecr.${this.region}.${this.urlSuffix}`,
                   'docker pull "$QUINCY_IMAGE_URI"',
-                  'docker pull node:22-slim',
-                  'docker tag node:22-slim quincy-sandbox-node:latest',
                 ],
               },
               build: {
@@ -221,7 +219,10 @@ export class BankaiFoundationStack extends cdk.Stack {
             },
           }),
         });
-        jobBucket.grantReadWrite(codeBuildProject);
+        codeBuildProject.addToRolePolicy(new iam.PolicyStatement({
+          actions: ['s3:GetObject', 's3:PutObject'],
+          resources: [jobBucket.arnForObjects('jobs/*')],
+        }));
         quincyRepository.grantPull(codeBuildProject);
         backendSecret.grantRead(codeBuildProject);
 
@@ -240,6 +241,9 @@ export class BankaiFoundationStack extends cdk.Stack {
         const fileSystem = new efs.FileSystem(this, 'QuincyFileSystem', {
           vpc,
           encrypted: true,
+          // Suppress CDK's compatibility policy that grants ClientRootAccess to
+          // any principal. The explicit resource policy below is authoritative.
+          allowAnonymousAccess: true,
           securityGroup: fileSystemSecurityGroup,
           vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
           removalPolicy: stage === 'nonprod' ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
@@ -294,8 +298,35 @@ export class BankaiFoundationStack extends cdk.Stack {
           sourceVolume: 'quincy-data',
           readOnly: false,
         });
-        jobBucket.grantReadWrite(quincyTask.taskRole);
-        fileSystem.grantReadWrite(quincyTask.taskRole);
+        quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+          actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+          resources: [jobBucket.arnForObjects('jobs/*')],
+        }));
+        const fileSystemClientActions = [
+          'elasticfilesystem:ClientMount',
+          'elasticfilesystem:ClientWrite',
+        ];
+        const accessPointCondition = {
+          StringEquals: { 'elasticfilesystem:AccessPointArn': accessPoint.accessPointArn },
+        };
+        quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+          actions: fileSystemClientActions,
+          resources: [fileSystem.fileSystemArn],
+          conditions: accessPointCondition,
+        }));
+        fileSystem.addToResourcePolicy(new iam.PolicyStatement({
+          actions: fileSystemClientActions,
+          resources: ['*'],
+          principals: [quincyTask.taskRole],
+          conditions: { Bool: { 'elasticfilesystem:AccessedViaMountTarget': 'true' } },
+        }));
+        fileSystem.addToResourcePolicy(new iam.PolicyStatement({
+          effect: iam.Effect.DENY,
+          actions: ['elasticfilesystem:Client*'],
+          resources: ['*'],
+          principals: [new iam.AnyPrincipal()],
+          conditions: { Bool: { 'aws:SecureTransport': 'false' } },
+        }));
         quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
           actions: ['codebuild:StartBuild', 'codebuild:BatchGetBuilds', 'codebuild:StopBuild'],
           resources: [codeBuildProject.projectArn],

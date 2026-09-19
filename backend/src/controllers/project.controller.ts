@@ -39,6 +39,21 @@ interface ProjectRow {
   project_services: { name: string }[];
 }
 
+function decryptCleanupCredential(
+  encryptedValue: string,
+  integration: "jira" | "github",
+  projectId: string,
+): string | null {
+  try {
+    return decrypt(encryptedValue);
+  } catch (err) {
+    // External cleanup is best-effort. Legacy/corrupt ciphertext must not
+    // prevent the owner from deleting the Bankai project and its local data.
+    logger.warn({ err, integration, projectId }, "Could not decrypt integration credential during project deletion");
+    return null;
+  }
+}
+
 // Flatten the join-table embed to the list of teams the project belongs to.
 function teamsOf(row: ProjectRow): TeamEmbed[] {
   return (row.project_teams ?? [])
@@ -291,14 +306,20 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   // Gathered before the delete below (which cascades and removes these rows)
   // so the linked Jira issues and GitHub remediation branches can still be
   // cleaned up afterward.
-  const jiraCreds: JiraCredentials | null =
+  const jiraToken =
     project.jira_connected_at && project.jira_site && project.jira_email && project.jira_api_token_enc
-      ? { site: project.jira_site, email: project.jira_email, apiToken: decrypt(project.jira_api_token_enc) }
+      ? decryptCleanupCredential(project.jira_api_token_enc, "jira", project.id)
       : null;
-  const githubCreds: GithubCredentials | null =
+  const jiraCreds: JiraCredentials | null = jiraToken
+    ? { site: project.jira_site, email: project.jira_email, apiToken: jiraToken }
+    : null;
+  const githubToken =
     project.github_connected_at && project.github_repo && project.github_token_enc
-      ? { repo: project.github_repo, token: decrypt(project.github_token_enc) }
+      ? decryptCleanupCredential(project.github_token_enc, "github", project.id)
       : null;
+  const githubCreds: GithubCredentials | null = githubToken
+    ? { repo: project.github_repo, token: githubToken }
+    : null;
 
   let jiraIssueKeys: string[] = [];
   let githubBranchNames: string[] = [];

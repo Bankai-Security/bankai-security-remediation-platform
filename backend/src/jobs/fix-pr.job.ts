@@ -303,6 +303,14 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       "fix-pr job calling Quincy remediation workflow",
     );
     try {
+      await saveRemediationProgress(job.data, {
+        summary: "Starting Quincy remediation",
+        activeAttempt: 0,
+        completedAttempts: 0,
+        updatedAt: new Date().toISOString(),
+      }).catch(err => {
+        logger.warn({ err, ticketId }, "Could not cache initial remediation progress");
+      });
       const quincyResult = await runQuincyRemediationWorkflow({
         jobId: await loadQuincyCheckpoint(job.data),
         onStarted: async (jobId) => {
