@@ -17,6 +17,14 @@
     ]
   },
   "context": {
+    "availability-zones:account=111111111111:region=ap-south-1": [
+      "ap-south-1a",
+      "ap-south-1b"
+    ],
+    "availability-zones:account=222222222222:region=ap-south-1": [
+      "ap-south-1a",
+      "ap-south-1b"
+    ],
     "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": true,
     "@aws-cdk/aws-apigateway:authorizerChangeDeploymentLogicalId": true,
     "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,

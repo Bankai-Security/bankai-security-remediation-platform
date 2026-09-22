@@ -180,7 +180,6 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       projectId,
       jobId: job.id,
       quincyConfigured: Boolean(env.QUINCY_API_URL),
-      quincyApiUrl: env.QUINCY_API_URL ?? null,
     },
     "fix-pr job started",
   );
@@ -298,7 +297,6 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
         projectId,
         findingId,
         ruleId: quincyRuleId,
-        quincyApiUrl: env.QUINCY_API_URL ?? null,
       },
       "fix-pr job calling Quincy remediation workflow",
     );

@@ -1,0 +1,7 @@
+# Reviewed public-edge exceptions. The ALB and its public/NAT subnets are the
+# intentional ingress/egress boundary; application tasks do not receive public
+# addresses. ECS/CodeBuild require HTTPS egress through NAT for GitHub, ECR,
+# model providers, and package/scanner endpoints.
+AWS-0053
+AWS-0104
+AWS-0164

@@ -14,7 +14,14 @@
     "worker:start": "node --env-file-if-exists=.env dist/worker.js",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:junit": "vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml",
+    "test:component": "vitest run --config vitest.component.config.ts",
+    "test:component:junit": "vitest run --config vitest.component.config.ts --reporter=default --reporter=junit --outputFile.junit=reports/component-junit.xml",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration:junit": "vitest run --config vitest.integration.config.ts --reporter=default --reporter=junit --outputFile.junit=reports/integration-junit.xml",
+    "test:container": "docker build --progress=plain -t bankai-backend-component:phase2 . && vitest run --config vitest.container.config.ts",
+    "test:container:junit": "vitest run --config vitest.container.config.ts --reporter=default --reporter=junit --outputFile.junit=reports/container-junit.xml"
   },
   "dependencies": {
     "@arcjet/inspect": "^1.9.1",
@@ -29,7 +36,7 @@
     "express": "^5.2.1",
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
-    "multer": "^2.2.0",
+    "multer": "^2.3.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "zod": "^4.4.3"
@@ -42,6 +49,7 @@
     "@types/node": "^26.1.1",
     "oxlint": "^1.83.0",
     "pino-pretty": "^13.1.3",
+    "testcontainers": "^11.14.0",
     "tsx": "^4.23.1",
     "typescript": "~6.0.2",
     "vitest": "^4.1.10"

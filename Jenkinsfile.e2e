@@ -1,0 +1,79 @@
+pipeline {
+  agent { label 'trusted-docker' }
+
+  parameters {
+    choice(name: 'E2E_MODE', choices: ['full', 'smoke'], description: 'Nightly and pre-production use full; post-deployment uses smoke in Jenkinsfile.release.')
+  }
+  triggers { cron('H H * * *') }
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timeout(time: 75, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '30', daysToKeepStr: '30', artifactNumToKeepStr: '30'))
+    timestamps()
+  }
+  environment { CI = 'true' }
+
+  stages {
+    stage('Checkout trusted main') {
+      steps {
+        deleteDir()
+        checkout scm
+        sh '''
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+        '''
+      }
+    }
+    stage('Validate isolated target') {
+      steps {
+        sh '''
+          set -euo pipefail
+          account=$(aws sts get-caller-identity --query Account --output text)
+          bankai_sha=$(git rev-parse HEAD)
+          node scripts/release/validate-nonprod-release.mjs infrastructure/config/nonprod.json "$account" "$bankai_sha" "$bankai_sha"
+          test "$E2E_MODE" = full -o "$E2E_MODE" = smoke
+        '''
+      }
+    }
+    stage('Non-production smoke') {
+      steps {
+        sh '''
+          set -euo pipefail
+          export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
+          export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
+          export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
+          node e2e/run.mjs --mode smoke
+        '''
+      }
+    }
+    stage('Synthetic remediation workflow') {
+      when { expression { params.E2E_MODE == 'full' } }
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'bankai-e2e-user', usernameVariable: 'E2E_USER_EMAIL', passwordVariable: 'E2E_USER_PASSWORD'),
+          string(credentialsId: 'bankai-e2e-github-token', variable: 'E2E_GITHUB_TOKEN'),
+          string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY'),
+          string(credentialsId: 'jenkins-datadog-app-key', variable: 'DD_APP_KEY'),
+        ]) {
+          sh '''
+            set -euo pipefail
+            rm -rf reports/e2e
+            export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
+            export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
+            export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
+            export E2E_GITHUB_REPOSITORY="$(node -p "require('./infrastructure/config/nonprod.json').githubOrganization")/bankai-e2e-vulnerable"
+            node e2e/run.mjs --mode full
+          '''
+        }
+      }
+    }
+  }
+  post {
+    always {
+      junit testResults: 'reports/e2e/junit.xml', allowEmptyResults: false
+      archiveArtifacts artifacts: 'reports/e2e/**/*', allowEmptyArchive: false, fingerprint: true
+    }
+  }
+}

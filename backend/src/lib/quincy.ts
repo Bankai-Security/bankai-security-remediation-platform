@@ -384,9 +384,8 @@ export async function runQuincyRemediationWorkflow(input: {
 
   let workflowId: string | undefined;
   let jobId = input.jobId;
-  const quincyUrl = `${trimTrailingSlash(env.QUINCY_API_URL)}/workflows/remediations`;
   logger.info(
-    { ticketId: input.ticketId, projectId: input.projectId, ruleId: input.ruleId, repo: input.repo, quincyUrl },
+    { ticketId: input.ticketId, projectId: input.projectId, ruleId: input.ruleId, repo: input.repo },
     "POSTing Quincy remediation workflow",
   );
   if (!jobId) try {

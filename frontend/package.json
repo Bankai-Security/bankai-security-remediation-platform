@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:verify": "node scripts/verify-reproducible-build.mjs",
     "lint": "oxlint",
+    "test": "vitest run",
+    "test:junit": "vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -16,12 +19,18 @@
     "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "jsdom": "^27.0.0",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vitest": "^4.1.10"
   }
 }

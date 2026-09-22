@@ -1,28 +1,17 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
 import { BankaiFoundationStack } from '../lib/bankai-foundation-stack';
+import { loadEnvironmentConfig } from '../lib/environment-config';
 
 const app = new cdk.App();
-const stage = app.node.tryGetContext('stage');
-const region = app.node.tryGetContext('region') ?? 'ap-south-1';
-const backendImageTag = app.node.tryGetContext('backendImageTag');
-const quincyImageTag = app.node.tryGetContext('quincyImageTag');
-const certificateArn = app.node.tryGetContext('certificateArn');
-const frontendCertificateArn = app.node.tryGetContext('frontendCertificateArn');
+const config = loadEnvironmentConfig(app.node);
 
-if (stage !== 'nonprod' && stage !== 'production') {
-  throw new Error('Pass a deployment stage with -c stage=nonprod or -c stage=production');
-}
-
-new BankaiFoundationStack(app, `Bankai-${stage}-Foundation`, {
-  stage,
-  backendImageTag,
-  quincyImageTag,
-  certificateArn,
-  frontendCertificateArn,
+new BankaiFoundationStack(app, `Bankai-${config.stage}-Foundation`, {
+  config,
   env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region,
+    account: config.account,
+    region: config.region,
   },
-  description: `Bankai ${stage} network, ECS cluster, container registries, and frontend storage`,
+  terminationProtection: config.stage === 'production',
+  description: `Bankai ${config.stage} AWS foundation and application services`,
 });

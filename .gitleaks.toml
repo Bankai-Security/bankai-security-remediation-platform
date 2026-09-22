@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated CDK assemblies are not committed or released"
+paths = ['''(^|/)infrastructure/cdk\.out[^/]*/''']
+
+[[allowlists]]
+description = "Pinned Jenkins plugin identifiers, not credentials"
+paths = ['''(^|/)infrastructure/jenkins/plugins\.txt$''']

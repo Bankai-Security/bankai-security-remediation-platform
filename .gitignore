@@ -14,3 +14,10 @@ supabase/.temp/
 !.vscode/extensions.json
 .idea
 .DS_Store
+backend/reports/
+frontend/reports/
+
+# Generated CDK assemblies and local deployment review snapshots
+infrastructure/cdk.out*/
+bankai-nonprod-phase34-change-set.json
+cdk-nonprod-migration*.diff.txt

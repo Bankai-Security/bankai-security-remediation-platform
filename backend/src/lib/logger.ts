@@ -3,8 +3,18 @@ import { env } from "../env.js";
 
 const options: LoggerOptions = {
   level: env.NODE_ENV === "production" ? "info" : "debug",
+  base: {
+    service: process.env.DD_SERVICE ?? "bankai-backend",
+    env: process.env.DD_ENV ?? env.NODE_ENV,
+    version: process.env.DD_VERSION ?? "unknown",
+    "git.sha": process.env.GIT_SHA ?? "unknown",
+    "deployment.id": process.env.DEPLOYMENT_ID ?? "unknown",
+    "jenkins.build": process.env.JENKINS_BUILD ?? "unknown",
+  },
   redact: {
     paths: [
+      "req.headers",
+      "res.headers",
       "req.headers.cookie",
       "req.headers.authorization",
       "*.password",

@@ -1,0 +1,237 @@
+jenkins:
+  systemMessage: "Bankai delivery controller. Managed by JCasC; UI changes are not authoritative."
+  numExecutors: 0
+  mode: EXCLUSIVE
+  disableRememberMe: true
+  scmCheckoutRetryCount: 2
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: "AWS_REGION"
+            value: "${AWS_REGION}"
+  clouds:
+    - eC2Fleet:
+        name: "general-linux"
+        awsCredentialsId: ""
+        region: "${AWS_REGION}"
+        fleet: "${GENERAL_AGENT_FLEET}"
+        privateIpUsed: true
+        alwaysReconnect: false
+        restrictUsage: true
+        labelString: "linux pr-validation"
+        fsRoot: "/opt/jenkins-agent"
+        numExecutors: 1
+        minSize: 0
+        maxSize: ${GENERAL_AGENT_MAX}
+        minSpareSize: 0
+        idleMinutes: 10
+        maxTotalUses: 1
+        initOnlineTimeoutSec: 600
+        cloudStatusIntervalSec: 10
+        noDelayProvision: true
+        computerConnector:
+          sshConnector:
+            credentialsId: "jenkins-agent-ssh-key"
+            javaPath: "/usr/bin/java"
+            launchTimeoutSeconds: 300
+            maxNumRetries: 5
+            retryWaitTime: 15
+            sshHostKeyVerificationStrategy:
+              manuallyProvidedKeyVerificationStrategy:
+                key: "__AGENT_HOST_PUBLIC_KEY__"
+    - eC2Fleet:
+        name: "pr-container"
+        awsCredentialsId: ""
+        region: "${AWS_REGION}"
+        fleet: "${PR_CONTAINER_AGENT_FLEET}"
+        privateIpUsed: true
+        alwaysReconnect: false
+        restrictUsage: true
+        labelString: "pr-container"
+        fsRoot: "/opt/jenkins-agent"
+        numExecutors: 1
+        minSize: 0
+        maxSize: ${PR_CONTAINER_AGENT_MAX}
+        minSpareSize: 0
+        idleMinutes: 10
+        maxTotalUses: 1
+        initOnlineTimeoutSec: 600
+        cloudStatusIntervalSec: 10
+        noDelayProvision: true
+        computerConnector:
+          sshConnector:
+            credentialsId: "jenkins-agent-ssh-key"
+            javaPath: "/usr/bin/java"
+            launchTimeoutSeconds: 300
+            maxNumRetries: 5
+            retryWaitTime: 15
+            sshHostKeyVerificationStrategy:
+              manuallyProvidedKeyVerificationStrategy:
+                key: "__AGENT_HOST_PUBLIC_KEY__"
+    - eC2Fleet:
+        name: "trusted-docker"
+        awsCredentialsId: ""
+        region: "${AWS_REGION}"
+        fleet: "${PRIVILEGED_AGENT_FLEET}"
+        privateIpUsed: true
+        alwaysReconnect: false
+        restrictUsage: true
+        labelString: "trusted-docker"
+        fsRoot: "/opt/jenkins-agent"
+        numExecutors: 1
+        minSize: 0
+        maxSize: ${PRIVILEGED_AGENT_MAX}
+        minSpareSize: 0
+        idleMinutes: 10
+        maxTotalUses: 1
+        initOnlineTimeoutSec: 600
+        cloudStatusIntervalSec: 10
+        noDelayProvision: true
+        computerConnector:
+          sshConnector:
+            credentialsId: "jenkins-agent-ssh-key"
+            javaPath: "/usr/bin/java"
+            launchTimeoutSeconds: 300
+            maxNumRetries: 5
+            retryWaitTime: 15
+            sshHostKeyVerificationStrategy:
+              manuallyProvidedKeyVerificationStrategy:
+                key: "__AGENT_HOST_PUBLIC_KEY__"
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${jenkins-admin-password}"
+  authorizationStrategy:
+    globalMatrix:
+      entries:
+        - user:
+            name: "admin"
+            permissions:
+              - "Overall/Administer"
+        - group:
+            name: "authenticated"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+              - "View/Read"
+  crumbIssuer:
+    standard:
+      excludeClientIPFromCrumb: false
+  markupFormatter:
+    plainText: {}
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - gitHubApp:
+              appID: "${GITHUB_APP_ID}"
+              description: "Bankai and Quincy repository discovery/status App"
+              id: "jenkins-github-app"
+              privateKey: "${jenkins-github-app-private-key}"
+
+security:
+  gitHostKeyVerificationConfiguration:
+    sshHostKeyVerificationStrategy: "knownHostsFileVerificationStrategy"
+
+unclassified:
+  location:
+    url: "${JENKINS_URL}"
+    adminAddress: "jenkins-operators@bankaisecurity.com"
+  buildDiscarders:
+    configuredBuildDiscarders:
+      - "jobBuildDiscarder"
+  awsCredentialsProvider:
+    cache: true
+    client:
+      region: "${AWS_REGION}"
+    listSecrets:
+      filters:
+        - key: "tag-key"
+          values: ["jenkins:credentials:type"]
+  datadogGlobalConfiguration:
+    datadogClientConfiguration:
+      datadogApiConfiguration:
+        intake:
+          datadogIntakeSite:
+            site: "${DATADOG_SITE}"
+        apiKey:
+          datadogCredentialsApiKey:
+            credentialsId: "jenkins-datadog-api-key"
+    enableCiVisibility: true
+    ciInstanceName: "bankai-jenkins"
+    collectBuildLogs: true
+
+jobs:
+  - script: >
+      multibranchPipelineJob('bankai') {
+        branchSources {
+          github {
+            id('bankai-github')
+            repoOwner(System.getenv('GITHUB_ORGANIZATION'))
+            repository(System.getenv('BANKAI_REPOSITORY'))
+            scanCredentialsId('jenkins-github-app')
+          }
+        }
+        factory { workflowBranchProjectFactory { scriptPath('Jenkinsfile') } }
+        orphanedItemStrategy { discardOldItems { numToKeep(20); daysToKeep(14) } }
+        triggers { periodicFolderTrigger { interval('1d') } }
+      }
+  - script: >
+      multibranchPipelineJob('quincy') {
+        branchSources {
+          github {
+            id('quincy-github')
+            repoOwner(System.getenv('GITHUB_ORGANIZATION'))
+            repository(System.getenv('QUINCY_REPOSITORY'))
+            scanCredentialsId('jenkins-github-app')
+          }
+        }
+        factory { workflowBranchProjectFactory { scriptPath('Jenkinsfile') } }
+        orphanedItemStrategy { discardOldItems { numToKeep(20); daysToKeep(14) } }
+        triggers { periodicFolderTrigger { interval('1d') } }
+      }
+  - script: >
+      pipelineJob('bankai-nonprod-release') {
+        description('Trusted non-production release; triggered only after bankai/main succeeds.')
+        disabled(false)
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url("https://github.com/${GITHUB_ORGANIZATION}/${BANKAI_REPOSITORY}.git")
+                  credentials('jenkins-github-app')
+                }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile.release')
+            lightweight(true)
+          }
+        }
+        triggers { upstream('bankai/main', 'SUCCESS') }
+        properties { disableConcurrentBuilds() }
+      }
+  - script: >
+      pipelineJob('bankai-nonprod-e2e') {
+        description('Nightly full synthetic workflow and manually invoked pre-production validation.')
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url("https://github.com/${GITHUB_ORGANIZATION}/${BANKAI_REPOSITORY}.git")
+                  credentials('jenkins-github-app')
+                }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile.e2e')
+            lightweight(true)
+          }
+        }
+        triggers { cron('H H * * *') }
+        properties { disableConcurrentBuilds() }
+      }

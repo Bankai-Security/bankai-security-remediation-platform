@@ -1,0 +1,283 @@
+pipeline {
+  agent { label 'trusted-docker' }
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timeout(time: 150, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '30', daysToKeepStr: '30', artifactNumToKeepStr: '30'))
+    timestamps()
+  }
+
+  environment {
+    CI = 'true'
+    FORCE_COLOR = '0'
+    AWS_PAGER = ''
+    AWS_SHARED_CREDENTIALS_FILE = "${WORKSPACE}/.aws/credentials"
+    AWS_CONFIG_FILE = "${WORKSPACE}/.aws/config"
+  }
+
+  stages {
+    stage('Checkout exact revisions') {
+      steps {
+        deleteDir()
+        checkout scm
+        script {
+          if (env.BRANCH_NAME != null && env.BRANCH_NAME != 'main') error('Non-production releases may only run from main')
+        }
+        sh '''
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          mkdir -p release reports/release
+        '''
+        dir('quincy') {
+          checkout([$class: 'GitSCM', branches: [[name: '*/main']],
+            userRemoteConfigs: [[url: "https://github.com/${GITHUB_ORGANIZATION}/${QUINCY_REPOSITORY}.git", credentialsId: 'jenkins-github-app']]])
+        }
+        sh '''
+          set -euo pipefail
+          printf 'BANKAI_SHA=%s\n' "$(git rev-parse HEAD)" > release/runtime.env
+          printf 'QUINCY_SHA=%s\n' "$(git -C quincy rev-parse HEAD)" >> release/runtime.env
+          printf 'RELEASE_ID=bankai-%s-build-%s\n' "$(git rev-parse --short=12 HEAD)" "$BUILD_NUMBER" >> release/runtime.env
+          printf 'RELEASE_TIMESTAMP=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release/runtime.env
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$(git show -s --format=%ct HEAD)" >> release/runtime.env
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test -z "$(git -C quincy status --porcelain --untracked-files=no)"
+        '''
+      }
+    }
+
+    stage('Validate release target') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          account=$(aws sts get-caller-identity --query Account --output text)
+          node scripts/release/validate-nonprod-release.mjs infrastructure/config/nonprod.json "$account" "$BANKAI_SHA" "$QUINCY_SHA"
+          region=$(node -p "require('./infrastructure/config/nonprod.json').region")
+          stack=Bankai-nonprod-Foundation
+          aws cloudformation describe-stacks --region "$region" --stack-name "$stack" > release/stack-before.json
+          output() { node -e "const s=require('./release/stack-before.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
+          {
+            printf 'AWS_ACCOUNT_ID=%s\nAWS_REGION=%s\nSTACK_NAME=%s\n' "$account" "$region" "$stack"
+            printf 'BACKEND_REPOSITORY=%s\n' "$(output BackendRepositoryUri)"
+            printf 'QUINCY_REPOSITORY_URI=%s\n' "$(output QuincyRepositoryUri)"
+            printf 'PUBLISHING_ROLE_ARN=%s\n' "$(output EcrPublishingRoleArn)"
+            printf 'DEPLOYMENT_ROLE_ARN=%s\n' "$(output NonprodDeploymentRoleArn)"
+            printf 'CLOUDFORMATION_ROLE_ARN=%s\n' "$(output CloudFormationDeploymentRoleArn)"
+          } >> release/runtime.env
+        '''
+      }
+    }
+
+    stage('Rerun Bankai quality gates') {
+      steps {
+        sh '''
+          set -euo pipefail
+          npm --prefix backend ci --no-audit --no-fund
+          npm --prefix frontend ci --no-audit --no-fund
+          npm --prefix infrastructure ci --no-audit --no-fund
+          npm --prefix backend run typecheck
+          npm --prefix backend run lint
+          npm --prefix backend run test:junit
+          npm --prefix backend run test:component:junit
+          npm --prefix backend run test:integration:junit
+          npm --prefix backend run build
+          npm --prefix frontend run lint
+          npm --prefix frontend run test:junit
+          VITE_API_BASE_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")" npm --prefix frontend run build:verify
+          npm --prefix infrastructure run format:check
+          npm --prefix infrastructure run build
+          npm --prefix infrastructure test -- --runInBand
+          npm --prefix infrastructure run validate:jenkins
+          node scripts/ci/validate-release-jenkinsfile.mjs
+        '''
+      }
+      post { always { junit testResults: 'backend/reports/*junit.xml,frontend/reports/*junit.xml', allowEmptyResults: false } }
+    }
+
+    stage('Rerun Quincy quality gates') {
+      steps {
+        dir('quincy') {
+          sh '''
+            set -euo pipefail
+            python3.12 -m venv .venv
+            .venv/bin/python -m pip install --no-cache-dir pip==26.2.1
+            .venv/bin/python -m pip install --require-hashes -r pylock.toml
+            .venv/bin/python -m pip install --no-deps -e .
+            .venv/bin/python -m pip check
+            .venv/bin/python -m ruff check src tests scripts
+            .venv/bin/python -m mypy
+            .venv/bin/python scripts/run_tests.py unit --fail-on-skip
+            .venv/bin/python scripts/run_tests.py component --fail-on-skip
+            .venv/bin/python scripts/run_tests.py integration --fail-on-skip
+          '''
+        }
+      }
+      post { always { junit testResults: 'quincy/reports/*-junit.xml', allowEmptyResults: false } }
+    }
+
+    stage('Build release assets once') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          docker build --progress=plain --pull=false -t "bankai-backend:$BANKAI_SHA" backend
+          docker build --progress=plain --pull=false -t "quincy-service:$QUINCY_SHA" quincy
+          (cd backend && BANKAI_TEST_IMAGE="bankai-backend:$BANKAI_SHA" npx vitest run --config vitest.container.config.ts --reporter=default --reporter=junit --outputFile.junit=reports/release-container-junit.xml)
+          (cd quincy && QUINCY_TEST_IMAGE="quincy-service:$QUINCY_SHA" .venv/bin/python -m pytest tests/integration/test_container_startup.py --junitxml=reports/release-health-junit.xml -o cache_dir=reports/release-health-cache)
+          (cd quincy && scripts/container-security-gate.sh "quincy-service:$QUINCY_SHA" reports/security . all)
+          mkdir -p reports/security reports/sbom
+          TRIVY=aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+          GITLEAKS=zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          SYFT=anchore/syft@sha256:5999d209a342e55e9edf70bf8930fb5b86d8f2a783fa401178372c50e21b1d36
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports/security:/output" "$TRIVY" image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --format json --output /output/bankai-vulnerabilities.json "bankai-backend:$BANKAI_SHA"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports/security:/output" "$TRIVY" image --scanners secret --exit-code 1 --format json --output /output/bankai-image-secrets.json "bankai-backend:$BANKAI_SHA"
+          docker run --rm -v "$PWD:/source:ro" -v "$PWD/reports/security:/output" "$GITLEAKS" dir /source --config /source/.gitleaks.toml --redact --report-format json --report-path /output/bankai-source-secrets.json --exit-code 1
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports/sbom:/output" "$SYFT" "docker:bankai-backend:$BANKAI_SHA" -o syft-json=/output/bankai.syft.json -o cyclonedx-json=/output/bankai.cyclonedx.json
+          mkdir -p release/frontend
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -czf "release/frontend/$RELEASE_ID.tar.gz" -C frontend/dist .
+          printf 'FRONTEND_ARTIFACT=%s\n' "release/frontend/$RELEASE_ID.tar.gz" >> release/runtime.env
+        '''
+      }
+      post { always { junit testResults: 'backend/reports/release-container-junit.xml,quincy/reports/release-health-junit.xml', allowEmptyResults: false } }
+    }
+
+    stage('Publish immutable images') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          bash scripts/release/assume-role.sh "$PUBLISHING_ROLE_ARN" publishing "bankai-publish-$BUILD_NUMBER"
+          registry=${BACKEND_REPOSITORY%%/*}
+          aws ecr get-login-password --region "$AWS_REGION" --profile publishing | docker login --username AWS --password-stdin "$registry"
+          docker tag "bankai-backend:$BANKAI_SHA" "$BACKEND_REPOSITORY:$BANKAI_SHA"
+          docker tag "quincy-service:$QUINCY_SHA" "$QUINCY_REPOSITORY_URI:$QUINCY_SHA"
+          docker push "$BACKEND_REPOSITORY:$BANKAI_SHA"
+          docker push "$QUINCY_REPOSITORY_URI:$QUINCY_SHA"
+          backend_name=${BACKEND_REPOSITORY#*/}
+          quincy_name=${QUINCY_REPOSITORY_URI#*/}
+          bankai_digest=$(aws ecr describe-images --profile publishing --region "$AWS_REGION" --repository-name "$backend_name" --image-ids imageTag="$BANKAI_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          quincy_digest=$(aws ecr describe-images --profile publishing --region "$AWS_REGION" --repository-name "$quincy_name" --image-ids imageTag="$QUINCY_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          [[ $bankai_digest =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ $quincy_digest =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'BANKAI_IMAGE_DIGEST=%s\nQUINCY_IMAGE_DIGEST=%s\n' "$bankai_digest" "$quincy_digest" >> release/runtime.env
+        '''
+      }
+    }
+
+    stage('Synthesize exact release') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          rm -rf release/cdk.out
+          (cd infrastructure && npx cdk synth "$STACK_NAME" -c stage=nonprod -c backendImageDigest="$BANKAI_IMAGE_DIGEST" -c quincyImageDigest="$QUINCY_IMAGE_DIGEST" -c bankaiGitSha="$BANKAI_SHA" -c quincyGitSha="$QUINCY_SHA" -c deploymentId="$RELEASE_ID" -c jenkinsBuild="$BUILD_NUMBER" --quiet --output ../release/cdk.out)
+          test -f "release/cdk.out/$STACK_NAME.template.json"
+          mkdir -p release/security
+          docker run --rm -v "$PWD/infrastructure:/workspace:ro" -v "$PWD/release/cdk.out:/cdk:ro" -v "$PWD/release/security:/output" aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 config --severity HIGH,CRITICAL --exit-code 1 --ignorefile /workspace/.trivyignore --format json --output /output/cdk-nonprod.json /cdk
+          printf 'CDK_SHA=%s\n' "$BANKAI_SHA" >> release/runtime.env
+        '''
+      }
+    }
+
+    stage('Prepare and review change set') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          change_set="bankai-nonprod-$BUILD_NUMBER"
+          (cd infrastructure && npx cdk deploy "$STACK_NAME" --app ../release/cdk.out --method=prepare-change-set --change-set-name="$change_set" --require-approval=never)
+          bash scripts/release/assume-role.sh "$CLOUDFORMATION_ROLE_ARN" cloudformation "bankai-review-$BUILD_NUMBER"
+          aws cloudformation describe-change-set --profile cloudformation --region "$AWS_REGION" --stack-name "$STACK_NAME" --change-set-name "$change_set" --include-property-values > release/change-set.json
+          node scripts/release/review-change-set.mjs release/change-set.json release/change-set-review.json
+          change_set_id=$(node -p "require('./release/change-set.json').ChangeSetId")
+          printf 'CHANGE_SET_ID=%s\n' "$change_set_id" >> release/runtime.env
+        '''
+      }
+    }
+
+    stage('Execute reviewed change set') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          aws cloudformation execute-change-set --profile cloudformation --region "$AWS_REGION" --change-set-name "$CHANGE_SET_ID"
+          aws cloudformation wait stack-update-complete --profile cloudformation --region "$AWS_REGION" --stack-name "$STACK_NAME"
+          aws cloudformation describe-stacks --profile cloudformation --region "$AWS_REGION" --stack-name "$STACK_NAME" > release/stack-after.json
+        '''
+      }
+    }
+
+    stage('Wait for services') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          bash scripts/release/assume-role.sh "$DEPLOYMENT_ROLE_ARN" deployment "bankai-verify-$BUILD_NUMBER"
+          output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
+          cluster=$(output EcsClusterName)
+          for service in "$(output QuincyServiceName)" "$(output ApiServiceName)" "$(output WorkerServiceName)"; do
+            aws ecs wait services-stable --profile deployment --region "$AWS_REGION" --cluster "$cluster" --services "$service"
+          done
+        '''
+      }
+    }
+
+    stage('Publish frontend') {
+      steps {
+        sh '''
+          set -euo pipefail
+          . release/runtime.env
+          output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
+          bucket=$(output FrontendBucketName)
+          distribution=$(output FrontendDistributionId)
+          aws s3 sync frontend/dist/ "s3://$bucket/releases/$RELEASE_ID/" --profile deployment --region "$AWS_REGION" --only-show-errors
+          aws s3 sync frontend/dist/ "s3://$bucket/" --profile deployment --region "$AWS_REGION" --only-show-errors
+          aws cloudfront create-invalidation --profile deployment --distribution-id "$distribution" --paths '/*' > release/cloudfront-invalidation.json
+        '''
+      }
+    }
+
+    stage('Smoke and integration checks') {
+      steps {
+        sh '''
+          set -euo pipefail
+          export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
+          export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
+          export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
+          node e2e/run.mjs --mode smoke
+        '''
+      }
+      post { always { junit testResults: 'reports/e2e/junit.xml', allowEmptyResults: false } }
+    }
+
+    stage('Record release and Datadog event') {
+      steps {
+        withCredentials([string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY')]) {
+          sh '''
+            set -euo pipefail
+            set -a
+            . release/runtime.env
+            set +a
+            export JENKINS_BUILD="${BUILD_URL:-$BUILD_TAG}"
+            node scripts/release/write-release-manifest.mjs release/release-manifest.json
+            output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
+            bucket=$(output FrontendBucketName)
+            aws s3 cp release/release-manifest.json "s3://$bucket/releases/$RELEASE_ID/release-manifest.json" --profile deployment --region "$AWS_REGION" --only-show-errors
+            node -e "require('fs').writeFileSync('release/datadog-event.json', JSON.stringify({title:'Bankai nonprod deployment',text:'Jenkins '+process.env.BUILD_URL+' deployed Bankai '+process.env.BANKAI_SHA+' and Quincy '+process.env.QUINCY_SHA,tags:['env:nonprod','service:bankai-api','service:bankai-worker','service:quincy','version:'+process.env.BANKAI_SHA,'git.sha:'+process.env.BANKAI_SHA,'deployment.id:'+process.env.RELEASE_ID,'jenkins.build:'+process.env.BUILD_NUMBER],alert_type:'success'}))"
+            curl --fail --silent --show-error -X POST "https://api.${DATADOG_SITE}/api/v1/events" -H "DD-API-KEY: $DD_API_KEY" -H 'Content-Type: application/json' --data @release/datadog-event.json > release/datadog-response.json
+          '''
+        }
+        archiveArtifacts artifacts: 'release/**/*,reports/**/*,quincy/reports/**/*', allowEmptyArchive: false, fingerprint: true
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'rm -rf .aws release/datadog-event.json release/datadog-response.json || :'
+    }
+  }
+}

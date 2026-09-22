@@ -43,8 +43,9 @@ export function createApp(): Express {
   app.use(
     pinoHttp({
       logger,
-      redact: ["req.headers.cookie", "req.headers.authorization"],
+      redact: ["req.headers", "res.headers"],
       autoLogging: env.NODE_ENV === "production",
+      customProps: () => ({ service: "bankai-api" }),
     }),
   );
   app.use(originCheck);
