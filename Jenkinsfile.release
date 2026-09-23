@@ -106,8 +106,9 @@ pipeline {
             set -euo pipefail
             python3.12 -m venv .venv
             .venv/bin/python -m pip install --no-cache-dir pip==26.2.1
-            .venv/bin/python -m pip install --require-hashes -r pylock.toml
-            .venv/bin/python -m pip install --no-deps -e .
+            # Quincy currently publishes dependency constraints in pyproject.toml;
+            # there is no checked-in pylock.toml in the master branch.
+            .venv/bin/python -m pip install -e '.[dev]'
             .venv/bin/python -m pip check
             .venv/bin/python -m ruff check src tests scripts
             .venv/bin/python -m mypy
