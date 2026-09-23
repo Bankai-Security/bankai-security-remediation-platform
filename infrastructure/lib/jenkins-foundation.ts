@@ -212,7 +212,11 @@ export class JenkinsFoundation extends Construct {
         'sshd -t',
         'systemctl restart sshd',
       );
-      if (docker) data.addCommands('dnf install -y docker', 'systemctl enable --now docker');
+      if (docker) data.addCommands(
+        'dnf install -y docker',
+        'systemctl enable --now docker',
+        'usermod -aG docker ec2-user',
+      );
       data.addCommands('install -d -o ec2-user -g ec2-user -m 750 /opt/jenkins-agent',
         `printf '%s' '${label}' > /etc/jenkins-agent-class`);
       return data;
