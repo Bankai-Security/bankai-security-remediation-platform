@@ -33,7 +33,7 @@ pipeline {
         '''
         dir('quincy') {
           checkout([$class: 'GitSCM', branches: [[name: '*/main']],
-            userRemoteConfigs: [[url: "https://github.com/${GITHUB_ORGANIZATION}/${QUINCY_REPOSITORY}.git", credentialsId: 'jenkins-github-app']]])
+            userRemoteConfigs: [[url: "https://github.com/${env.GITHUB_ORGANIZATION}/${env.QUINCY_REPOSITORY}.git", credentialsId: 'jenkins-github-app']]])
         }
         sh '''
           set -euo pipefail
