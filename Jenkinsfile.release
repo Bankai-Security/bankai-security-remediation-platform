@@ -15,6 +15,8 @@ pipeline {
     AWS_PAGER = ''
     AWS_SHARED_CREDENTIALS_FILE = "${WORKSPACE}/.aws/credentials"
     AWS_CONFIG_FILE = "${WORKSPACE}/.aws/config"
+    GITHUB_ORGANIZATION = 'bankai-security'
+    QUINCY_REPOSITORY = 'quincy-security-engine'
   }
 
   stages {
