@@ -34,7 +34,7 @@ pipeline {
           mkdir -p release reports/release
         '''
         dir('quincy') {
-          checkout([$class: 'GitSCM', branches: [[name: '*/main']],
+          checkout([$class: 'GitSCM', branches: [[name: '*/master']],
             userRemoteConfigs: [[url: "https://github.com/${env.GITHUB_ORGANIZATION}/${env.QUINCY_REPOSITORY}.git", credentialsId: 'jenkins-github-app']]])
         }
         sh '''
