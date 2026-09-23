@@ -8,3 +8,11 @@ paths = ['''(^|/)infrastructure/cdk\.out[^/]*/''']
 [[allowlists]]
 description = "Pinned Jenkins plugin identifiers, not credentials"
 paths = ['''(^|/)infrastructure/jenkins/plugins\.txt$''']
+
+[[allowlists]]
+description = "Generated CDK synthesis reports contain asset keys and encoded metadata"
+paths = ['''(^|/)infrastructure/reports/cdk/''']
+
+[[allowlists]]
+description = "Generated CI reports are not source files or released artifacts"
+paths = ['''(^|/)(reports|backend/reports|frontend/reports|infrastructure/reports)/''']
