@@ -151,6 +151,15 @@ export class JenkinsFoundation extends Construct {
       description: 'Untrusted PR validation agents; intentionally no deployment or production access',
     });
     prValidationRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'));
+    // CDK synthesis performs a read-only Availability Zone lookup when the
+    // nonprod environment is synthesized on an ephemeral PR agent. Keep this
+    // permission limited to the lookup API; PR agents still have no deploy or
+    // publish permissions.
+    prValidationRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['ec2:DescribeAvailabilityZones'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'aws:RequestedRegion': config.region } },
+    }));
     const trustedAgentRole = new iam.Role(this, 'TrustedAgentRole', {
       roleName: 'bankai-nonprod-jenkins-trusted-agent',
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
