@@ -115,8 +115,8 @@ pipeline {
             .venv/bin/python -m pip check
             .venv/bin/python -m ruff check src tests scripts
             .venv/bin/python -m mypy --disable-error-code=import-untyped
-            .venv/bin/python -m pytest -q tests/unit
-            .venv/bin/python -m pytest -q tests/integration
+            .venv/bin/python -m pytest -q tests/unit --junitxml=reports/unit-junit.xml
+            .venv/bin/python -m pytest -q tests/integration --junitxml=reports/integration-junit.xml
           '''
         }
       }
