@@ -109,6 +109,8 @@ pipeline {
             # Quincy currently publishes dependency constraints in pyproject.toml;
             # there is no checked-in pylock.toml in the master branch.
             .venv/bin/python -m pip install -e '.[dev]'
+            # Quincy imports boto3 directly; install its type stubs for strict mypy.
+            .venv/bin/python -m pip install boto3-stubs
             .venv/bin/python -m pip check
             .venv/bin/python -m ruff check src tests scripts
             .venv/bin/python -m mypy
