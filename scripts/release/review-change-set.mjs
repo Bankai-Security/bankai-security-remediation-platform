@@ -13,7 +13,11 @@ const changes = (changeSet.Changes ?? []).map(({ ResourceChange: change }) => ({
   resourceType: change.ResourceType,
   replacement: change.Replacement ?? 'False',
 }));
-const unsafe = changes.filter((change) => change.action === 'Remove' || change.replacement !== 'False');
+// A new ECS task-definition revision is how an immutable image is released.
+// Continue refusing replacement of services, storage, networking and all other
+// resources; never turn off replacement review for the whole stack.
+const unsafe = changes.filter((change) => change.action === 'Remove' ||
+  (change.replacement !== 'False' && !(change.action === 'Modify' && change.resourceType === 'AWS::ECS::TaskDefinition')));
 writeFileSync(summaryPath, `${JSON.stringify({
   changeSetId: changeSet.ChangeSetId,
   stackId: changeSet.StackId,
@@ -24,4 +28,4 @@ writeFileSync(summaryPath, `${JSON.stringify({
 if (unsafe.length) {
   throw new Error(`change set rejected: ${unsafe.map((item) => `${item.logicalResourceId}:${item.action}/${item.replacement}`).join(', ')}`);
 }
-console.log(`Change set approved: ${changes.length} additions/non-replacing modifications, zero removals or replacements`);
+console.log(`Change set approved: ${changes.length} changes; only ECS task-definition revisions may be replaced`);

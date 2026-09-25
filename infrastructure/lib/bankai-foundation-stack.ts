@@ -56,6 +56,14 @@ export class BankaiFoundationStack extends cdk.Stack {
     const quincyVersion = this.node.tryGetContext('quincyGitSha') ?? config.quincyImageDigest;
     const deploymentId = this.node.tryGetContext('deploymentId') ?? 'manual-synth';
     const jenkinsBuild = this.node.tryGetContext('jenkinsBuild') ?? 'manual-synth';
+    const releaseArchitecture = this.node.tryGetContext('releaseArchitecture');
+    if (releaseArchitecture !== undefined && !['arm64', 'amd64'].includes(releaseArchitecture)) {
+      throw new Error('releaseArchitecture must be arm64 or amd64');
+    }
+    const runtimePlatform = releaseArchitecture === undefined ? undefined : {
+      operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      cpuArchitecture: releaseArchitecture === 'arm64' ? ecs.CpuArchitecture.ARM64 : ecs.CpuArchitecture.X86_64,
+    };
     const production = stage === 'production';
     const initialProvisioning = this.node.tryGetContext('initialProvisioning') === 'true';
     if (initialProvisioning && production) {
@@ -282,9 +290,11 @@ export class BankaiFoundationStack extends cdk.Stack {
       subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [codeBuildSecurityGroup],
       environment: {
-        buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
+        buildImage: releaseArchitecture === 'arm64'
+          ? codebuild.LinuxArmBuildImage.AMAZON_LINUX_2023_STANDARD_3_0
+          : codebuild.LinuxBuildImage.STANDARD_7_0,
         privileged: true,
-        computeType: codebuild.ComputeType.MEDIUM,
+        computeType: releaseArchitecture === 'arm64' ? codebuild.ComputeType.LARGE : codebuild.ComputeType.MEDIUM,
         environmentVariables: {
           QUINCY_IMAGE_URI: { value: quincyImageUri },
           MODEL_PROVIDER: { value: 'openrouter' },
@@ -359,6 +369,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       },
     });
     const quincyTask = new ecs.FargateTaskDefinition(this, 'QuincyTask', {
+      runtimePlatform,
       cpu: config.quincyCpu,
       memoryLimitMiB: config.quincyMemoryMiB,
     });
@@ -480,6 +491,7 @@ export class BankaiFoundationStack extends cdk.Stack {
     const backendImage = ecs.ContainerImage.fromEcrRepository(backendRepository, config.backendImageDigest);
     const apiCertificate = acm.Certificate.fromCertificateArn(this, 'ApiCertificate', config.apiCertificateArn);
     const api = new ecsPatterns.ApplicationLoadBalancedFargateService(this, 'ApiService', {
+      runtimePlatform,
       cluster,
       serviceName: `bankai-${stage}-api`,
       cpu: config.apiCpu,
@@ -534,6 +546,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       .scaleOnCpuUtilization('ApiCpuScaling', { targetUtilizationPercent: 60 });
 
     const workerTask = new ecs.FargateTaskDefinition(this, 'WorkerTask', {
+      runtimePlatform,
       cpu: config.workerCpu,
       memoryLimitMiB: config.workerMemoryMiB,
     });
@@ -631,6 +644,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       hostedZone,
       backendRepository,
       quincyRepository,
+      quincySecurityGroup,
       frontendBucket,
     });
 

@@ -24,6 +24,7 @@ export interface JenkinsFoundationProps {
   readonly hostedZone: route53.IHostedZone;
   readonly backendRepository: ecr.IRepository;
   readonly quincyRepository: ecr.IRepository;
+  readonly quincySecurityGroup: ec2.ISecurityGroup;
   readonly frontendBucket: s3.IBucket;
 }
 
@@ -194,7 +195,7 @@ export class JenkinsFoundation extends Construct {
     }));
     props.frontendBucket.grantReadWrite(nonprodDeploymentRole);
     nonprodDeploymentRole.addToPolicy(new iam.PolicyStatement({
-      actions: ['cloudfront:CreateInvalidation'],
+      actions: ['cloudfront:CreateInvalidation', 'cloudfront:GetInvalidation'],
       resources: [`arn:${cdk.Aws.PARTITION}:cloudfront::${config.account}:distribution/*`],
     }));
     const cloudFormationRole = assumptionRole(this, 'CloudFormationDeploymentRole', 'bankai-nonprod-cloudformation-deployment', trustedAgentRole);
@@ -252,6 +253,9 @@ export class JenkinsFoundation extends Construct {
     const generalFleet = makeAgentFleet('GeneralAgentFleet', prValidationRole, config.jenkinsGeneralAgentMax, false, 'linux');
     const prContainerFleet = makeAgentFleet('PrContainerAgentFleet', prValidationRole, config.jenkinsPrContainerAgentMax, true, 'pr-container');
     const privilegedFleet = makeAgentFleet('PrivilegedAgentFleet', trustedAgentRole, config.jenkinsPrivilegedAgentMax, true, 'trusted-docker');
+    // Use the trusted fleet's own group, not the shared agent group that also
+    // includes untrusted PR workers.
+    props.quincySecurityGroup.addIngressRule(privilegedFleet.connections.securityGroups[0], ec2.Port.tcp(8000), 'Trusted release agent to Quincy health and authentication checks');
     const agentSecurityGroup = new ec2.SecurityGroup(this, 'AgentSecurityGroup', {
       vpc: props.vpc, allowAllOutbound: true, description: 'Ephemeral Jenkins agents; controller SSH only',
     });

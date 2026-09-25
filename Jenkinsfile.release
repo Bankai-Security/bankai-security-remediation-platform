@@ -60,15 +60,36 @@ pipeline {
           region=$(node -p "require('./infrastructure/config/nonprod.json').region")
           stack=Bankai-nonprod-Foundation
           aws cloudformation describe-stacks --region "$region" --stack-name "$stack" > release/stack-before.json
-          output() { node -e "const s=require('./release/stack-before.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
-          {
-            printf 'AWS_ACCOUNT_ID=%s\nAWS_REGION=%s\nSTACK_NAME=%s\n' "$account" "$region" "$stack"
-            printf 'BACKEND_REPOSITORY=%s\n' "$(output BackendRepositoryUri)"
-            printf 'QUINCY_REPOSITORY_URI=%s\n' "$(output QuincyRepositoryUri)"
-            printf 'PUBLISHING_ROLE_ARN=%s\n' "$(output EcrPublishingRoleArn)"
-            printf 'DEPLOYMENT_ROLE_ARN=%s\n' "$(output NonprodDeploymentRoleArn)"
-            printf 'CLOUDFORMATION_ROLE_ARN=%s\n' "$(output CloudFormationDeploymentRoleArn)"
-          } >> release/runtime.env
+          node scripts/release/prepare-runtime.mjs infrastructure/config/nonprod.json release/stack-before.json release/runtime.env
+          . release/runtime.env
+          case "$(docker info --format '{{.Architecture}}')" in
+            aarch64|arm64) ;;
+            *) echo 'Release requires an ARM64 trusted Docker agent' >&2; exit 1 ;;
+          esac
+          test -f quincy/pylock.toml
+          test -f quincy/tests/integration/test_container_startup.py
+          test -x quincy/scripts/container-security-gate.sh
+          bash scripts/release/assume-role.sh "$PUBLISHING_ROLE_ARN" publishing "bankai-preflight-publish-$BUILD_NUMBER"
+          bash scripts/release/assume-role.sh "$DEPLOYMENT_ROLE_ARN" deployment "bankai-preflight-deploy-$BUILD_NUMBER"
+          bash scripts/release/assume-role.sh "$CLOUDFORMATION_ROLE_ARN" cloudformation "bankai-preflight-cfn-$BUILD_NUMBER"
+        '''
+        withCredentials([string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY')]) {
+          sh '''
+            set -eu
+            set +x
+            . release/runtime.env
+            curl --fail --silent --show-error "https://api.${DATADOG_SITE}/api/v1/validate" -H "DD-API-KEY: $DD_API_KEY" > reports/release/datadog-preflight.json
+          '''
+        }
+      }
+    }
+
+    stage('Scan release sources') {
+      steps {
+        sh '''
+          set -euo pipefail
+          bash scripts/release/scan-sources.sh . reports/security/bankai-source
+          bash scripts/release/scan-sources.sh quincy reports/security/quincy-source
         '''
       }
     }
@@ -93,7 +114,7 @@ pipeline {
           npm --prefix infrastructure run build
           npm --prefix infrastructure test -- --runInBand
           npm --prefix infrastructure run validate:jenkins
-          node scripts/ci/validate-release-jenkinsfile.mjs
+          npm --prefix infrastructure run validate:release
         '''
       }
       post { always { junit testResults: 'backend/reports/*junit.xml,frontend/reports/*junit.xml', allowEmptyResults: false } }
@@ -106,16 +127,14 @@ pipeline {
             set -euo pipefail
             python3.12 -m venv .venv
             .venv/bin/python -m pip install --no-cache-dir pip==26.2.1
-            # Install Quincy and its development dependencies for the quality gates.
-            .venv/bin/python -m pip install -e '.[dev]'
-            .venv/bin/python -m pip install asyncpg
-            # Quincy imports boto3 directly; install its type stubs for strict mypy.
-            .venv/bin/python -m pip install boto3-stubs
+            .venv/bin/python -m pip install --require-hashes -r pylock.toml
+            .venv/bin/python -m pip install --no-deps -e .
             .venv/bin/python -m pip check
             .venv/bin/python -m ruff check src tests scripts
-            .venv/bin/python -m mypy --disable-error-code=import-untyped
-            .venv/bin/python -m pytest -q tests/unit --junitxml=reports/unit-junit.xml
-            .venv/bin/python -m pytest -q tests/integration --ignore=tests/integration/test_container_startup.py --junitxml=reports/integration-junit.xml
+            .venv/bin/python -m mypy
+            .venv/bin/python scripts/run_tests.py unit --fail-on-skip
+            .venv/bin/python scripts/run_tests.py component --fail-on-skip
+            .venv/bin/python scripts/run_tests.py integration --fail-on-skip
           '''
         }
       }
@@ -127,18 +146,16 @@ pipeline {
         sh '''
           set -euo pipefail
           . release/runtime.env
-          docker build --progress=plain --pull=false -t "bankai-backend:$BANKAI_SHA" backend
-          docker build --progress=plain --pull=false -t "quincy-service:$QUINCY_SHA" quincy
+          docker build --platform "linux/$IMAGE_ARCHITECTURE" --progress=plain --pull=false -t "bankai-backend:$BANKAI_SHA" backend
+          docker build --platform "linux/$IMAGE_ARCHITECTURE" --progress=plain --pull=false -t "quincy-service:$QUINCY_SHA" quincy
           (cd backend && BANKAI_TEST_IMAGE="bankai-backend:$BANKAI_SHA" npx vitest run --config vitest.container.config.ts --reporter=default --reporter=junit --outputFile.junit=reports/release-container-junit.xml)
           (cd quincy && QUINCY_TEST_IMAGE="quincy-service:$QUINCY_SHA" .venv/bin/python -m pytest tests/integration/test_container_startup.py --junitxml=reports/release-health-junit.xml -o cache_dir=reports/release-health-cache)
           (cd quincy && scripts/container-security-gate.sh "quincy-service:$QUINCY_SHA" reports/security . all)
           mkdir -p reports/security reports/sbom
           TRIVY=aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
-          GITLEAKS=zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           SYFT=anchore/syft@sha256:5999d209a342e55e9edf70bf8930fb5b86d8f2a783fa401178372c50e21b1d36
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports/security:/output" "$TRIVY" image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --format json --output /output/bankai-vulnerabilities.json "bankai-backend:$BANKAI_SHA"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports/security:/output" "$TRIVY" image --scanners secret --exit-code 1 --format json --output /output/bankai-image-secrets.json "bankai-backend:$BANKAI_SHA"
-          docker run --rm -v "$PWD:/source:ro" -v "$PWD/reports/security:/output" "$GITLEAKS" dir /source --config /source/.gitleaks.toml --redact --report-format json --report-path /output/bankai-source-secrets.json --exit-code 1
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports/sbom:/output" "$SYFT" "docker:bankai-backend:$BANKAI_SHA" -o syft-json=/output/bankai.syft.json -o cyclonedx-json=/output/bankai.cyclonedx.json
           mkdir -p release/frontend
           tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -czf "release/frontend/$RELEASE_ID.tar.gz" -C frontend/dist .
@@ -156,14 +173,16 @@ pipeline {
           bash scripts/release/assume-role.sh "$PUBLISHING_ROLE_ARN" publishing "bankai-publish-$BUILD_NUMBER"
           registry=${BACKEND_REPOSITORY%%/*}
           aws ecr get-login-password --region "$AWS_REGION" --profile publishing | docker login --username AWS --password-stdin "$registry"
-          docker tag "bankai-backend:$BANKAI_SHA" "$BACKEND_REPOSITORY:$BANKAI_SHA"
-          docker tag "quincy-service:$QUINCY_SHA" "$QUINCY_REPOSITORY_URI:$QUINCY_SHA"
-          docker push "$BACKEND_REPOSITORY:$BANKAI_SHA"
-          docker push "$QUINCY_REPOSITORY_URI:$QUINCY_SHA"
+          bankai_tag="$BANKAI_SHA-build-$BUILD_NUMBER"
+          quincy_tag="$QUINCY_SHA-build-$BUILD_NUMBER"
+          docker tag "bankai-backend:$BANKAI_SHA" "$BACKEND_REPOSITORY:$bankai_tag"
+          docker tag "quincy-service:$QUINCY_SHA" "$QUINCY_REPOSITORY_URI:$quincy_tag"
+          docker push "$BACKEND_REPOSITORY:$bankai_tag"
+          docker push "$QUINCY_REPOSITORY_URI:$quincy_tag"
           backend_name=${BACKEND_REPOSITORY#*/}
           quincy_name=${QUINCY_REPOSITORY_URI#*/}
-          bankai_digest=$(aws ecr describe-images --profile publishing --region "$AWS_REGION" --repository-name "$backend_name" --image-ids imageTag="$BANKAI_SHA" --query 'imageDetails[0].imageDigest' --output text)
-          quincy_digest=$(aws ecr describe-images --profile publishing --region "$AWS_REGION" --repository-name "$quincy_name" --image-ids imageTag="$QUINCY_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          bankai_digest=$(aws ecr batch-get-image --profile publishing --region "$AWS_REGION" --repository-name "$backend_name" --image-ids imageTag="$bankai_tag" --query 'images[0].imageId.imageDigest' --output text)
+          quincy_digest=$(aws ecr batch-get-image --profile publishing --region "$AWS_REGION" --repository-name "$quincy_name" --image-ids imageTag="$quincy_tag" --query 'images[0].imageId.imageDigest' --output text)
           [[ $bankai_digest =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ $quincy_digest =~ ^sha256:[0-9a-f]{64}$ ]]
           printf 'BANKAI_IMAGE_DIGEST=%s\nQUINCY_IMAGE_DIGEST=%s\n' "$bankai_digest" "$quincy_digest" >> release/runtime.env
@@ -177,7 +196,7 @@ pipeline {
           set -euo pipefail
           . release/runtime.env
           rm -rf release/cdk.out
-          (cd infrastructure && npx cdk synth "$STACK_NAME" -c stage=nonprod -c backendImageDigest="$BANKAI_IMAGE_DIGEST" -c quincyImageDigest="$QUINCY_IMAGE_DIGEST" -c bankaiGitSha="$BANKAI_SHA" -c quincyGitSha="$QUINCY_SHA" -c deploymentId="$RELEASE_ID" -c jenkinsBuild="$BUILD_NUMBER" --quiet --output ../release/cdk.out)
+          (cd infrastructure && npx cdk synth "$STACK_NAME" -c stage=nonprod -c releaseArchitecture="$IMAGE_ARCHITECTURE" -c backendImageDigest="$BANKAI_IMAGE_DIGEST" -c quincyImageDigest="$QUINCY_IMAGE_DIGEST" -c bankaiGitSha="$BANKAI_SHA" -c quincyGitSha="$QUINCY_SHA" -c deploymentId="$RELEASE_ID" -c jenkinsBuild="$BUILD_NUMBER" --quiet --output ../release/cdk.out)
           test -f "release/cdk.out/$STACK_NAME.template.json"
           mkdir -p release/security
           docker run --rm -v "$PWD/infrastructure:/workspace:ro" -v "$PWD/release/cdk.out:/cdk:ro" -v "$PWD/release/security:/output" aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 config --severity HIGH,CRITICAL --exit-code 1 --ignorefile /workspace/.trivyignore --format json --output /output/cdk-nonprod.json /cdk
@@ -240,6 +259,8 @@ pipeline {
           aws s3 sync frontend/dist/ "s3://$bucket/releases/$RELEASE_ID/" --profile deployment --region "$AWS_REGION" --only-show-errors
           aws s3 sync frontend/dist/ "s3://$bucket/" --profile deployment --region "$AWS_REGION" --only-show-errors
           aws cloudfront create-invalidation --profile deployment --distribution-id "$distribution" --paths '/*' > release/cloudfront-invalidation.json
+          invalidation=$(node -p "require('./release/cloudfront-invalidation.json').Invalidation.Id")
+          aws cloudfront wait invalidation-completed --profile deployment --distribution-id "$distribution" --id "$invalidation"
         '''
       }
     }
@@ -274,7 +295,6 @@ pipeline {
             curl --fail --silent --show-error -X POST "https://api.${DATADOG_SITE}/api/v1/events" -H "DD-API-KEY: $DD_API_KEY" -H 'Content-Type: application/json' --data @release/datadog-event.json > release/datadog-response.json
           '''
         }
-        archiveArtifacts artifacts: 'release/**/*,reports/**/*,quincy/reports/**/*', allowEmptyArchive: false, fingerprint: true
       }
     }
   }
@@ -282,6 +302,11 @@ pipeline {
   post {
     always {
       sh 'rm -rf .aws release/datadog-event.json release/datadog-response.json || :'
+      script {
+        if (fileExists('release/runtime.env')) {
+          archiveArtifacts artifacts: 'release/**/*,reports/**/*,quincy/reports/**/*', excludes: '**/*-tmp/**,**/*-cache/**', allowEmptyArchive: false, fingerprint: true
+        }
+      }
     }
   }
 }

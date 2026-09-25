@@ -44,10 +44,11 @@ function config(stage: 'nonprod' | 'production'): EnvironmentConfig {
   };
 }
 
-function synth(stage: 'nonprod' | 'production', initialProvisioning = false): Template {
+function synth(stage: 'nonprod' | 'production', initialProvisioning = false, releaseArchitecture?: string): Template {
   const app = new cdk.App();
   app.node.setContext('@aws-cdk/aws-autoscaling:generateLaunchTemplateInsteadOfLaunchConfig', true);
   if (initialProvisioning) app.node.setContext('initialProvisioning', 'true');
+  if (releaseArchitecture) app.node.setContext('releaseArchitecture', releaseArchitecture);
   const cfg = config(stage);
   return Template.fromStack(new BankaiFoundationStack(app, `Bankai-${stage}-Foundation`, {
     config: cfg, env: { account: cfg.account, region: cfg.region },
@@ -57,6 +58,29 @@ function synth(stage: 'nonprod' | 'production', initialProvisioning = false): Te
 describe('BankaiFoundationStack', () => {
   const nonprod = synth('nonprod');
   const production = synth('production');
+
+  it('matches all released application tasks and CodeBuild to the ARM64 builder', () => {
+    const release = synth('nonprod', false, 'arm64');
+    const tasks = Object.values(release.findResources('AWS::ECS::TaskDefinition'));
+    const applications = tasks.filter(task => task.Properties.ContainerDefinitions.some(
+      (container: { Environment?: { Name: string }[] }) => container.Environment?.some(entry => entry.Name === 'DD_SERVICE')));
+    expect(applications).toHaveLength(3);
+    for (const task of applications) expect(task.Properties.RuntimePlatform).toEqual({ CpuArchitecture: 'ARM64', OperatingSystemFamily: 'LINUX' });
+    release.hasResourceProperties('AWS::CodeBuild::Project', {
+      Environment: Match.objectLike({ Type: 'ARM_CONTAINER', Image: 'aws/codebuild/amazonlinux-aarch64-standard:3.0' }),
+    });
+    expect(() => synth('nonprod', false, 'unknown')).toThrow('releaseArchitecture');
+  });
+
+  it('allows Quincy smoke traffic from the trusted fleet rather than the shared PR agent group', () => {
+    const ingress = Object.values(nonprod.findResources('AWS::EC2::SecurityGroupIngress'));
+    const rule = ingress.find(resource => resource.Properties.Description === 'Trusted release agent to Quincy health and authentication checks');
+    expect(rule).toBeDefined();
+    expect(rule?.Properties.FromPort).toBe(8000);
+    expect(JSON.stringify(rule?.Properties.SourceSecurityGroupId)).toContain('PrivilegedAgentFleet');
+    expect(JSON.stringify(rule?.Properties.SourceSecurityGroupId)).not.toContain('JenkinsAgentSecurityGroup');
+    expect(JSON.stringify(nonprod.findResources('AWS::IAM::Policy'))).toContain('cloudfront:GetInvalidation');
+  });
 
   it('creates immutable, scan-on-push ECR repositories with stable logical IDs', () => {
     nonprod.resourceCountIs('AWS::ECR::Repository', 2);

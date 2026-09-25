@@ -16,6 +16,10 @@ supabase/.temp/
 .DS_Store
 backend/reports/
 frontend/reports/
+/reports/
+/release/
+/.aws/
+/quincy/
 
 # Generated CDK assemblies and local deployment review snapshots
 infrastructure/cdk.out*/
