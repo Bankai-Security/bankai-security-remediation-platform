@@ -91,6 +91,45 @@ test('permits ECS task-definition revisions but still rejects service and storag
   }
 });
 
+test('reviews only explicit mutable CodeBuild and CDK metadata properties', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bankai-conditional-'));
+  const project = {
+    Action: 'Modify', LogicalResourceId: 'QuincyRemediationProject6B5259BA',
+    PhysicalResourceId: 'bankai-nonprod-quincy-remediation',
+    ResourceType: 'AWS::CodeBuild::Project', Replacement: 'Conditional', Scope: ['Properties'],
+    Details: ['Image', 'Type', 'ComputeType', 'EnvironmentVariables/1/Value'].map(path => ({
+      Evaluation: 'Static', ChangeSource: 'DirectModification', Target: {
+        Attribute: 'Properties', Name: 'Environment', RequiresRecreation: 'Conditionally',
+        Path: `/Properties/Environment/${path}`, AttributeChangeType: 'Modify',
+      },
+    })),
+  };
+  const metadata = { ...project, ResourceType: 'AWS::CDK::Metadata', LogicalResourceId: 'CDKMetadata',
+    Details: [{ ...project.Details[0], Target: { ...project.Details[0].Target, Name: 'Analytics', Path: '/Properties/Analytics' } }] };
+  const cases = [
+    ['environment update', project, true], ['analytics update', metadata, true],
+    ['actual replacement', { ...project, Replacement: 'True' }, false],
+    ['replacement policy', { ...project, PolicyAction: 'ReplaceAndDelete' }, false],
+    ['missing details', { ...project, Details: [] }, false],
+    ['missing scope', { ...project, Scope: [] }, false],
+    ['other project', { ...project, PhysicalResourceId: 'another-project' }, false],
+    ['removal', { ...project, Action: 'Remove' }, false],
+    ['dynamic reference', { ...project, Details: [{ ...project.Details[0], Evaluation: 'Dynamic' }] }, false],
+    ...['Name', 'ServiceRole', 'Environment/PrivilegedMode'].map(path => [path, { ...project,
+      Details: [{ ...project.Details[0], Target: { ...project.Details[0].Target, Path: `/Properties/${path}` } }] }, false]),
+    ['mixed unsafe update', { ...project, Details: [...project.Details, { ...project.Details[0],
+      Target: { ...project.Details[0].Target, Path: '/Properties/Name' } }] }, false],
+    ['recreation required', { ...metadata, Details: [{ ...metadata.Details[0],
+      Target: { ...metadata.Details[0].Target, RequiresRecreation: 'Always' } }] }, false],
+  ];
+  for (const [name, change, accepted] of cases) {
+    writeFileSync(join(dir, 'input.json'), JSON.stringify({ Status: 'CREATE_COMPLETE', ExecutionStatus: 'AVAILABLE',
+      Changes: [{ ResourceChange: change }] }));
+    const result = spawnSync(process.execPath, [review, join(dir, 'input.json'), join(dir, 'output.json')]);
+    assert.equal(result.status === 0, accepted, name);
+  }
+});
+
 test('approves additions and in-place modifications', () => {
   const directory = mkdtempSync(join(tmpdir(), 'bankai-release-'));
   const input = join(directory, 'change-set.json');
