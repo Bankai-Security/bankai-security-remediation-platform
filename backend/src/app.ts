@@ -1,5 +1,6 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import { randomUUID } from "node:crypto";
 import express, { type Express } from "express";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
@@ -40,12 +41,25 @@ export function createApp(): Express {
 
   app.use(express.json({ limit: "16kb" }));
   app.use(cookieParser());
+  // Keep one bounded correlation identifier across the request and every
+  // downstream log entry. Never trust arbitrary caller input as an ID: only
+  // accept the UUID shape and cap its length before echoing it.
+  app.use((req, res, next) => {
+    const supplied = req.header("x-request-id");
+    const requestId = supplied && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(supplied)
+      ? supplied
+      : randomUUID();
+    req.headers["x-request-id"] = requestId;
+    res.setHeader("x-request-id", requestId);
+    next();
+  });
   app.use(
     pinoHttp({
       logger,
       redact: ["req.headers", "res.headers"],
       autoLogging: env.NODE_ENV === "production",
-      customProps: () => ({ service: "bankai-api" }),
+      genReqId: (req) => req.headers["x-request-id"] as string,
+      customProps: (req) => ({ service: "bankai-api", request_id: req.id }),
     }),
   );
   app.use(originCheck);

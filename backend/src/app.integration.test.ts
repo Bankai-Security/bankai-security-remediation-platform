@@ -41,4 +41,15 @@ describe("Bankai HTTP application boundary", () => {
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: "Not found" });
   });
+
+  it("echoes a valid request correlation ID", async () => {
+    const requestId = "123e4567-e89b-12d3-a456-426614174000";
+    const response = await fetch(`${origin}/healthz`, { headers: { "x-request-id": requestId } });
+    expect(response.headers.get("x-request-id")).toBe(requestId);
+  });
+
+  it("replaces malformed request IDs with a UUID", async () => {
+    const response = await fetch(`${origin}/healthz`, { headers: { "x-request-id": "customer-email@example.com" } });
+    expect(response.headers.get("x-request-id")).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
 });
