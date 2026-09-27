@@ -28,13 +28,44 @@ function safeConditionalUpdate(change) {
   } else if (change.ResourceType === 'AWS::CodeBuild::Project' &&
       /^QuincyRemediationProject[A-F0-9]{8}$/.test(change.LogicalResourceId) &&
       change.PhysicalResourceId === 'bankai-nonprod-quincy-remediation') {
-    allowed = /^\/Properties\/Environment\/(Image|Type|ComputeType|EnvironmentVariables\/\d+\/Value)$/;
+    return change.Details.every(({ Evaluation, ChangeSource, Target }) =>
+      Evaluation === 'Static' && ChangeSource === 'DirectModification' &&
+      Target?.Attribute === 'Properties' && ['Never', 'Conditionally'].includes(Target.RequiresRecreation) &&
+      safeCodeBuildTarget(Target));
   } else return false;
   return change.Details.every(({ Evaluation, ChangeSource, Target }) =>
     Evaluation === 'Static' && ChangeSource === 'DirectModification' &&
     Target?.Attribute === 'Properties' && Target.AttributeChangeType === 'Modify' &&
     ['Never', 'Conditionally'].includes(Target.RequiresRecreation) &&
     allowed.test(Target.Path));
+}
+function safeCodeBuildTarget(target) {
+  if (target.AttributeChangeType === 'Modify' &&
+      /^\/Properties\/Environment\/(Image|Type|ComputeType|EnvironmentVariables\/\d+\/Value)$/.test(target.Path)) {
+    return true;
+  }
+  if (target.AttributeChangeType === 'Add' &&
+      /^\/Properties\/Environment\/EnvironmentVariables\/\d+$/.test(target.Path)) {
+    try {
+      const variable = JSON.parse(target.AfterValue);
+      if (variable.Type !== 'PLAINTEXT') return false;
+      const value = String(variable.Value);
+      return (variable.Name === 'DD_ENV' && value === 'nonprod') ||
+        (variable.Name === 'DD_SERVICE' && value === 'quincy-codebuild') ||
+        (['DD_VERSION', 'GIT_SHA'].includes(variable.Name) && /^[0-9a-f]{40}$/.test(value)) ||
+        (variable.Name === 'DEPLOYMENT_ID' && /^bankai-[0-9a-f]{12}-build-\d+$/.test(value)) ||
+        (variable.Name === 'JENKINS_BUILD' && /^\d+$/.test(value));
+    } catch {
+      return false;
+    }
+  }
+  if (target.AttributeChangeType === 'Modify' && target.Path === '/Properties/Source/BuildSpec' &&
+      typeof target.BeforeValue === 'string' && typeof target.AfterValue === 'string') {
+    const marker = ' -e GEMINI_API_KEY -e SANDBOX_BACKEND=docker';
+    const replacement = ' -e GEMINI_API_KEY -e DD_ENV -e DD_SERVICE -e DD_VERSION -e GIT_SHA -e DEPLOYMENT_ID -e JENKINS_BUILD -e SANDBOX_BACKEND=docker';
+    return target.BeforeValue.includes(marker) && target.AfterValue === target.BeforeValue.replace(marker, replacement);
+  }
+  return false;
 }
 // A new ECS task-definition revision is how an immutable image is released.
 // Continue refusing replacement of services, storage, networking and all other

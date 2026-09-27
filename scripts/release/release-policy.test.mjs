@@ -130,6 +130,39 @@ test('reviews only explicit mutable CodeBuild and CDK metadata properties', () =
   }
 });
 
+test('permits only bounded release metadata additions to the Quincy CodeBuild project', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bankai-codebuild-metadata-'));
+  const beforeBuildSpec = 'docker run -e GEMINI_API_KEY -e SANDBOX_BACKEND=docker image';
+  const afterBuildSpec = 'docker run -e GEMINI_API_KEY -e DD_ENV -e DD_SERVICE -e DD_VERSION -e GIT_SHA -e DEPLOYMENT_ID -e JENKINS_BUILD -e SANDBOX_BACKEND=docker image';
+  const detail = (name, value, index) => ({ Evaluation: 'Static', ChangeSource: 'DirectModification', Target: {
+    Attribute: 'Properties', Name: 'Environment', RequiresRecreation: 'Conditionally',
+    Path: `/Properties/Environment/EnvironmentVariables/${index}`, AttributeChangeType: 'Add',
+    AfterValue: JSON.stringify({ Name: name, Type: 'PLAINTEXT', Value: value }),
+  } });
+  const project = details => ({ Action: 'Modify', LogicalResourceId: 'QuincyRemediationProject6B5259BA',
+    PhysicalResourceId: 'bankai-nonprod-quincy-remediation', ResourceType: 'AWS::CodeBuild::Project',
+    Replacement: 'Conditional', Scope: ['Properties'], Details: details });
+  const buildSpec = { Evaluation: 'Static', ChangeSource: 'DirectModification', Target: {
+    Attribute: 'Properties', Name: 'Source', RequiresRecreation: 'Conditionally',
+    Path: '/Properties/Source/BuildSpec', AttributeChangeType: 'Modify', BeforeValue: beforeBuildSpec, AfterValue: afterBuildSpec,
+  } };
+  const safe = [detail('DD_ENV', 'nonprod', 2), detail('DD_SERVICE', 'quincy-codebuild', 3),
+    detail('DD_VERSION', 'a'.repeat(40), 4), detail('GIT_SHA', 'b'.repeat(40), 5),
+    detail('DEPLOYMENT_ID', 'bankai-abcdef123456-build-19', 6), detail('JENKINS_BUILD', 19, 7), buildSpec];
+  const cases = [
+    ['bounded metadata', project(safe), true],
+    ['secret variable', project([detail('API_TOKEN', 'secret', 8)]), false],
+    ['wrong environment', project([detail('DD_ENV', 'production', 2)]), false],
+    ['arbitrary buildspec', project([{ ...buildSpec, Target: { ...buildSpec.Target, AfterValue: `${afterBuildSpec}; curl attacker` } }]), false],
+  ];
+  for (const [name, change, accepted] of cases) {
+    writeFileSync(join(dir, 'input.json'), JSON.stringify({ Status: 'CREATE_COMPLETE', ExecutionStatus: 'AVAILABLE',
+      Changes: [{ ResourceChange: change }] }));
+    const result = spawnSync(process.execPath, [review, join(dir, 'input.json'), join(dir, 'output.json')]);
+    assert.equal(result.status === 0, accepted, name);
+  }
+});
+
 test('approves additions and in-place modifications', () => {
   const directory = mkdtempSync(join(tmpdir(), 'bankai-release-'));
   const input = join(directory, 'change-set.json');
