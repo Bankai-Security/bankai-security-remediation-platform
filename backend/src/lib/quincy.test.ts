@@ -187,6 +187,22 @@ describe("runQuincyRemediationWorkflow", () => {
     });
   });
 
+  it("propagates the bounded request ID to Quincy headers and workflow context", async () => {
+    const requestId = "123e4567-e89b-42d3-a456-426614174000";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ workflow_id: "workflow-1", job_id: "job-1", status_url: "/workflows/workflow-1" }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ job_id: "job-1", status: "failed", attempts: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runQuincyRemediationWorkflow({ requestId, repo: "acme/app", ref: "main", ruleId: "CVE-test", ticketId: "ticket-1", projectId: "project-1", severity: "high", githubToken: "test", baseBranch: "main" });
+
+    const startInit = fetchMock.mock.calls[0]![1] as RequestInit;
+    const statusInit = fetchMock.mock.calls[1]![1] as RequestInit;
+    expect(startInit.headers).toMatchObject({ "x-request-id": requestId });
+    expect(statusInit.headers).toMatchObject({ "x-request-id": requestId });
+    expect(JSON.parse(String(startInit.body)).bankai_context.external_request_id).toBe(requestId);
+  });
+
   it("allows Quincy remediation polling to run longer than three minutes", () => {
     env.QUINCY_REMEDIATION_TIMEOUT_MS = 900_000;
 

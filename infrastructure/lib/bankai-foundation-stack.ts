@@ -297,6 +297,12 @@ export class BankaiFoundationStack extends cdk.Stack {
         computeType: releaseArchitecture === 'arm64' ? codebuild.ComputeType.LARGE : codebuild.ComputeType.MEDIUM,
         environmentVariables: {
           QUINCY_IMAGE_URI: { value: quincyImageUri },
+          DD_ENV: { value: stage },
+          DD_SERVICE: { value: 'quincy-codebuild' },
+          DD_VERSION: { value: quincyVersion },
+          GIT_SHA: { value: quincyVersion },
+          DEPLOYMENT_ID: { value: deploymentId },
+          JENKINS_BUILD: { value: jenkinsBuild },
           MODEL_PROVIDER: { value: 'openrouter' },
           OPENROUTER_API_KEY: {
             value: `${backendSecret.secretName}:OPENROUTER_API_KEY`,
@@ -318,7 +324,7 @@ export class BankaiFoundationStack extends cdk.Stack {
             'docker pull "$QUINCY_IMAGE_URI"',
           ] },
           build: { commands: [
-            'docker run --rm --user root -v /var/run/docker.sock:/var/run/docker.sock -v "$CODEBUILD_SRC_DIR:$CODEBUILD_SRC_DIR" -e TMPDIR="$CODEBUILD_SRC_DIR/tmp" -e MODEL_PROVIDER -e OPENROUTER_API_KEY -e GEMINI_API_KEY -e SANDBOX_BACKEND=docker -e JOB_EXECUTION_BACKEND=local "$QUINCY_IMAGE_URI" python -m quincy.api.codebuild_job_worker --input "$CODEBUILD_SRC_DIR/job/job.json" --result "$CODEBUILD_SRC_DIR/job/result.json"',
+            'docker run --rm --user root -v /var/run/docker.sock:/var/run/docker.sock -v "$CODEBUILD_SRC_DIR:$CODEBUILD_SRC_DIR" -e TMPDIR="$CODEBUILD_SRC_DIR/tmp" -e MODEL_PROVIDER -e OPENROUTER_API_KEY -e GEMINI_API_KEY -e DD_ENV -e DD_SERVICE -e DD_VERSION -e GIT_SHA -e DEPLOYMENT_ID -e JENKINS_BUILD -e SANDBOX_BACKEND=docker -e JOB_EXECUTION_BACKEND=local "$QUINCY_IMAGE_URI" python -m quincy.api.codebuild_job_worker --input "$CODEBUILD_SRC_DIR/job/job.json" --result "$CODEBUILD_SRC_DIR/job/result.json"',
           ] },
           post_build: { commands: [
             'if [ -f "$CODEBUILD_SRC_DIR/job/result.json" ]; then aws s3 cp "$CODEBUILD_SRC_DIR/job/result.json" "s3://$QUINCY_JOB_BUCKET/$QUINCY_JOB_PREFIX/result.json"; fi',

@@ -36,11 +36,11 @@ const worker = new Worker(REPO_SCAN_QUEUE_NAME, processRepoScanJob, {
 });
 
 worker.on("completed", (job) => {
-  logger.info({ event: "queue.job.completed", queue: REPO_SCAN_QUEUE_NAME, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "Repo scan job completed");
+  logger.info({ event: "queue.job.completed", queue: REPO_SCAN_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "Repo scan job completed");
 });
 
 worker.on("active", (job) => {
-  logger.info({ event: "queue.job.active", queue: REPO_SCAN_QUEUE_NAME, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "Repo scan job active");
+  logger.info({ event: "queue.job.active", queue: REPO_SCAN_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "Repo scan job active");
 });
 
 worker.on("stalled", (jobId) => {
@@ -48,7 +48,7 @@ worker.on("stalled", (jobId) => {
 });
 
 worker.on("failed", (job, err) => {
-  logger.error({ event: "queue.job.failed", queue: REPO_SCAN_QUEUE_NAME, jobId: job?.id, attempt: job?.attemptsMade, err }, "Repo scan job failed");
+  logger.error({ event: "queue.job.failed", queue: REPO_SCAN_QUEUE_NAME, request_id: job?.data.requestId, jobId: job?.id, attempt: job?.attemptsMade, err }, "Repo scan job failed");
 });
 
 logger.info(`Repo scan worker listening on queue "${REPO_SCAN_QUEUE_NAME}"`);
@@ -62,7 +62,7 @@ const fixPrWorker = new Worker(FIX_PR_QUEUE_NAME, processFixPrJob, {
 });
 
 fixPrWorker.on("active", (job) => {
-  logger.info({ event: "queue.job.active", queue: FIX_PR_QUEUE_NAME, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "Fix-PR job active");
+  logger.info({ event: "queue.job.active", queue: FIX_PR_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "Fix-PR job active");
 });
 
 fixPrWorker.on("stalled", (jobId) => {
@@ -70,11 +70,11 @@ fixPrWorker.on("stalled", (jobId) => {
 });
 
 fixPrWorker.on("completed", (job) => {
-  logger.info({ event: "queue.job.completed", queue: FIX_PR_QUEUE_NAME, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "Fix-PR job completed");
+  logger.info({ event: "queue.job.completed", queue: FIX_PR_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "Fix-PR job completed");
 });
 
 fixPrWorker.on("failed", (job, err) => {
-  logger.error({ event: "queue.job.failed", queue: FIX_PR_QUEUE_NAME, jobId: job?.id, attempt: job?.attemptsMade, err }, "Fix-PR job failed");
+  logger.error({ event: "queue.job.failed", queue: FIX_PR_QUEUE_NAME, request_id: job?.data.requestId, jobId: job?.id, attempt: job?.attemptsMade, err }, "Fix-PR job failed");
 });
 
 logger.info(`Fix-PR worker listening on queue "${FIX_PR_QUEUE_NAME}"`);
@@ -88,11 +88,11 @@ const pipelineWorker = new Worker(PIPELINE_QUEUE_NAME, processPipelineJob, {
 });
 
 pipelineWorker.on("completed", (job) => {
-  logger.info({ event: "queue.job.completed", queue: PIPELINE_QUEUE_NAME, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "CI pipeline job completed");
+  logger.info({ event: "queue.job.completed", queue: PIPELINE_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "CI pipeline job completed");
 });
 
 pipelineWorker.on("active", (job) => {
-  logger.info({ event: "queue.job.active", queue: PIPELINE_QUEUE_NAME, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "CI pipeline job active");
+  logger.info({ event: "queue.job.active", queue: PIPELINE_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "CI pipeline job active");
 });
 
 pipelineWorker.on("stalled", (jobId) => {
@@ -100,7 +100,7 @@ pipelineWorker.on("stalled", (jobId) => {
 });
 
 pipelineWorker.on("failed", (job, err) => {
-  logger.error({ event: "queue.job.failed", queue: PIPELINE_QUEUE_NAME, jobId: job?.id, attempt: job?.attemptsMade, err }, "CI pipeline job failed");
+  logger.error({ event: "queue.job.failed", queue: PIPELINE_QUEUE_NAME, request_id: job?.data.requestId, jobId: job?.id, attempt: job?.attemptsMade, err }, "CI pipeline job failed");
 });
 
 logger.info(`CI pipeline worker listening on queue "${PIPELINE_QUEUE_NAME}"`);
@@ -114,11 +114,11 @@ const fixRetryWorker = new Worker(FIX_RETRY_QUEUE_NAME, processFixRetryJob, {
 });
 
 fixRetryWorker.on("completed", (job) => {
-  logger.info({ event: "queue.job.completed", queue: FIX_RETRY_QUEUE_NAME, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "Fix-retry job completed");
+  logger.info({ event: "queue.job.completed", queue: FIX_RETRY_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, durationMs: job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined }, "Fix-retry job completed");
 });
 
 fixRetryWorker.on("active", (job) => {
-  logger.info({ event: "queue.job.active", queue: FIX_RETRY_QUEUE_NAME, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "Fix-retry job active");
+  logger.info({ event: "queue.job.active", queue: FIX_RETRY_QUEUE_NAME, request_id: job.data.requestId, jobId: job.id, attempt: job.attemptsMade, waitMs: job.processedOn ? job.processedOn - job.timestamp : undefined }, "Fix-retry job active");
 });
 
 fixRetryWorker.on("stalled", (jobId) => {
@@ -126,7 +126,7 @@ fixRetryWorker.on("stalled", (jobId) => {
 });
 
 fixRetryWorker.on("failed", (job, err) => {
-  logger.error({ event: "queue.job.failed", queue: FIX_RETRY_QUEUE_NAME, jobId: job?.id, attempt: job?.attemptsMade, err }, "Fix-retry job failed");
+  logger.error({ event: "queue.job.failed", queue: FIX_RETRY_QUEUE_NAME, request_id: job?.data.requestId, jobId: job?.id, attempt: job?.attemptsMade, err }, "Fix-retry job failed");
 });
 
 logger.info(`Fix-retry worker listening on queue "${FIX_RETRY_QUEUE_NAME}"`);

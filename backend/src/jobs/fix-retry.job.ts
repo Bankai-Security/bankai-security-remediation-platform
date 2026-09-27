@@ -259,7 +259,7 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
     }
 
     try {
-      await enqueuePipelineRetry({ ticketId, projectId });
+      await enqueuePipelineRetry({ ticketId, projectId, requestId: job.data.requestId });
     } catch (err) {
       logger.error({ err, ticketId, projectId }, "Could not re-enqueue the CI verification pipeline after a fix retry");
       await supabase

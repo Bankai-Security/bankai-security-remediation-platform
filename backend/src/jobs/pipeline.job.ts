@@ -136,7 +136,7 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
       if (regression) {
         await setPipelineError(ticketId, regression);
         if ((ticket.ci_fix_attempt ?? 1) < 3) {
-          await enqueueFixRetry({ ticketId, projectId, githubRunId: 0, failingStage: "build", securityFeedback: regression, securityCommitSha: headSha });
+          await enqueueFixRetry({ ticketId, projectId, requestId: job.data.requestId, githubRunId: 0, failingStage: "build", securityFeedback: regression, securityCommitSha: headSha });
         }
         return;
       }

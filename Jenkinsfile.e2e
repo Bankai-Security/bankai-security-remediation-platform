@@ -64,6 +64,10 @@ pipeline {
             export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
             export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
             export E2E_GITHUB_REPOSITORY="$(node -p "require('./infrastructure/config/nonprod.json').githubOrganization")/bankai-e2e-vulnerable"
+            task_definition=$(aws ecs describe-services --cluster bankai-nonprod --services bankai-nonprod-api --query 'services[0].taskDefinition' --output text)
+            export DEPLOYMENT_ID=$(aws ecs describe-task-definition --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[0].environment[?name=='DEPLOYMENT_ID'].value | [0]" --output text)
+            export GIT_SHA=$(aws ecs describe-task-definition --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[0].environment[?name=='GIT_SHA'].value | [0]" --output text)
+            export JENKINS_BUILD=$(aws ecs describe-task-definition --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[0].environment[?name=='JENKINS_BUILD'].value | [0]" --output text)
             node e2e/run.mjs --mode full
           '''
         }

@@ -375,9 +375,10 @@ export async function maybeEnqueueFixPrJob(
   ticketId: string,
   projectId: string,
   findingSource?: "csv" | "github_ai" | "jira_import" | null,
+  requestId?: string,
 ): Promise<boolean> {
   try {
-    const job = await enqueueFixPrResume({ ticketId, projectId });
+    const job = await enqueueFixPrResume({ ticketId, projectId, requestId });
     const { error: statusError } = await supabaseAdmin
       .from("tickets")
       .update({ status: "In Progress", github_pr_error: null })
@@ -444,6 +445,7 @@ export interface TicketingActor {
 }
 
 export interface CreateTicketForFindingInput {
+  requestId?: string | undefined;
   projectId: string;
   finding: FindingForTicket;
   jira: { creds: JiraCredentials; projectKey: string; targetSprintId: number | null } | null;
@@ -576,7 +578,7 @@ export async function createTicketForFinding(
   // Always enqueue. The worker loads GitHub creds with
   // the service role, so a user-scoped loadGithubCreds miss here must not
   // silently skip Quincy/Gemini remediation.
-  const enqueued = await maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source);
+  const enqueued = await maybeEnqueueFixPrJob(ticketRow.id, projectId, finding.source, input.requestId);
   const { data: updated } = await supabase.from("tickets").select(SELECT_TICKET).eq("id", ticketRow.id).single();
   if (updated) ticketRow = updated as TicketRow;
 

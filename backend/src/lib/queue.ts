@@ -9,6 +9,7 @@ import type { PipelineStageName } from "./pipeline-types.js";
 export const redisConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
 export interface RepoScanJobData {
+  requestId?: string | undefined;
   scanId: string;
   projectId: string;
   triggerType: "manual" | "webhook";
@@ -36,6 +37,7 @@ export async function enqueueRepoScan(data: RepoScanJobData, jobId: string): Pro
 }
 
 export interface FixPrJobData {
+  requestId?: string | undefined;
   ticketId: string;
   projectId: string;
   quincyJobId?: string;
@@ -110,6 +112,7 @@ export async function enqueueFixPrResume(data: FixPrJobData, delay = 0): Promise
 }
 
 export interface PipelineJobData {
+  requestId?: string | undefined;
   ticketId: string;
   projectId: string;
 }
@@ -148,6 +151,7 @@ export async function enqueuePipelineRetry(data: PipelineJobData): Promise<{ id?
 }
 
 export interface FixRetryJobData {
+  requestId?: string | undefined;
   ticketId: string;
   projectId: string;
   githubRunId: number;

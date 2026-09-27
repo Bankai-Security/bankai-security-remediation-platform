@@ -310,6 +310,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
         logger.warn({ err, ticketId }, "Could not cache initial remediation progress");
       });
       const quincyResult = await runQuincyRemediationWorkflow({
+        requestId: job.data.requestId,
         jobId: await loadQuincyCheckpoint(job.data),
         onStarted: async (jobId) => {
           await saveQuincyCheckpoint(job.data, jobId);
@@ -406,7 +407,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
             }
           }
           try {
-            await enqueuePipelineVerification({ ticketId, projectId });
+            await enqueuePipelineVerification({ ticketId, projectId, requestId: job.data.requestId });
           } catch (err) {
             logger.error({ err, ticketId, projectId }, "Could not enqueue CI verification for Quincy-created PR");
             await supabase.from("tickets").update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." }).eq("id", ticketId);
@@ -572,7 +573,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     await maybeTransitionJira(jira, ticket.jira_issue_key, "In Review");
 
     try {
-      await enqueuePipelineVerification({ ticketId, projectId });
+      await enqueuePipelineVerification({ ticketId, projectId, requestId: job.data.requestId });
     } catch (err) {
       logger.error({ err, ticketId, projectId }, "Could not enqueue the CI verification pipeline");
       await supabase.from("tickets").update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." }).eq("id", ticketId);

@@ -135,6 +135,18 @@ describe('BankaiFoundationStack', () => {
     }
   });
 
+  it('passes bounded release metadata into Quincy CodeBuild jobs', () => {
+    const projects = Object.values(nonprod.findResources('AWS::CodeBuild::Project'));
+    const project = projects.find(item => item.Properties.Name === 'bankai-nonprod-quincy-remediation');
+    expect(project).toBeDefined();
+    if (!project) throw new Error('Quincy remediation CodeBuild project was not synthesized');
+    const variables = project.Properties.Environment.EnvironmentVariables;
+    for (const name of ['DD_ENV', 'DD_SERVICE', 'DD_VERSION', 'GIT_SHA', 'DEPLOYMENT_ID', 'JENKINS_BUILD']) {
+      expect(variables.some((entry: { Name: string }) => entry.Name === name)).toBe(true);
+    }
+    expect(JSON.stringify(project.Properties.Source.BuildSpec)).toContain('-e DD_ENV -e DD_SERVICE -e DD_VERSION -e GIT_SHA -e DEPLOYMENT_ID -e JENKINS_BUILD');
+  });
+
   it('uses encrypted production ElastiCache and retains persistent resources', () => {
     production.resourceCountIs('AWS::ElastiCache::ReplicationGroup', 1);
     production.hasResourceProperties('AWS::ElastiCache::ReplicationGroup', {

@@ -93,7 +93,7 @@ function githubRepoUrl(repo: string): string {
   return `https://github.com/${repo}`;
 }
 
-async function quincyPost(path: string, body: unknown, timeoutMs: number): Promise<Response> {
+async function quincyPost(path: string, body: unknown, timeoutMs: number, requestId?: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -101,6 +101,7 @@ async function quincyPost(path: string, body: unknown, timeoutMs: number): Promi
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...(requestId ? { "x-request-id": requestId } : {}),
         ...(env.QUINCY_API_TOKEN ? { authorization: `Bearer ${env.QUINCY_API_TOKEN}` } : {}),
       },
       body: JSON.stringify(body),
@@ -111,7 +112,7 @@ async function quincyPost(path: string, body: unknown, timeoutMs: number): Promi
   }
 }
 
-async function quincyGet(path: string, timeoutMs: number): Promise<Response> {
+async function quincyGet(path: string, timeoutMs: number, requestId?: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -119,6 +120,7 @@ async function quincyGet(path: string, timeoutMs: number): Promise<Response> {
       method: "GET",
       headers: {
         accept: "application/json",
+        ...(requestId ? { "x-request-id": requestId } : {}),
         ...(env.QUINCY_API_TOKEN ? { authorization: `Bearer ${env.QUINCY_API_TOKEN}` } : {}),
       },
       signal: controller.signal,
@@ -288,6 +290,7 @@ export function parseGithubPrNumber(url: string | null, expectedRepo?: string): 
 }
 
 export async function runQuincyRemediationWorkflow(input: {
+  requestId?: string | undefined;
   repo: string;
   ref: string;
   ruleId: string;
@@ -351,7 +354,7 @@ export async function runQuincyRemediationWorkflow(input: {
       ignore_test_command_failures: false,
     },
     bankai_context: {
-      external_request_id: input.ticketId,
+      external_request_id: input.requestId,
       tenant_id: input.projectId,
       requested_by: "bankai-worker",
       source: "api",
@@ -389,7 +392,7 @@ export async function runQuincyRemediationWorkflow(input: {
     "POSTing Quincy remediation workflow",
   );
   if (!jobId) try {
-    const started = await quincyPost("/workflows/remediations", body, quincyRemediationPollTimeoutMs());
+    const started = await quincyPost("/workflows/remediations", body, quincyRemediationPollTimeoutMs(), input.requestId);
     if (started.status === 404 || started.status === 405 || started.status === 422) {
       const detail = await started.text().catch(() => "");
       logger.warn({ status: started.status, detail: detail.slice(0, 500), ruleId: input.ruleId }, "Quincy workflow endpoint cannot execute this remediation");
@@ -415,7 +418,7 @@ export async function runQuincyRemediationWorkflow(input: {
   while (Date.now() < deadline) {
     let statusResponse: Response;
     try {
-      statusResponse = await quincyGet(`/remediations/${encodeURIComponent(jobId)}/bankai`, 15_000);
+      statusResponse = await quincyGet(`/remediations/${encodeURIComponent(jobId)}/bankai`, 15_000, input.requestId);
     } catch (err) {
       return pending(err instanceof Error ? err.message : "Quincy status temporarily unavailable");
     }

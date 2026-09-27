@@ -6,6 +6,10 @@ const mode = modeIndex >= 0 ? process.argv[modeIndex + 1] : 'smoke';
 if (!['smoke', 'full'].includes(mode)) throw new Error('--mode must be smoke or full');
 
 const runId = process.env.E2E_RUN_ID ?? `bankai-e2e-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const requestId = process.env.E2E_REQUEST_ID ?? randomUUID();
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+  throw new Error('E2E_REQUEST_ID must be a UUID');
+}
 const api = required('E2E_API_URL').replace(/\/$/, '');
 const frontend = required('E2E_FRONTEND_URL').replace(/\/$/, '');
 const quincy = required('E2E_QUINCY_URL').replace(/\/$/, '');
@@ -62,6 +66,7 @@ class SessionClient {
     const headers = new Headers(options.headers);
     headers.set('origin', frontend);
     headers.set('x-bankai-e2e-run-id', runId);
+    headers.set('x-request-id', requestId);
     if (this.cookies.size) headers.set('cookie', [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; '));
     const response = await fetch(`${api}${path}`, { ...options, headers, signal: AbortSignal.timeout(30_000) });
     for (const cookie of response.headers.getSetCookie()) {
@@ -163,8 +168,19 @@ async function fullWorkflow() {
     const site = process.env.DATADOG_SITE ?? 'datadoghq.com';
     await new Promise((resolve) => setTimeout(resolve, 30_000));
     const search = async (query) => fetch(`https://api.${site}/api/v2/logs/events/search`, { method: 'POST', headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey, 'content-type': 'application/json' }, body: JSON.stringify({ filter: { from: 'now-30m', to: 'now', query }, page: { limit: 10 } }), signal: AbortSignal.timeout(30_000) }).then(async (response) => json(response, [200]));
-    const correlated = await search(`env:nonprod ${runId}`);
-    assert(correlated.data?.length > 0, 'Datadog has no correlated E2E telemetry');
+    const expectedMetadata = {
+      'deployment.id': required('DEPLOYMENT_ID'),
+      'git.sha': required('GIT_SHA'),
+      'jenkins.build': required('JENKINS_BUILD'),
+    };
+    for (const service of ['bankai-api', 'bankai-worker', 'quincy']) {
+      const correlated = await search(`@service:${service} @env:nonprod @request_id:${requestId}`);
+      assert(correlated.data?.length > 0, `Datadog has no ${service} telemetry for request ${requestId}`);
+      const attributes = correlated.data[0]?.attributes?.attributes ?? {};
+      for (const [name, value] of Object.entries(expectedMetadata)) {
+        assert(String(attributes[name]) === value, `${service} log ${name} did not match release metadata`);
+      }
+    }
     const leaked = await search(`"bankai-e2e-intentionally-invalid"`);
     assert((leaked.data?.length ?? 0) === 0, 'the secret-redaction sentinel appeared in Datadog logs');
   });
@@ -194,7 +210,7 @@ async function writeReport() {
   const failures = results.filter((result) => result.error).length;
   const cases = results.map((result) => `<testcase classname="bankai.${mode}" name="${escapeXml(result.name)}" time="${result.seconds.toFixed(3)}">${result.error ? `<failure>${escapeXml(result.error)}</failure>` : ''}</testcase>`).join('');
   await writeFile('reports/e2e/junit.xml', `<?xml version="1.0" encoding="UTF-8"?><testsuite name="bankai-${mode}-e2e" tests="${results.length}" failures="${failures}">${cases}</testsuite>\n`);
-  await writeFile('reports/e2e/result.json', `${JSON.stringify({ runId, mode, results }, null, 2)}\n`, { mode: 0o600 });
+  await writeFile('reports/e2e/result.json', `${JSON.stringify({ runId, requestId, mode, release: { deploymentId: process.env.DEPLOYMENT_ID ?? null, gitSha: process.env.GIT_SHA ?? null, jenkinsBuild: process.env.JENKINS_BUILD ?? null }, results }, null, 2)}\n`, { mode: 0o600 });
 }
 function escapeXml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 

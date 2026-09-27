@@ -215,7 +215,7 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
         }
         if (ticket.github_pr_number != null && ticket.github_pr_state === "open") {
           try {
-            await enqueuePipelineRetry({ ticketId: ticket.id, projectId: project.id });
+            await enqueuePipelineRetry({ ticketId: ticket.id, projectId: project.id, requestId: String(req.id) });
             await supabase.from("tickets").update({ status: "In Review", ci_status: "queued", ci_error: null }).eq("id", ticket.id);
             queued.push(finding.id);
           } catch (err) {
@@ -231,7 +231,7 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
           continue;
         }
         logger.info({ projectId: project.id, findingId: finding.id, ticketId: ticket.id }, "createTickets calling maybeEnqueueFixPrJob for existing ticket");
-        const enqueued = await maybeEnqueueFixPrJob(ticket.id, project.id, finding.source);
+        const enqueued = await maybeEnqueueFixPrJob(ticket.id, project.id, finding.source, String(req.id));
         (enqueued ? queued : failed).push(finding.id);
         logger.info({ projectId: project.id, findingId: finding.id, ticketId: ticket.id, enqueued }, "createTickets existing-ticket enqueue result");
       }
@@ -239,6 +239,7 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
     }
 
     const { ticket, remediationQueued } = await createTicketForFinding(supabase, {
+      requestId: String(req.id),
       projectId: project.id,
       finding: finding as FindingForTicket,
       jira,
@@ -650,13 +651,13 @@ export async function retryTicketPipeline(req: Request, res: Response): Promise<
     throw new HttpError(404, "Ticket not found");
   }
   if (data.github_branch_name && data.github_pr_number != null) {
-    const job = await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id });
+    const job = await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id, requestId: String(req.id) });
     logger.info(
       { ticketId: data.id, projectId: req.project!.id, jobId: job.id ?? null },
       "Enqueued manual CI pipeline retry",
     );
   } else {
-    const job = await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id });
+    const job = await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id, requestId: String(req.id) });
     logger.info(
       { ticketId: data.id, projectId: req.project!.id, jobId: job.id ?? null },
       "Enqueued remediation resume from manual CI retry",
@@ -706,7 +707,7 @@ export async function retryTicketFix(req: Request, res: Response): Promise<void>
     throw new HttpError(500, "Could not retry this ticket's fix generation.");
   }
 
-  await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id });
+  await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id, requestId: String(req.id) });
 
   res.status(202).json({ queued: true });
 }
