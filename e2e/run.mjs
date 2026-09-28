@@ -91,8 +91,9 @@ async function smoke() {
   await check('Quincy health and token rejection', async () => {
     const health = await json(await fetch(`${quincy}/health`, { signal: AbortSignal.timeout(20_000) }), [200]);
     assert(health.status === 'ok' || health.status === 'healthy', 'Quincy health response is not healthy');
-    const rejected = await fetch(`${quincy}/triage/scan`, { method: 'POST', headers: { authorization: 'Bearer bankai-e2e-intentionally-invalid', 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(20_000) });
+    const rejected = await fetch(`${quincy}/triage/scan`, { method: 'POST', headers: { authorization: 'Bearer bankai-e2e-intentionally-invalid', 'content-type': 'application/json', 'x-request-id': requestId }, body: '{}', signal: AbortSignal.timeout(20_000) });
     assert([401, 403].includes(rejected.status), `Quincy accepted an invalid service token (${rejected.status})`);
+    assert(rejected.headers.get('x-request-id') === requestId, 'Quincy did not return the request correlation ID');
   });
   await check('CloudFront serves the frontend configured for Bankai', async () => {
     const response = await fetch(`${frontend}/`, { signal: AbortSignal.timeout(30_000) });
@@ -170,16 +171,22 @@ async function fullWorkflow() {
     const search = async (query) => fetch(`https://api.${site}/api/v2/logs/events/search`, { method: 'POST', headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey, 'content-type': 'application/json' }, body: JSON.stringify({ filter: { from: 'now-30m', to: 'now', query }, page: { limit: 10 } }), signal: AbortSignal.timeout(30_000) }).then(async (response) => json(response, [200]));
     const expectedMetadata = {
       'deployment.id': required('DEPLOYMENT_ID'),
-      'git.sha': required('GIT_SHA'),
       'jenkins.build': required('JENKINS_BUILD'),
     };
-    for (const service of ['bankai-api', 'bankai-worker', 'quincy']) {
+    const gitShaByService = {
+      'bankai-api': required('GIT_SHA'),
+      'bankai-worker': required('GIT_SHA'),
+      quincy: required('QUINCY_GIT_SHA'),
+      'quincy-codebuild': required('QUINCY_GIT_SHA'),
+    };
+    for (const service of Object.keys(gitShaByService)) {
       const correlated = await search(`@service:${service} @env:nonprod @request_id:${requestId}`);
       assert(correlated.data?.length > 0, `Datadog has no ${service} telemetry for request ${requestId}`);
       const attributes = correlated.data[0]?.attributes?.attributes ?? {};
       for (const [name, value] of Object.entries(expectedMetadata)) {
         assert(String(attributes[name]) === value, `${service} log ${name} did not match release metadata`);
       }
+      assert(String(attributes['git.sha']) === gitShaByService[service], `${service} log git.sha did not match its deployed revision`);
     }
     const leaked = await search(`"bankai-e2e-intentionally-invalid"`);
     assert((leaked.data?.length ?? 0) === 0, 'the secret-redaction sentinel appeared in Datadog logs');
@@ -210,7 +217,7 @@ async function writeReport() {
   const failures = results.filter((result) => result.error).length;
   const cases = results.map((result) => `<testcase classname="bankai.${mode}" name="${escapeXml(result.name)}" time="${result.seconds.toFixed(3)}">${result.error ? `<failure>${escapeXml(result.error)}</failure>` : ''}</testcase>`).join('');
   await writeFile('reports/e2e/junit.xml', `<?xml version="1.0" encoding="UTF-8"?><testsuite name="bankai-${mode}-e2e" tests="${results.length}" failures="${failures}">${cases}</testsuite>\n`);
-  await writeFile('reports/e2e/result.json', `${JSON.stringify({ runId, requestId, mode, release: { deploymentId: process.env.DEPLOYMENT_ID ?? null, gitSha: process.env.GIT_SHA ?? null, jenkinsBuild: process.env.JENKINS_BUILD ?? null }, results }, null, 2)}\n`, { mode: 0o600 });
+  await writeFile('reports/e2e/result.json', `${JSON.stringify({ runId, requestId, mode, release: { deploymentId: process.env.DEPLOYMENT_ID ?? null, gitSha: process.env.GIT_SHA ?? null, quincyGitSha: process.env.QUINCY_GIT_SHA ?? null, jenkinsBuild: process.env.JENKINS_BUILD ?? null }, results }, null, 2)}\n`, { mode: 0o600 });
 }
 function escapeXml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 

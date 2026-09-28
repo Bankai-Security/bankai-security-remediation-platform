@@ -396,6 +396,7 @@ export class BankaiFoundationStack extends cdk.Stack {
         GIT_SHA: quincyVersion,
         DEPLOYMENT_ID: deploymentId,
         JENKINS_BUILD: jenkinsBuild,
+        LOG_FORMAT: 'json',
         MODEL_PROVIDER: 'openrouter',
         JOB_EXECUTION_BACKEND: 'codebuild',
         SANDBOX_BACKEND: 'docker',

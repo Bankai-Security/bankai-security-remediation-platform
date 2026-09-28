@@ -14,7 +14,10 @@ test('smoke runner verifies Redis, Quincy rejection, CloudFront, and cleanup', a
       return send(response, 200, { status: 'ok', redis: 'PONG', quincyConfigured: true, queues: { repoScan: {}, fixPr: {}, pipeline: {} } });
     }
     if (request.url === '/health') return send(response, 200, { status: 'ok' });
-    if (request.url === '/triage/scan') return send(response, 401, { detail: 'invalid token' });
+    if (request.url === '/triage/scan') {
+      response.setHeader('x-request-id', request.headers['x-request-id']);
+      return send(response, 401, { detail: 'invalid token' });
+    }
     if (request.url === '/assets/app.js') { response.writeHead(200, { 'content-type': 'application/javascript' }); return response.end('const api="127.0.0.1";'); }
     response.writeHead(200, { 'content-type': 'text/html' }); response.end('<div id="root"></div><script src="/assets/app.js"></script>');
   });

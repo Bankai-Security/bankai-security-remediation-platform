@@ -132,6 +132,9 @@ describe('BankaiFoundationStack', () => {
       for (const name of ['DD_ENV', 'DD_VERSION', 'GIT_SHA', 'DEPLOYMENT_ID', 'JENKINS_BUILD']) {
         expect(container.Environment.some((entry: { Name: string }) => entry.Name === name)).toBe(true);
       }
+      if (service === 'quincy') {
+        expect(container.Environment).toContainEqual({ Name: 'LOG_FORMAT', Value: 'json' });
+      }
     }
   });
 
