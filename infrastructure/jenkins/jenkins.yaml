@@ -235,3 +235,23 @@ jobs:
         triggers { cron('H H * * *') }
         properties { disableConcurrentBuilds() }
       }
+  - script: >
+      pipelineJob('bankai-nonprod-observability') {
+        description('Idempotent, ordered Datadog configuration for nonproduction: metrics must be verified before dashboards.')
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url("https://github.com/${GITHUB_ORGANIZATION}/${BANKAI_REPOSITORY}.git")
+                  credentials('jenkins-github-app')
+                }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile.observability')
+            lightweight(true)
+          }
+        }
+        properties { disableConcurrentBuilds() }
+      }

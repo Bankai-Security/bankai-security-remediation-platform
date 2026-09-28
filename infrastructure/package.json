@@ -11,6 +11,7 @@
     "validate:jenkins": "node scripts/validate-jenkins-config.mjs",
     "validate:release": "node ../scripts/ci/validate-release-jenkinsfile.mjs && node --test ../scripts/release/release-policy.test.mjs",
     "validate:e2e": "node ../scripts/ci/validate-e2e-jenkinsfile.mjs && node --test ../e2e/run.test.mjs",
+    "validate:observability": "node ../scripts/ci/validate-observability-config.mjs",
     "synth:nonprod": "cdk synth -c stage=nonprod --quiet",
     "synth:production": "cdk synth -c stage=production --quiet",
     "cdk": "cdk"

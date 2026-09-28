@@ -1,0 +1,30 @@
+pipeline {
+  agent { label 'linux' }
+  options { disableConcurrentBuilds(); timestamps(); timeout(time: 20, unit: 'MINUTES') }
+  parameters {
+    choice(name: 'OBSERVABILITY_ACTION', choices: ['metrics', 'dashboards', 'dry-run'], description: 'Apply one reviewed Datadog gate at a time: metrics must be verified before dashboards.')
+  }
+  environment { DATADOG_SITE = 'datadoghq.com' }
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+    stage('Apply Datadog configuration') {
+      steps {
+        withCredentials([
+          string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY'),
+          string(credentialsId: 'jenkins-datadog-app-key', variable: 'DD_APP_KEY')
+        ]) {
+          sh '''
+            set -eu
+            case "$OBSERVABILITY_ACTION" in
+              metrics) node scripts/observability/configure-datadog.mjs --metrics ;;
+              dashboards) node scripts/observability/configure-datadog.mjs --dashboards ;;
+              dry-run) node scripts/observability/configure-datadog.mjs --all --dry-run ;;
+              *) echo "unsupported action: $OBSERVABILITY_ACTION" >&2; exit 2 ;;
+            esac
+          '''
+        }
+      }
+    }
+  }
+  post { always { archiveArtifacts artifacts: 'reports/observability/**', allowEmptyArchive: true } }
+}

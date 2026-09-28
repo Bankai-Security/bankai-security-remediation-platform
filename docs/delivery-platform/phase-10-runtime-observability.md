@@ -8,6 +8,8 @@ Create facets only for `service`, `env`, `version`, `git.sha`, `deployment.id`, 
 
 Create these log-based metrics after the facets exist. Every metric may group only by `service`, `env`, and `queue`.
 
+The reviewed definitions are executable with `node scripts/observability/configure-datadog.mjs --metrics` and `--dashboards`. Jenkins runs the same idempotent configuration through `Jenkinsfile.observability` with its scoped Datadog credentials. Use `--all --dry-run` to validate and archive the rendered definitions without changing Datadog.
+
 | Metric | Filter | Computation |
 | --- | --- | --- |
 | `bankai.queue.depth` | `@event:queue.depth` | gauge from `@waiting` |
@@ -18,10 +20,10 @@ Create these log-based metrics after the facets exist. Every metric may group on
 | `bankai.queue.stalled` | `@event:queue.job.stalled` | count |
 | `bankai.queue.retries` | `@event:queue.job.active @attempt:>0` | count |
 | `bankai.queue.completion_duration_ms` | `@event:queue.job.completed` | distribution from `@durationMs` |
-| `bankai.api.requests` | `@service:bankai-api "request completed"` | count |
-| `bankai.api.errors_4xx` | `@service:bankai-api @res.statusCode:[400 TO 499]` | count |
-| `bankai.api.errors_5xx` | `@service:bankai-api @res.statusCode:[500 TO 599]` | count |
-| `bankai.api.request_latency_ms` | `@service:bankai-api "request completed"` | distribution from `@responseTime` |
+| `bankai.api.requests` | `service:bankai-api "request completed"` | count |
+| `bankai.api.errors_4xx` | `service:bankai-api @res.statusCode:[400 TO 499]` | count |
+| `bankai.api.errors_5xx` | `service:bankai-api @res.statusCode:[500 TO 599]` | count |
+| `bankai.api.request_latency_ms` | `service:bankai-api "request completed"` | distribution from `@responseTime` |
 
 ## Dashboard definitions
 

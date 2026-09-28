@@ -15,7 +15,8 @@ for (const line of plugins) {
 for (const text of ['numExecutors: 0', "scanCredentialsId('jenkins-github-app')",
   'enableCiVisibility: true', "multibranchPipelineJob('bankai')", "multibranchPipelineJob('quincy')",
   "pipelineJob('bankai-nonprod-release')", "upstream('bankai/main', 'SUCCESS')", "scriptPath('Jenkinsfile.release')",
-  "pipelineJob('bankai-nonprod-e2e')", "scriptPath('Jenkinsfile.e2e')"]) {
+  "pipelineJob('bankai-nonprod-e2e')", "scriptPath('Jenkinsfile.e2e')",
+  "pipelineJob('bankai-nonprod-observability')", "scriptPath('Jenkinsfile.observability')"]) {
   if (!casc.includes(text)) throw new Error(`missing JCasC control: ${text}`);
 }
 for (const text of ['labelString: "linux pr-validation"', 'labelString: "pr-container"', 'labelString: "trusted-docker"',
@@ -24,4 +25,4 @@ for (const text of ['labelString: "linux pr-validation"', 'labelString: "pr-cont
   if (!casc.includes(text)) throw new Error(`missing agent isolation control: ${text}`);
 }
 if (/(AKIA[0-9A-Z]{16}|ghp_|ddapi[_-]?key\s*:\s*[^$])/i.test(casc)) throw new Error('possible plaintext credential in JCasC');
-console.log(`Jenkins configuration valid: ${plugins.length} pinned plugins, 2 multibranch jobs, release and E2E jobs, no plaintext secret patterns.`);
+console.log(`Jenkins configuration valid: ${plugins.length} pinned plugins, 2 multibranch jobs, release, E2E, and observability jobs, no plaintext secret patterns.`);
