@@ -1,6 +1,6 @@
-# Observability validation — 2026-09-27 IST
+# Observability validation — updated 2026-09-29 IST
 
-Phase 10 status: **PARTIAL**. AWS metrics and API/worker application logs are live. Quincy logs are forwarded but remain unstructured, so the end-to-end correlation gate is not complete.
+Phase 10 status: **PARTIAL**. AWS metrics, application logs, bounded facets, 12 log-based metrics, and five dashboards are live. Quincy logs remain unstructured, so monitor, SLO, correlation, recovery, and cost gates are not complete.
 
 ## Live evidence
 
@@ -31,17 +31,21 @@ Quincy logs arrive from the correct group but are plain Uvicorn access lines, fo
 ## Datadog configuration state
 
 - Standard `service`, `env`, and `version` fields are parsed. The AWS resource tags still use `service:delivery-platform` and `environment:nonprod`, so searches must use parsed attributes (`@service`, `@env`) until a pipeline remapper is added.
-- No log-based metrics, dashboards, monitors, or SLOs are claimed as active.
+- Bounded facets are active for `service`, `env`, `version`, `git.sha`, `deployment.id`, `jenkins.build`, `queue`, `event`, and `status_code`. No job, repository, project, user, ticket, prompt, source-file, or URL facet was created.
+- Jenkins observability build 5 created the 12 reviewed `bankai.queue.*` and `bankai.api.*` log-based metrics and finished successfully on 2026-09-29.
+- Jenkins observability build 7, using commit `265eee703fff409480cd2fcc1189b0eaee58d8bf`, created the five reviewed dashboards and finished successfully on 2026-09-29. Every dashboard has `env` and `service` template variables.
+- No monitors or SLOs are active. Owner, runbook, notification route, representative baselines, and owner-approved SLO targets remain required.
 - The exact bounded facet, metric, dashboard, monitor, and SLO definitions are in `phase-10-runtime-observability.md`.
 
 ## Remaining live gates
 
 1. Release structured Quincy logging with request ID and all six release fields.
 2. Deploy the repository changes and run `Jenkinsfile.e2e` in `full` mode.
-3. Create bounded facets and log metrics, then the five dashboards.
+3. Observe representative nonproduction traffic and record baselines for every threshold-based monitor.
 4. Obtain owner, runbook, and notification-route values before monitor creation and explicit owner approval before SLO activation.
 5. Trigger and recover each critical nonproduction monitor.
-6. Review ingestion, metric cardinality, trace sampling, retention, and estimated monthly cost after one representative day.
+6. Activate SLOs only after their exact targets and owners are approved.
+7. Review ingestion, metric cardinality, trace sampling, retention, and estimated monthly cost after one representative day.
 
 ## Rollback
 
