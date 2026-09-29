@@ -69,7 +69,22 @@ const logWidget = (title, query) => ({
   definition: { type: 'log_stream', title, query, columns: ['timestamp', 'service', 'message'], message_display: 'expanded-md', show_date_column: true, show_message_column: true },
 });
 const note = (content) => ({ definition: { type: 'note', content, background_color: 'gray', font_size: '14', text_align: 'left', vertical_align: 'top', show_tick: false } });
-const dashboard = (title, widgets) => ({ title, description: 'Bankai nonproduction runtime observability. Managed from scripts/observability/configure-datadog.mjs.', layout_type: 'ordered', reflow_type: 'fixed', template_variables: variables, widgets });
+const dashboard = (title, widgets) => ({
+  title,
+  description: 'Bankai nonproduction runtime observability. Managed from scripts/observability/configure-datadog.mjs.',
+  layout_type: 'ordered',
+  reflow_type: 'fixed',
+  template_variables: variables,
+  widgets: widgets.map((widget, index) => ({
+    ...widget,
+    layout: {
+      x: (index % 3) * 4,
+      y: Math.floor(index / 3) * 3,
+      width: 4,
+      height: 3,
+    },
+  })),
+});
 
 const dashboards = [
   dashboard('Bankai nonprod — Platform health', [

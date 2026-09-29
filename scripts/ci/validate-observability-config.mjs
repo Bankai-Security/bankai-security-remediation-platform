@@ -53,6 +53,17 @@ if (JSON.stringify(plan.dashboards.map((item) => item.title)) !== JSON.stringify
 for (const dashboard of plan.dashboards) {
   const variables = dashboard.template_variables.map((item) => item.name).sort();
   if (JSON.stringify(variables) !== JSON.stringify(['env', 'service'])) throw new Error(`invalid template variables on ${dashboard.title}`);
+  for (const [index, widget] of dashboard.widgets.entries()) {
+    const expectedLayout = {
+      x: (index % 3) * 4,
+      y: Math.floor(index / 3) * 3,
+      width: 4,
+      height: 3,
+    };
+    if (JSON.stringify(widget.layout) !== JSON.stringify(expectedLayout)) {
+      throw new Error(`invalid widget layout on ${dashboard.title} at position ${index}`);
+    }
+  }
 }
 
 rmSync(new URL('reports/observability', root), { recursive: true, force: true });
