@@ -5,14 +5,15 @@ const apiKey = process.env.DD_API_KEY?.trim();
 const appKey = process.env.DD_APP_KEY?.trim();
 const dryRun = process.argv.includes('--dry-run');
 const collectBaseline = process.argv.includes('--baseline');
+const validateMonitorsOnly = process.argv.includes('--monitor-validate');
 const applyMetrics = process.argv.includes('--metrics') || process.argv.includes('--all');
 const applyDashboards = process.argv.includes('--dashboards') || process.argv.includes('--all');
 const applyMonitors = process.argv.includes('--monitors') || process.argv.includes('--all');
 
-if (!applyMetrics && !applyDashboards && !applyMonitors && !collectBaseline) {
-  throw new Error('choose --metrics, --dashboards, --monitors, --baseline, or --all');
+if (!applyMetrics && !applyDashboards && !applyMonitors && !validateMonitorsOnly && !collectBaseline) {
+  throw new Error('choose --metrics, --dashboards, --monitor-validate, --monitors, --baseline, or --all');
 }
-if (!dryRun && [applyMetrics, applyDashboards, applyMonitors, collectBaseline].filter(Boolean).length > 1) {
+if (!dryRun && [applyMetrics, applyDashboards, applyMonitors, validateMonitorsOnly, collectBaseline].filter(Boolean).length > 1) {
   throw new Error('live combined apply is disabled: run one reviewed observability gate at a time');
 }
 if (!dryRun && (!apiKey || !appKey)) {
@@ -290,10 +291,7 @@ async function reconcileDashboards() {
 }
 
 async function reconcileMonitors() {
-  for (const definition of monitors) {
-    await request('/api/v1/monitor/validate', { method: 'POST', body: definition });
-    console.log(`validated monitor ${definition.name}`);
-  }
+  await validateMonitorDefinitions();
   const current = await request('/api/v1/monitor?with_downtimes=false');
   const byName = new Map((current ?? []).map((item) => [item.name, item.id]));
   for (const definition of monitors) {
@@ -305,6 +303,13 @@ async function reconcileMonitors() {
       await request('/api/v1/monitor', { method: 'POST', body: definition });
       console.log(`created monitor ${definition.name}`);
     }
+  }
+}
+
+async function validateMonitorDefinitions() {
+  for (const definition of monitors) {
+    await request('/api/v1/monitor/validate', { method: 'POST', body: definition });
+    console.log(`validated monitor ${definition.name}`);
   }
 }
 
@@ -345,12 +350,13 @@ if (dryRun) {
   const output = {
     logMetrics: applyMetrics ? logMetrics : [],
     dashboards: applyDashboards ? dashboards : [],
-    monitors: applyMonitors ? monitors : [],
+    monitors: applyMonitors || validateMonitorsOnly ? monitors : [],
   };
   await writeFile('reports/observability/datadog-plan.json', `${JSON.stringify(output, null, 2)}\n`);
   console.log(`validated ${output.logMetrics.length} log metrics and ${output.dashboards.length} dashboards`);
 } else {
   if (collectBaseline) await collectBaselines();
+  if (validateMonitorsOnly) await validateMonitorDefinitions();
   if (applyMetrics) await reconcileMetrics();
   if (applyDashboards) await reconcileDashboards();
   if (applyMonitors) await reconcileMonitors();

@@ -5,11 +5,12 @@ const root = new URL('../../', import.meta.url);
 const pipeline = readFileSync(new URL('Jenkinsfile.observability', root), 'utf8');
 for (const required of [
   "label 'linux'",
-  "choices: ['baseline', 'metrics', 'dashboards', 'monitors', 'dry-run']",
+  "choices: ['baseline', 'metrics', 'dashboards', 'monitor-validate', 'monitors', 'dry-run']",
   'jenkins-datadog-api-key',
   'jenkins-datadog-app-key',
   'configure-datadog.mjs --metrics',
   'configure-datadog.mjs --dashboards',
+  'configure-datadog.mjs --monitor-validate',
   'configure-datadog.mjs --monitors',
   'configure-datadog.mjs --baseline',
   'configure-datadog.mjs --all --dry-run',

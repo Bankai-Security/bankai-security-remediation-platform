@@ -2,7 +2,7 @@ pipeline {
   agent { label 'linux' }
   options { disableConcurrentBuilds(); timestamps(); timeout(time: 20, unit: 'MINUTES') }
   parameters {
-    choice(name: 'OBSERVABILITY_ACTION', choices: ['baseline', 'metrics', 'dashboards', 'monitors', 'dry-run'], description: 'Collect a read-only baseline or apply one reviewed Datadog gate at a time.')
+    choice(name: 'OBSERVABILITY_ACTION', choices: ['baseline', 'metrics', 'dashboards', 'monitor-validate', 'monitors', 'dry-run'], description: 'Collect a read-only baseline, validate monitors, or apply one reviewed Datadog gate at a time.')
   }
   environment { DATADOG_SITE = 'datadoghq.com' }
   stages {
@@ -19,6 +19,7 @@ pipeline {
               baseline) node scripts/observability/configure-datadog.mjs --baseline ;;
               metrics) node scripts/observability/configure-datadog.mjs --metrics ;;
               dashboards) node scripts/observability/configure-datadog.mjs --dashboards ;;
+              monitor-validate) node scripts/observability/configure-datadog.mjs --monitor-validate ;;
               monitors) node scripts/observability/configure-datadog.mjs --monitors ;;
               dry-run) node scripts/observability/configure-datadog.mjs --all --dry-run ;;
               *) echo "unsupported action: $OBSERVABILITY_ACTION" >&2; exit 2 ;;
