@@ -290,6 +290,10 @@ async function reconcileDashboards() {
 }
 
 async function reconcileMonitors() {
+  for (const definition of monitors) {
+    await request('/api/v1/monitor/validate', { method: 'POST', body: definition });
+    console.log(`validated monitor ${definition.name}`);
+  }
   const current = await request('/api/v1/monitor?with_downtimes=false');
   const byName = new Map((current ?? []).map((item) => [item.name, item.id]));
   for (const definition of monitors) {
