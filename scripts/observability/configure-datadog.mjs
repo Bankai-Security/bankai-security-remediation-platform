@@ -246,6 +246,12 @@ const baselineQueries = {
   api_requests: 'sum:bankai.api.requests{env:nonprod}.as_count()',
   efs_storage_bytes: 'max:aws.efs.storage_bytes{*} by {filesystemid}',
   e2e_failures: 'sum:jenkins.job.completed{job:bankai-nonprod-e2e,result:failure}.as_count()',
+  usage_logs_ingested_bytes: 'sum:datadog.estimated_usage.logs.ingested_bytes{*}.as_count()',
+  usage_custom_metrics: 'max:datadog.estimated_usage.metrics.custom.ingested{*}',
+  usage_apm_ingested_bytes: 'sum:datadog.estimated_usage.apm.ingested_bytes{*}.as_count()',
+  usage_apm_ingested_spans: 'sum:datadog.estimated_usage.apm.ingested_spans{*}.as_count()',
+  usage_apm_ingested_traces: 'sum:datadog.estimated_usage.apm.ingested_traces{*}.as_count()',
+  usage_apm_indexed_spans: 'sum:datadog.estimated_usage.apm.indexed_spans{*}.as_count()',
 };
 
 async function request(path, { method = 'GET', body } = {}) {
