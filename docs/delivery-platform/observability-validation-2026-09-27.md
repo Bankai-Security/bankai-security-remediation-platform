@@ -1,4 +1,4 @@
-# Observability validation — updated 2026-09-29 IST
+# Observability validation — updated 2026-10-02 IST
 
 Phase 10 status: **PARTIAL**. AWS metrics, application logs, bounded facets, 12 log-based metrics, and five dashboards are live. Quincy logs remain unstructured, so monitor, SLO, correlation, recovery, and cost gates are not complete.
 
@@ -34,15 +34,17 @@ Quincy logs arrive from the correct group but are plain Uvicorn access lines, fo
 - Bounded facets are active for `service`, `env`, `version`, `git.sha`, `deployment.id`, `jenkins.build`, `queue`, `event`, and `status_code`. No job, repository, project, user, ticket, prompt, source-file, or URL facet was created.
 - Jenkins observability build 5 created the 12 reviewed `bankai.queue.*` and `bankai.api.*` log-based metrics and finished successfully on 2026-09-29.
 - Jenkins observability build 7, using commit `265eee703fff409480cd2fcc1189b0eaee58d8bf`, created the five reviewed dashboards and finished successfully on 2026-09-29. Every dashboard has `env` and `service` template variables.
-- No monitors or SLOs are active. Owner, runbook, notification route, representative baselines, and owner-approved SLO targets remain required.
+- Jenkins observability build 10 collected a three-day baseline after the scoped application key gained `timeseries_query`. API target 5xx and unhealthy targets remained zero; API p95 latency peaked near 10 ms; all four ECS services stayed at desired/running 1; each queue depth stayed zero; API request telemetry was continuous; queue age, failed, and stalled series were absent. EFS storage was about 646–648 MB on `fs-02c0fefc7f13112c4` and 403,456 bytes on `fs-08078be2d934c4a61`.
+- Monitor metadata is resolved: owner `Bankai Platform`, runbook `docs/runbooks/bankai-nonprod-observability.md`, and nonproduction route `@team-bankai-platform` using the team email channel. Nine monitor definitions are reviewed locally but are not active yet.
+- No SLOs are active. Owner approval of exact SLO targets remains required.
 - The exact bounded facet, metric, dashboard, monitor, and SLO definitions are in `phase-10-runtime-observability.md`.
 
 ## Remaining live gates
 
 1. Release structured Quincy logging with request ID and all six release fields.
 2. Deploy the repository changes and run `Jenkinsfile.e2e` in `full` mode.
-3. Observe representative nonproduction traffic and record baselines for every threshold-based monitor.
-4. Obtain owner, runbook, and notification-route values before monitor creation and explicit owner approval before SLO activation.
+3. Activate the nine reviewed monitors, then collect representative job traffic before adding queue depth/age thresholds.
+4. Observe a real CodeBuild metric and structured Quincy failure event before creating those monitors. Define an EFS capacity policy before creating an EFS capacity monitor.
 5. Trigger and recover each critical nonproduction monitor.
 6. Activate SLOs only after their exact targets and owners are approved.
 7. Review ingestion, metric cardinality, trace sampling, retention, and estimated monthly cost after one representative day.

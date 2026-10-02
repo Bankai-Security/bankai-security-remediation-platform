@@ -5,17 +5,18 @@ const root = new URL('../../', import.meta.url);
 const pipeline = readFileSync(new URL('Jenkinsfile.observability', root), 'utf8');
 for (const required of [
   "label 'linux'",
-  "choices: ['baseline', 'metrics', 'dashboards', 'dry-run']",
+  "choices: ['baseline', 'metrics', 'dashboards', 'monitors', 'dry-run']",
   'jenkins-datadog-api-key',
   'jenkins-datadog-app-key',
   'configure-datadog.mjs --metrics',
   'configure-datadog.mjs --dashboards',
+  'configure-datadog.mjs --monitors',
   'configure-datadog.mjs --baseline',
   'configure-datadog.mjs --all --dry-run',
 ]) {
   if (!pipeline.includes(required)) throw new Error(`missing observability pipeline control: ${required}`);
 }
-for (const forbidden of ['choices: [\'metrics\', \'dashboards\', \'all\'', 'configure-datadog.mjs --all ;;', 'monitor', 'slo']) {
+for (const forbidden of ['choices: [\'metrics\', \'dashboards\', \'all\'', 'configure-datadog.mjs --all ;;', 'slo']) {
   if (pipeline.toLowerCase().includes(forbidden)) throw new Error(`forbidden observability pipeline construct: ${forbidden}`);
 }
 
@@ -67,5 +68,36 @@ for (const dashboard of plan.dashboards) {
   }
 }
 
+const expectedMonitors = [
+  '[nonprod] Bankai API target 5xx',
+  '[nonprod] Bankai API p95 latency',
+  '[nonprod] Bankai API unhealthy ALB targets',
+  '[nonprod] Bankai ECS desired/running mismatch',
+  '[nonprod] Bankai Redis service unavailable',
+  '[nonprod] Bankai failed or stalled queue jobs',
+  '[nonprod] Bankai API telemetry missing',
+  '[nonprod] Bankai worker telemetry missing',
+  '[nonprod] Bankai post-deployment E2E failure',
+];
+if (JSON.stringify(plan.monitors.map((item) => item.name)) !== JSON.stringify(expectedMonitors)) {
+  throw new Error('unexpected or reordered monitor definitions');
+}
+for (const monitor of plan.monitors) {
+  for (const required of [
+    'severity:', 'owner: Bankai Platform', 'runbook: https://github.com/Bankai-Security/',
+    'alert condition:', '{{#is_recovery}}Recovery:', '@team-bankai-platform',
+  ]) {
+    if (!monitor.message.includes(required)) throw new Error(`missing monitor metadata on ${monitor.name}: ${required}`);
+  }
+  if (!monitor.tags.includes('env:nonprod') || !monitor.tags.includes('team:bankai-platform')) {
+    throw new Error(`missing bounded monitor tags on ${monitor.name}`);
+  }
+  for (const group of monitor.query.matchAll(/by \{([^}]+)\}/g)) {
+    if (!['service', 'servicename', 'queue'].includes(group[1])) {
+      throw new Error(`unbounded multi-alert group on ${monitor.name}: ${group[1]}`);
+    }
+  }
+}
+
 rmSync(new URL('reports/observability', root), { recursive: true, force: true });
-console.log('Observability policy passed: 12 bounded log metrics, 5 ordered dashboards, and no live combined apply.');
+console.log('Observability policy passed: 12 bounded log metrics, 5 ordered dashboards, 9 reviewed monitors, and no live combined apply.');

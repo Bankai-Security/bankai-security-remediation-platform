@@ -7,12 +7,13 @@ const dryRun = process.argv.includes('--dry-run');
 const collectBaseline = process.argv.includes('--baseline');
 const applyMetrics = process.argv.includes('--metrics') || process.argv.includes('--all');
 const applyDashboards = process.argv.includes('--dashboards') || process.argv.includes('--all');
+const applyMonitors = process.argv.includes('--monitors') || process.argv.includes('--all');
 
-if (!applyMetrics && !applyDashboards && !collectBaseline) {
-  throw new Error('choose --metrics, --dashboards, --baseline, or --all');
+if (!applyMetrics && !applyDashboards && !applyMonitors && !collectBaseline) {
+  throw new Error('choose --metrics, --dashboards, --monitors, --baseline, or --all');
 }
-if (!dryRun && applyMetrics && applyDashboards) {
-  throw new Error('live --all is disabled: apply and verify metrics before applying dashboards');
+if (!dryRun && [applyMetrics, applyDashboards, applyMonitors, collectBaseline].filter(Boolean).length > 1) {
+  throw new Error('live combined apply is disabled: run one reviewed observability gate at a time');
 }
 if (!dryRun && (!apiKey || !appKey)) {
   throw new Error('DD_API_KEY and DD_APP_KEY are required');
@@ -129,6 +130,107 @@ const dashboards = [
   ]),
 ];
 
+const owner = 'Bankai Platform';
+const runbook = 'https://github.com/Bankai-Security/bankai-security-remediation-platform/blob/main/docs/runbooks/bankai-nonprod-observability.md';
+const notificationRoute = '@team-bankai-platform';
+const monitorMessage = (severity, condition, recovery) => [
+  `severity: ${severity}`,
+  `owner: ${owner}`,
+  `runbook: ${runbook}`,
+  `alert condition: ${condition}`,
+  `{{#is_alert}}Investigate in the matching Bankai nonprod dashboard and follow the runbook. ${notificationRoute}{{/is_alert}}`,
+  `{{#is_recovery}}Recovery: ${recovery} ${notificationRoute}{{/is_recovery}}`,
+].join('\n');
+const monitor = (name, query, severity, condition, recovery, options = {}) => ({
+  name,
+  type: 'metric alert',
+  query,
+  message: monitorMessage(severity, condition, recovery),
+  tags: ['env:nonprod', 'team:bankai-platform', `severity:${severity}`, 'managed-by:bankai-observability'],
+  priority: severity === 'critical' ? 1 : 2,
+  options: {
+    include_tags: true,
+    notify_audit: false,
+    require_full_window: false,
+    thresholds: { critical: Number(query.match(/ ([<>]) ([0-9.]+)$/)?.[2]) },
+    ...options,
+  },
+});
+
+// Thresholds are based on the three-day baseline collected by Jenkins build #10.
+// Deferred: queue depth/age (zero/no series), Quincy and CodeBuild (no bounded signal),
+// and EFS capacity (elastic storage with no approved capacity policy).
+const monitors = [
+  monitor(
+    '[nonprod] Bankai API target 5xx',
+    'sum(last_10m):sum:aws.applicationelb.httpcode_target_5xx{loadbalancer:app/bankai-apise-*}.as_count() > 0',
+    'critical',
+    'Any ALB target 5xx in 10 minutes; the observed three-day baseline was zero.',
+    'ALB target 5xx remains zero for 10 minutes.',
+  ),
+  monitor(
+    '[nonprod] Bankai API p95 latency',
+    'avg(last_15m):avg:aws.applicationelb.target_response_time.p95{loadbalancer:app/bankai-apise-*} > 0.05',
+    'warning',
+    'ALB p95 latency exceeds 50 ms for 15 minutes; the observed maximum was about 10 ms.',
+    'ALB p95 latency remains at or below 50 ms for 15 minutes.',
+  ),
+  monitor(
+    '[nonprod] Bankai API unhealthy ALB targets',
+    'max(last_5m):max:aws.applicationelb.un_healthy_host_count{targetgroup:targetgroup/bankai-apise-*} > 0',
+    'critical',
+    'One or more API ALB targets are unhealthy for five minutes.',
+    'Unhealthy target count remains zero for five minutes.',
+  ),
+  monitor(
+    '[nonprod] Bankai ECS desired/running mismatch',
+    'max(last_10m):max:aws.ecs.service.desired{clustername:bankai-nonprod} by {servicename} - max:aws.ecs.service.running{clustername:bankai-nonprod} by {servicename} > 0',
+    'critical',
+    'Desired tasks exceed running tasks for a bounded ECS service for 10 minutes.',
+    'Desired and running task counts match for 10 minutes.',
+    { new_group_delay: 300 },
+  ),
+  monitor(
+    '[nonprod] Bankai Redis service unavailable',
+    'min(last_10m):min:aws.ecs.service.running{clustername:bankai-nonprod,servicename:*redis*} by {servicename} < 1',
+    'critical',
+    'The Redis ECS service has fewer than one running task for 10 minutes.',
+    'The Redis task remains running for 10 minutes.',
+    { new_group_delay: 300 },
+  ),
+  monitor(
+    '[nonprod] Bankai failed or stalled queue jobs',
+    'sum(last_10m):sum:bankai.queue.failed{env:nonprod} by {queue}.as_count() + sum:bankai.queue.stalled{env:nonprod} by {queue}.as_count() > 0',
+    'critical',
+    'A failed or stalled job is observed in a bounded queue within 10 minutes.',
+    'No failed or stalled jobs are observed for 10 minutes.',
+    { new_group_delay: 300 },
+  ),
+  monitor(
+    '[nonprod] Bankai API telemetry missing',
+    'sum(last_10m):sum:bankai.api.requests{env:nonprod}.as_count() < 1',
+    'warning',
+    'No parsed API request events are observed for 10 minutes; the baseline showed continuous traffic.',
+    'Parsed API request telemetry remains visible for 10 minutes.',
+    { notify_no_data: true, no_data_timeframe: 10 },
+  ),
+  monitor(
+    '[nonprod] Bankai worker telemetry missing',
+    'max(last_10m):max:bankai.queue.depth{env:nonprod} by {queue} < 0',
+    'warning',
+    'No queue-depth telemetry is observed for 10 minutes across the four bounded queues.',
+    'Queue-depth telemetry remains visible for 10 minutes.',
+    { notify_no_data: true, no_data_timeframe: 10, new_group_delay: 300 },
+  ),
+  monitor(
+    '[nonprod] Bankai post-deployment E2E failure',
+    'sum(last_10m):sum:jenkins.job.completed{job:bankai-nonprod-e2e,result:failure}.as_count() > 0',
+    'critical',
+    'The nonproduction E2E Jenkins job reports a failure within 10 minutes.',
+    'The next post-deployment E2E run succeeds.',
+  ),
+];
+
 const baselineQueries = {
   api_5xx_count: 'sum:aws.applicationelb.httpcode_target_5xx{loadbalancer:app/bankai-apise-*}.as_count()',
   api_p95_latency: 'avg:aws.applicationelb.target_response_time.p95{loadbalancer:app/bankai-apise-*}',
@@ -187,6 +289,21 @@ async function reconcileDashboards() {
   }
 }
 
+async function reconcileMonitors() {
+  const current = await request('/api/v1/monitor?with_downtimes=false');
+  const byName = new Map((current ?? []).map((item) => [item.name, item.id]));
+  for (const definition of monitors) {
+    const id = byName.get(definition.name);
+    if (id) {
+      await request(`/api/v1/monitor/${encodeURIComponent(id)}`, { method: 'PUT', body: definition });
+      console.log(`updated monitor ${definition.name}`);
+    } else {
+      await request('/api/v1/monitor', { method: 'POST', body: definition });
+      console.log(`created monitor ${definition.name}`);
+    }
+  }
+}
+
 function summarizeSeries(series) {
   const values = (series.pointlist ?? []).map(([, value]) => value).filter(Number.isFinite);
   return {
@@ -221,11 +338,16 @@ async function collectBaselines() {
 
 await mkdir('reports/observability', { recursive: true });
 if (dryRun) {
-  const output = { logMetrics: applyMetrics ? logMetrics : [], dashboards: applyDashboards ? dashboards : [] };
+  const output = {
+    logMetrics: applyMetrics ? logMetrics : [],
+    dashboards: applyDashboards ? dashboards : [],
+    monitors: applyMonitors ? monitors : [],
+  };
   await writeFile('reports/observability/datadog-plan.json', `${JSON.stringify(output, null, 2)}\n`);
   console.log(`validated ${output.logMetrics.length} log metrics and ${output.dashboards.length} dashboards`);
 } else {
   if (collectBaseline) await collectBaselines();
   if (applyMetrics) await reconcileMetrics();
   if (applyDashboards) await reconcileDashboards();
+  if (applyMonitors) await reconcileMonitors();
 }

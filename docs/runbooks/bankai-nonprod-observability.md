@@ -3,7 +3,7 @@
 Owner: **Bankai Platform**  
 Environment: **nonprod**  
 AWS account: **926827998551**  
-Datadog notification route: configure on the Bankai Platform team before monitor activation
+Datadog notification route: `@team-bankai-platform` (team email channel)
 
 This runbook covers the Bankai API, workers, Redis, Quincy, CodeBuild, EFS, and delivery telemetry. It contains investigation and recovery steps for the reviewed Phase 10 monitors. Thresholds that depend on traffic remain unset until a representative baseline is recorded.
 
