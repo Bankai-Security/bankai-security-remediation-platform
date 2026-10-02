@@ -2,7 +2,7 @@ pipeline {
   agent { label 'linux' }
   options { disableConcurrentBuilds(); timestamps(); timeout(time: 20, unit: 'MINUTES') }
   parameters {
-    choice(name: 'OBSERVABILITY_ACTION', choices: ['metrics', 'dashboards', 'dry-run'], description: 'Apply one reviewed Datadog gate at a time: metrics must be verified before dashboards.')
+    choice(name: 'OBSERVABILITY_ACTION', choices: ['baseline', 'metrics', 'dashboards', 'dry-run'], description: 'Collect a read-only baseline or apply one reviewed Datadog gate at a time.')
   }
   environment { DATADOG_SITE = 'datadoghq.com' }
   stages {
@@ -16,6 +16,7 @@ pipeline {
           sh '''
             set -eu
             case "$OBSERVABILITY_ACTION" in
+              baseline) node scripts/observability/configure-datadog.mjs --baseline ;;
               metrics) node scripts/observability/configure-datadog.mjs --metrics ;;
               dashboards) node scripts/observability/configure-datadog.mjs --dashboards ;;
               dry-run) node scripts/observability/configure-datadog.mjs --all --dry-run ;;

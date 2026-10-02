@@ -4,11 +4,12 @@ const site = process.env.DATADOG_SITE ?? 'datadoghq.com';
 const apiKey = process.env.DD_API_KEY?.trim();
 const appKey = process.env.DD_APP_KEY?.trim();
 const dryRun = process.argv.includes('--dry-run');
+const collectBaseline = process.argv.includes('--baseline');
 const applyMetrics = process.argv.includes('--metrics') || process.argv.includes('--all');
 const applyDashboards = process.argv.includes('--dashboards') || process.argv.includes('--all');
 
-if (!applyMetrics && !applyDashboards) {
-  throw new Error('choose --metrics, --dashboards, or --all');
+if (!applyMetrics && !applyDashboards && !collectBaseline) {
+  throw new Error('choose --metrics, --dashboards, --baseline, or --all');
 }
 if (!dryRun && applyMetrics && applyDashboards) {
   throw new Error('live --all is disabled: apply and verify metrics before applying dashboards');
@@ -128,6 +129,22 @@ const dashboards = [
   ]),
 ];
 
+const baselineQueries = {
+  api_5xx_count: 'sum:aws.applicationelb.httpcode_target_5xx{loadbalancer:app/bankai-apise-*}.as_count()',
+  api_p95_latency: 'avg:aws.applicationelb.target_response_time.p95{loadbalancer:app/bankai-apise-*}',
+  unhealthy_targets: 'max:aws.applicationelb.un_healthy_host_count{targetgroup:targetgroup/bankai-apise-*}',
+  ecs_desired: 'avg:aws.ecs.service.desired{clustername:bankai-nonprod} by {servicename}',
+  ecs_running: 'avg:aws.ecs.service.running{clustername:bankai-nonprod} by {servicename}',
+  redis_running: 'avg:aws.ecs.service.running{clustername:bankai-nonprod,servicename:*redis*} by {servicename}',
+  queue_depth: 'max:bankai.queue.depth{env:nonprod} by {queue}',
+  queue_oldest_waiting_age_ms: 'max:bankai.queue.oldest_waiting_age_ms{env:nonprod} by {queue}',
+  queue_failed: 'sum:bankai.queue.failed{env:nonprod} by {queue}.as_count()',
+  queue_stalled: 'sum:bankai.queue.stalled{env:nonprod} by {queue}.as_count()',
+  api_requests: 'sum:bankai.api.requests{env:nonprod}.as_count()',
+  efs_storage_bytes: 'max:aws.efs.storage_bytes{*} by {filesystemid}',
+  e2e_failures: 'sum:jenkins.job.completed{job:bankai-nonprod-e2e,result:failure}.as_count()',
+};
+
 async function request(path, { method = 'GET', body } = {}) {
   const response = await fetch(`https://api.${site}${path}`, {
     method,
@@ -170,12 +187,45 @@ async function reconcileDashboards() {
   }
 }
 
+function summarizeSeries(series) {
+  const values = (series.pointlist ?? []).map(([, value]) => value).filter(Number.isFinite);
+  return {
+    scope: series.scope,
+    expression: series.expression,
+    unit: series.unit?.[0]?.name ?? null,
+    points: values.length,
+    min: values.length ? Math.min(...values) : null,
+    max: values.length ? Math.max(...values) : null,
+    average: values.length ? values.reduce((total, value) => total + value, 0) / values.length : null,
+    last: values.at(-1) ?? null,
+  };
+}
+
+async function collectBaselines() {
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - (3 * 24 * 60 * 60);
+  const report = { from, to, window_days: 3, queries: {} };
+  for (const [name, query] of Object.entries(baselineQueries)) {
+    try {
+      const path = `/api/v1/query?from=${from}&to=${to}&query=${encodeURIComponent(query)}`;
+      const response = await request(path);
+      report.queries[name] = { query, status: response.status, series: (response.series ?? []).map(summarizeSeries) };
+      console.log(`baseline ${name}: ${report.queries[name].series.length} series`);
+    } catch (error) {
+      report.queries[name] = { query, error: error.message };
+      console.log(`baseline ${name}: unavailable (${error.message})`);
+    }
+  }
+  await writeFile('reports/observability/datadog-baseline.json', `${JSON.stringify(report, null, 2)}\n`);
+}
+
 await mkdir('reports/observability', { recursive: true });
 if (dryRun) {
   const output = { logMetrics: applyMetrics ? logMetrics : [], dashboards: applyDashboards ? dashboards : [] };
   await writeFile('reports/observability/datadog-plan.json', `${JSON.stringify(output, null, 2)}\n`);
   console.log(`validated ${output.logMetrics.length} log metrics and ${output.dashboards.length} dashboards`);
 } else {
+  if (collectBaseline) await collectBaselines();
   if (applyMetrics) await reconcileMetrics();
   if (applyDashboards) await reconcileDashboards();
 }
