@@ -1,6 +1,6 @@
-# Observability validation — updated 2026-10-02 IST
+# Observability validation — updated 2026-10-03 IST
 
-Phase 10 status: **PARTIAL**. AWS metrics, application logs, bounded facets, 12 log-based metrics, and five dashboards are live. Quincy logs remain unstructured, so monitor, SLO, correlation, recovery, and cost gates are not complete.
+Phase 10 status: **PARTIAL**. AWS metrics, structured application logs, bounded facets, 12 log-based metrics, five dashboards, nine monitors, API/worker/Quincy APM, and controlled Redis and E2E alert/recovery tests are live. The full synthetic remediation, the remaining critical-monitor recovery tests, representative-day cost review, and owner-approved SLO activation remain open.
 
 ## Live evidence
 
@@ -8,7 +8,8 @@ Phase 10 status: **PARTIAL**. AWS metrics, application logs, bounded facets, 12 
 - `aws.ecs.service.running{clustername:bankai-nonprod} by {servicename}` returns API, worker, Quincy, and Redis with one running task each. Desired count is also one.
 - Verified live metrics include `aws.ecs.service.desired`, `aws.ecs.service.running`, `aws.applicationelb.httpcode_target_5xx`, `aws.applicationelb.target_response_time.p50/p95/p99`, `aws.applicationelb.un_healthy_host_count`, `aws.cloudfront.requests`, `aws.cloudfront.4xx_error_rate`, `aws.cloudfront.5xx_error_rate`, `aws.wafv2.allowed_requests`, `aws.wafv2.blocked_requests`, `aws.efs.storage_bytes`, and Jenkins metrics under `jenkins.job.*`.
 - No `aws.codebuild.*` metric appeared in the 30-day catalog. A real Quincy remediation build must run before a CodeBuild query or monitor is activated.
-- Release build 18 succeeded with Bankai SHA `e6c7cf8ca00989c0bb54397e072f301f4be108d2`, Quincy SHA `210e45488e279394eea12506b65824753e1eb934`, deployment `bankai-e6c7cf8ca009-build-18`, and Jenkins build `18`.
+- Release build 24 succeeded on 2026-10-03 with Bankai SHA `dd8174c80ec48cd20a18473738a7a55c6916c7c7`, Quincy SHA `20adeda4202da61f630a47377e1b156638cb670e`, deployment `bankai-dd8174c80ec4-build-24`, and Jenkins build `24`. The pipeline passed both repositories' gates, immutable builds, publication, synth, reviewed CloudFormation deployment, service stability, smoke tests, and release-event publication.
+- Release build 25 then succeeded in 27 minutes with Bankai SHA `c0a1fd3dcce5c6af38f79364fa06d43ddd591cc5`, the same Quincy SHA, deployment `bankai-c0a1fd3dcce5-build-25`, and Jenkins build `25`. It passed the complete release pipeline and activated working Node trace initialization.
 
 ## CloudWatch forwarding
 
@@ -26,7 +27,9 @@ API query `@service:bankai-api @env:nonprod` returns parsed JSON. A sampled requ
 
 Worker query `@service:bankai-worker @env:nonprod @event:queue.depth` returns parsed JSON for `repo-scan`, `fix-pr`, `ci-pipeline`, and `fix-retry`. Events expose bounded queue, event, count, age, and release fields. Searches for token, cookie, authorization, prompt, and source-content sentinels returned no matches in the sampled API and worker windows.
 
-Quincy logs arrive from the correct group but are plain Uvicorn access lines, for example `GET /health HTTP/1.1 200 OK`. They are tagged `service:delivery-platform` and do not expose request ID or release fields. Do not claim API → worker → Quincy → CodeBuild correlation until a Quincy image with structured logging is released.
+Quincy structured logging passed Jenkins build 7 and was released in build 23. The full synthetic workflow is still required to prove a single request ID and release metadata across API, worker, Quincy, and CodeBuild.
+
+Release 24 produced live Quincy APM data in Datadog under `env:nonprod service:quincy`: 60 recent health requests, zero errors, and about 2.55 ms p95 at the validation point. A Release 24 API log showed trace/span `0`, which exposed that the deployed Node flag loaded only the ESM hook. Commit `c0a1fd3dcce5c6af38f79364fa06d43ddd591cc5` switched to Datadog's combined `dd-trace/initialize.mjs` entry point, and Bankai CI build 36 passed. During the release 25 rollout, Datadog showed 306 recent `bankai-api` traces and 117 `bankai-worker` traces. A sampled API health log had nonzero trace ID `6ac1042700000000341d64a1cf7cabb5`, request ID `857b7c0f-7836-4d58-9e63-cd18fcaf395f`, HTTP 200, redacted headers, deployment `bankai-c0a1fd3dcce5-build-25`, Git SHA/version `c0a1fd3dcce5c6af38f79364fa06d43ddd591cc5`, and Jenkins build `25`.
 
 ## Datadog configuration state
 
@@ -35,19 +38,30 @@ Quincy logs arrive from the correct group but are plain Uvicorn access lines, fo
 - Jenkins observability build 5 created the 12 reviewed `bankai.queue.*` and `bankai.api.*` log-based metrics and finished successfully on 2026-09-29.
 - Jenkins observability build 7, using commit `265eee703fff409480cd2fcc1189b0eaee58d8bf`, created the five reviewed dashboards and finished successfully on 2026-09-29. Every dashboard has `env` and `service` template variables.
 - Jenkins observability build 10 collected a three-day baseline after the scoped application key gained `timeseries_query`. API target 5xx and unhealthy targets remained zero; API p95 latency peaked near 10 ms; all four ECS services stayed at desired/running 1; each queue depth stayed zero; API request telemetry was continuous; queue age, failed, and stalled series were absent. EFS storage was about 646–648 MB on `fs-02c0fefc7f13112c4` and 403,456 bytes on `fs-08078be2d934c4a61`.
-- Monitor metadata is resolved: owner `Bankai Platform`, runbook `docs/runbooks/bankai-nonprod-observability.md`, and nonproduction route `@team-bankai-platform` using the team email channel. Nine monitor definitions are reviewed locally but are not active yet.
+- Monitor metadata is resolved: owner `Bankai Platform`, runbook `docs/runbooks/bankai-nonprod-observability.md`, and nonproduction route `@team-bankai-platform` using the team email channel. Jenkins observability build 13 validated all nine definitions against the Datadog API, and build 14 activated them. The live monitor IDs are API 5xx `327392066`, API p95 `327392070`, unhealthy targets `327392072`, ECS mismatch `327392074`, Redis unavailable `327392075`, failed/stalled queue jobs `327392076`, API telemetry missing `327392080`, worker telemetry missing `327392082`, and post-deployment E2E failure `327392084`.
+- Immediately after activation, seven monitors evaluated `OK`. The failed/stalled queue and post-deployment E2E monitors showed `No Data` because no matching bounded group existed in their evaluation windows; neither monitor pages on missing data.
+- Full E2E build 13 selected `full`, passed the four smoke checks, and failed closed before creating customer-shaped data because Jenkins could not resolve the required `bankai-e2e-user` credential. Datadog monitor `327392084` entered `ALERT` from that controlled failure, proving the alert transition and runbook metadata. The archived smoke evidence recorded run ID `bankai-e2e-1790999097508-40205d9c` and request ID `b06c07d4-b447-42bc-a53b-98be59524036`.
+- The Redis monitor recovery test scaled only the nonproduction Redis ECS service to desired/running `0/0`, verified the monitor entered `ALERT` at 2026-10-03 18:17:35 IST, restored ECS to `1/1` at 2026-10-03 12:55:16 UTC, and verified `OK` at 18:32:35 IST. Datadog sent both transitions to the single configured team recipient. No resource was deleted.
+- The controlled E2E failure revealed that sparse event-count monitors retained their last alert state after the event series stopped. Commit `11f9e51efcfb881679f06f0eccaa64574d0cc664` sets `on_missing_data: resolve` for API 5xx, failed/stalled queues, and post-deployment E2E failure monitors, with a policy assertion covering all three. Jenkins observability build 16 validated the definitions, build 17 applied them, and monitor `327392084` changed to `OK` at 2026-10-03 18:57:44 IST and sent one recovery notification. Commit `a078cd0f1bbea99fde77f9ade05880806435f820` aligns its recovery message with the actual quiet-window condition; Bankai CI build 38 and observability apply build 18 both passed.
 - No SLOs are active. Owner approval of exact SLO targets remains required.
 - The exact bounded facet, metric, dashboard, monitor, and SLO definitions are in `phase-10-runtime-observability.md`.
 
+## Cost and cardinality review
+
+- Jenkins observability build 15 archived a second three-day baseline with Datadog estimated-usage queries. `datadog.estimated_usage.logs.ingested_bytes` was present, ranging from 307,480 to 5,523,332 bytes per reporting point and ending at 924,260 bytes.
+- The pre-APM baseline returned no series for custom-metric usage or APM ingested bytes, spans, traces, or indexed spans. Release 24 now supplies Quincy spans with a 100% nonproduction trace sample rate. Recollect estimated usage after one representative traced day.
+- The nonproduction CloudWatch retention configured in `infrastructure/config/nonprod.json` is 14 days.
+- Cardinality remains bounded to `service`, `env`, and `queue` on log-derived metrics. The only queue values are `repo-scan`, `fix-pr`, `ci-pipeline`, and `fix-retry`; job, repository, project, user, ticket, prompt, path, and URL fields are not metric dimensions.
+- A Datadog monthly estimate is unavailable from the current trial's Plan & Usage view. Recheck when that view exposes an estimate; no estimate is inferred from partial usage points.
+
 ## Remaining live gates
 
-1. Release structured Quincy logging with request ID and all six release fields.
-2. Deploy the repository changes and run `Jenkinsfile.e2e` in `full` mode.
-3. Activate the nine reviewed monitors, then collect representative job traffic before adding queue depth/age thresholds.
-4. Observe a real CodeBuild metric and structured Quincy failure event before creating those monitors. Define an EFS capacity policy before creating an EFS capacity monitor.
-5. Trigger and recover each critical nonproduction monitor.
-6. Activate SLOs only after their exact targets and owners are approved.
-7. Review ingestion, metric cardinality, trace sampling, retention, and estimated monthly cost after one representative day.
+1. Create the dedicated nonproduction `bankai-e2e-user` and single-repository `bankai-e2e-github-token` credentials, then rerun `Jenkinsfile.e2e` in `full` mode.
+2. Collect representative job traffic before adding queue depth/age thresholds. The nine baseline-backed monitors are active.
+3. Observe a real CodeBuild metric and structured Quincy failure event before creating those additional monitors. Define an EFS capacity policy before creating an EFS capacity monitor.
+4. Trigger and recover the remaining critical nonproduction monitors. Redis and E2E alert/recovery transitions are proven.
+5. Activate SLOs only after their exact targets and owners are approved.
+6. Recheck usage and cost after one representative traced day. Grant the scoped Jenkins Datadog application key trace-read access only if automated trace assertions are retained; UI validation works with the current user session. Recheck the monthly estimate after Datadog Plan & Usage becomes available.
 
 ## Rollback
 

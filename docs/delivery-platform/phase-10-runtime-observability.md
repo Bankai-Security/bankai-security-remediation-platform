@@ -87,19 +87,21 @@ Do not create monitors until owner, runbook URL, and nonproduction notification 
 | Missing telemetry | no API/worker logs for 10m while ECS running is one | logs resume for 10m |
 | Post-deploy E2E | Jenkins full/smoke result fails for a deployment ID | next run succeeds |
 
-Every message must contain `severity`, `owner`, `runbook`, the alert condition, a recovery message, and the nonproduction route. These values are intentionally `TBD` rather than fabricated.
+Every active message contains `severity`, owner `Bankai Platform`, the
+[`bankai-nonprod-observability` runbook](../runbooks/bankai-nonprod-observability.md),
+the alert condition, a recovery message, and `@team-bankai-platform`.
 
 ## Proposed SLO contracts
 
 Targets and alert thresholds remain `TBD` until representative traffic is observed and the owner approves activation.
 
-| SLO | Exact query contract | Good / total | Window | Owner / runbook |
-| --- | --- | --- | --- | --- |
-| API availability | ALB 2xx/3xx divided by all ALB target responses for `loadbalancer:app/bankai-apise-*` | good = 2xx+3xx; total = 2xx+3xx+4xx+5xx | proposed 30d | TBD / TBD |
-| API p95 latency | `aws.applicationelb.target_response_time.p95{loadbalancer:app/bankai-apise-*}` | good = requests below approved latency; total = all requests | proposed 30d | TBD / TBD |
-| Remediation completion | `@event:queue.job.completed @queue:fix-pr` / (`completed` + `failed`) | good = completed; total = completed+failed | proposed 30d | TBD / TBD |
-| Queue timeliness | `bankai.queue.oldest_waiting_age_ms` against approved per-queue bounds | good = samples within bound; total = all depth samples | proposed 30d | TBD / TBD |
-| Successful deployments | successful Jenkins nonprod releases / completed nonprod releases | good = release and smoke/full success; total = completed releases | proposed 30d | TBD / TBD |
+| SLO | Exact query contract | Good / total | Window | Target / alert threshold | Owner / runbook |
+| --- | --- | --- | --- | --- | --- |
+| API availability | `sum:aws.applicationelb.httpcode_target_2xx{loadbalancer:app/bankai-apise-*}.as_count() + sum:aws.applicationelb.httpcode_target_3xx{loadbalancer:app/bankai-apise-*}.as_count()` divided by the same terms plus target 4xx and 5xx | good = 2xx+3xx; total = 2xx+3xx+4xx+5xx | proposed 30d | pending explicit owner approval | Bankai Platform / [runbook](../runbooks/bankai-nonprod-observability.md) |
+| API p95 latency | `avg:aws.applicationelb.target_response_time.p95{loadbalancer:app/bankai-apise-*}` against the approved latency bound | good = evaluated time slices at or below the bound; total = evaluated time slices | proposed 30d | pending explicit owner approval | Bankai Platform / [runbook](../runbooks/bankai-nonprod-observability.md) |
+| Remediation completion | `sum:bankai.queue.completed{env:nonprod,queue:fix-pr}.as_count()` divided by completed plus `sum:bankai.queue.failed{env:nonprod,queue:fix-pr}.as_count()` | good = completed; total = completed+failed | proposed 30d | pending explicit owner approval after representative remediations | Bankai Platform / [runbook](../runbooks/bankai-nonprod-observability.md) |
+| Queue timeliness | `avg:bankai.queue.oldest_waiting_age_ms{env:nonprod} by {queue}` against approved per-queue bounds | good = evaluated queue samples within the bound; total = evaluated queue samples | proposed 30d | pending explicit owner approval after representative queued work | Bankai Platform / [runbook](../runbooks/bankai-nonprod-observability.md) |
+| Successful deployments | `sum:jenkins.job.completed{job:bankai-nonprod-release,result:success}.as_count()` divided by all completed `bankai-nonprod-release` jobs | good = successful release with smoke success; total = completed releases | proposed 30d | pending explicit owner approval | Bankai Platform / [runbook](../runbooks/bankai-nonprod-observability.md) |
 
 ## Synthetic correlation contract
 
