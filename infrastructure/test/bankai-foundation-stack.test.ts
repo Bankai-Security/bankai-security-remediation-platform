@@ -138,6 +138,21 @@ describe('BankaiFoundationStack', () => {
     }
   });
 
+  it('runs a digest-pinned Datadog APM agent beside every application container', () => {
+    const tasks = Object.values(nonprod.findResources('AWS::ECS::TaskDefinition'));
+    const applicationTasks = tasks.filter(task => task.Properties.ContainerDefinitions.some(
+      (container: { Environment?: { Name: string }[] }) => container.Environment?.some(entry => entry.Name === 'DD_AGENT_HOST')));
+    expect(applicationTasks).toHaveLength(3);
+    for (const task of applicationTasks) {
+      const agent = task.Properties.ContainerDefinitions.find((container: { Name: string }) => container.Name === 'DatadogAgent');
+      expect(agent).toBeDefined();
+      expect(agent.Image).toMatch(/^public\.ecr\.aws\/datadog\/agent@sha256:[0-9a-f]{64}$/);
+      expect(agent.Secrets.some((entry: { Name: string }) => entry.Name === 'DD_API_KEY')).toBe(true);
+      expect(agent.Environment).toContainEqual({ Name: 'DD_APM_ENABLED', Value: 'true' });
+      expect(agent.Environment).toContainEqual({ Name: 'ECS_FARGATE', Value: 'true' });
+    }
+  });
+
   it('passes bounded release metadata into Quincy CodeBuild jobs', () => {
     const projects = Object.values(nonprod.findResources('AWS::CodeBuild::Project'));
     const project = projects.find(item => item.Properties.Name === 'bankai-nonprod-quincy-remediation');

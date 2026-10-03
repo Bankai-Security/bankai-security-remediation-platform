@@ -176,6 +176,42 @@ export class BankaiFoundationStack extends cdk.Stack {
       'QuincyApiToken',
       `bankai/${stage}/quincy-api-token`,
     );
+    const datadogApiKey = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'DatadogApiKey',
+      'DdApiKeySecret-29EQhXLytstx',
+    );
+    const datadogAgentImage = ecs.ContainerImage.fromRegistry(
+      'public.ecr.aws/datadog/agent@sha256:6c7c8091ad7ef8715aa39f863febc1f974986214cad7629f4ee43673ae5e05c7',
+    );
+    const addDatadogAgent = (task: ecs.FargateTaskDefinition, service: string) => {
+      const agent = task.addContainer('DatadogAgent', {
+        image: datadogAgentImage,
+        essential: true,
+        memoryReservationMiB: 128,
+        environment: {
+          ECS_FARGATE: 'true',
+          DD_APM_ENABLED: 'true',
+          DD_APM_NON_LOCAL_TRAFFIC: 'true',
+          DD_ENV: stage,
+          DD_SERVICE: service,
+          DD_SITE: config.datadogSite,
+          DD_LOG_LEVEL: 'WARN',
+        },
+        secrets: { DD_API_KEY: ecs.Secret.fromSecretsManager(datadogApiKey) },
+        healthCheck: {
+          command: ['CMD-SHELL', 'agent health'],
+          interval: cdk.Duration.seconds(30),
+          timeout: cdk.Duration.seconds(10),
+          retries: 3,
+          startPeriod: cdk.Duration.seconds(30),
+        },
+        logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'datadog-agent', logRetention }),
+      });
+      agent.addPortMappings({ containerPort: 8126, protocol: ecs.Protocol.TCP });
+      datadogApiKey.grantRead(task.obtainExecutionRole());
+      return agent;
+    };
 
     const appSecurityGroup = new ec2.SecurityGroup(this, 'AppSecurityGroup', {
       vpc,
@@ -396,6 +432,13 @@ export class BankaiFoundationStack extends cdk.Stack {
         GIT_SHA: quincyVersion,
         DEPLOYMENT_ID: deploymentId,
         JENKINS_BUILD: jenkinsBuild,
+        DD_AGENT_HOST: '127.0.0.1',
+        DD_TRACE_AGENT_PORT: '8126',
+        DD_LOGS_INJECTION: 'true',
+        DD_TRACE_SAMPLE_RATE: production ? '0.1' : '1.0',
+        DD_TRACE_PROPAGATION_STYLE: 'datadog,tracecontext',
+        DD_TRACE_HEADER_TAGS: 'x-request-id:request_id',
+        DD_RUNTIME_METRICS_ENABLED: 'true',
         LOG_FORMAT: 'json',
         MODEL_PROVIDER: 'openrouter',
         JOB_EXECUTION_BACKEND: 'codebuild',
@@ -419,6 +462,8 @@ export class BankaiFoundationStack extends cdk.Stack {
       },
       stopTimeout: cdk.Duration.seconds(120),
     });
+    const quincyAgent = addDatadogAgent(quincyTask, 'quincy');
+    quincyContainer.addContainerDependencies({ container: quincyAgent, condition: ecs.ContainerDependencyCondition.HEALTHY });
     quincyContainer.addPortMappings({ containerPort: 8000 });
     quincyContainer.addMountPoints({ containerPath: '/app/data', sourceVolume: 'quincy-data', readOnly: false });
     quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
@@ -471,6 +516,15 @@ export class BankaiFoundationStack extends cdk.Stack {
       GIT_SHA: bankaiVersion,
       DEPLOYMENT_ID: deploymentId,
       JENKINS_BUILD: jenkinsBuild,
+      DD_AGENT_HOST: '127.0.0.1',
+      DD_TRACE_AGENT_PORT: '8126',
+      DD_LOGS_INJECTION: 'true',
+      DD_TRACE_SAMPLE_RATE: production ? '0.1' : '1.0',
+      DD_TRACE_PROPAGATION_STYLE: 'datadog,tracecontext',
+      DD_TRACE_HEADER_TAGS: 'x-request-id:request_id',
+      DD_RUNTIME_METRICS_ENABLED: 'true',
+      DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED: 'true',
+      NODE_OPTIONS: '--import dd-trace/register.js',
       NODE_ENV: 'production',
       APP_ENV: 'production',
       PORT: '4000',
@@ -546,6 +600,8 @@ export class BankaiFoundationStack extends cdk.Stack {
       StartPeriod: 30,
     });
     apiTaskResource.addPropertyOverride('ContainerDefinitions.0.StopTimeout', 60);
+    const apiAgent = addDatadogAgent(api.taskDefinition, 'bankai-api');
+    api.taskDefinition.defaultContainer?.addContainerDependencies({ container: apiAgent, condition: ecs.ContainerDependencyCondition.HEALTHY });
     api.targetGroup.configureHealthCheck({ path: '/healthz', healthyHttpCodes: '200' });
     if (redisService) api.service.node.addDependency(redisService);
     api.service.node.addDependency(quincyService);
@@ -557,7 +613,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       cpu: config.workerCpu,
       memoryLimitMiB: config.workerMemoryMiB,
     });
-    workerTask.addContainer('Worker', {
+    const workerContainer = workerTask.addContainer('Worker', {
       image: backendImage,
       command: ['node', 'dist/worker.js'],
       environment: { ...environment, DD_SERVICE: 'bankai-worker' },
@@ -565,6 +621,8 @@ export class BankaiFoundationStack extends cdk.Stack {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'worker', logRetention }),
       stopTimeout: cdk.Duration.seconds(120),
     });
+    const workerAgent = addDatadogAgent(workerTask, 'bankai-worker');
+    workerContainer.addContainerDependencies({ container: workerAgent, condition: ecs.ContainerDependencyCondition.HEALTHY });
     const workerService = new ecs.FargateService(this, 'WorkerService', {
       cluster,
       serviceName: `bankai-${stage}-worker`,
