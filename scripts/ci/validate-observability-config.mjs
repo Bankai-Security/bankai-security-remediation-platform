@@ -99,6 +99,16 @@ for (const monitor of plan.monitors) {
     }
   }
 }
+for (const name of [
+  '[nonprod] Bankai API target 5xx',
+  '[nonprod] Bankai failed or stalled queue jobs',
+  '[nonprod] Bankai post-deployment E2E failure',
+]) {
+  const monitor = plan.monitors.find(item => item.name === name);
+  if (monitor.options.on_missing_data !== 'resolve') {
+    throw new Error(`event-count monitor must recover when its series expires: ${name}`);
+  }
+}
 
 rmSync(new URL('reports/observability', root), { recursive: true, force: true });
 console.log('Observability policy passed: 12 bounded log metrics, 5 ordered dashboards, 9 reviewed monitors, and no live combined apply.');

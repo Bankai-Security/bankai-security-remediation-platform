@@ -168,6 +168,7 @@ const monitors = [
     'critical',
     'Any ALB target 5xx in 10 minutes; the observed three-day baseline was zero.',
     'ALB target 5xx remains zero for 10 minutes.',
+    { on_missing_data: 'resolve' },
   ),
   monitor(
     '[nonprod] Bankai API p95 latency',
@@ -205,7 +206,7 @@ const monitors = [
     'critical',
     'A failed or stalled job is observed in a bounded queue within 10 minutes.',
     'No failed or stalled jobs are observed for 10 minutes.',
-    { new_group_delay: 300 },
+    { new_group_delay: 300, on_missing_data: 'resolve' },
   ),
   monitor(
     '[nonprod] Bankai API telemetry missing',
@@ -229,6 +230,7 @@ const monitors = [
     'critical',
     'The nonproduction E2E Jenkins job reports a failure within 10 minutes.',
     'The next post-deployment E2E run succeeds.',
+    { on_missing_data: 'resolve' },
   ),
 ];
 
