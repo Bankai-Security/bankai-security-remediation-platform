@@ -229,7 +229,7 @@ const monitors = [
     'sum(last_10m):sum:jenkins.job.completed{job:bankai-nonprod-e2e,result:failure}.as_count() > 0',
     'critical',
     'The nonproduction E2E Jenkins job reports a failure within 10 minutes.',
-    'The next post-deployment E2E run succeeds.',
+    'No post-deployment E2E failure is reported for 10 minutes.',
     { on_missing_data: 'resolve' },
   ),
 ];
