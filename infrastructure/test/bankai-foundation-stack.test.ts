@@ -150,6 +150,16 @@ describe('BankaiFoundationStack', () => {
       expect(agent.Secrets.some((entry: { Name: string }) => entry.Name === 'DD_API_KEY')).toBe(true);
       expect(agent.Environment).toContainEqual({ Name: 'DD_APM_ENABLED', Value: 'true' });
       expect(agent.Environment).toContainEqual({ Name: 'ECS_FARGATE', Value: 'true' });
+      const tracedContainer = task.Properties.ContainerDefinitions.find(
+        (container: { Name: string; Environment?: { Name: string; Value: string }[] }) =>
+          container.Environment?.some(entry => entry.Name === 'DD_AGENT_HOST'),
+      );
+      expect(tracedContainer).toBeDefined();
+      if (tracedContainer?.Name !== 'Quincy') {
+        expect(tracedContainer.Environment).toContainEqual({
+          Name: 'NODE_OPTIONS', Value: '--import dd-trace/initialize.mjs',
+        });
+      }
     }
   });
 

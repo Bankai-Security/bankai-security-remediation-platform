@@ -524,7 +524,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       DD_TRACE_HEADER_TAGS: 'x-request-id:request_id',
       DD_RUNTIME_METRICS_ENABLED: 'true',
       DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED: 'true',
-      NODE_OPTIONS: '--import dd-trace/register.js',
+      NODE_OPTIONS: '--import dd-trace/initialize.mjs',
       NODE_ENV: 'production',
       APP_ENV: 'production',
       PORT: '4000',
