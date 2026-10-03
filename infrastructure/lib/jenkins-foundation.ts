@@ -130,7 +130,10 @@ export class JenkinsFoundation extends Construct {
     }));
     controllerRole.addToPolicy(new iam.PolicyStatement({
       actions: ['secretsmanager:GetSecretValue'],
-      resources: [`arn:${cdk.Aws.PARTITION}:secretsmanager:${config.region}:${config.account}:secret:jenkins-*`],
+      resources: [
+        `arn:${cdk.Aws.PARTITION}:secretsmanager:${config.region}:${config.account}:secret:jenkins-*`,
+        `arn:${cdk.Aws.PARTITION}:secretsmanager:${config.region}:${config.account}:secret:bankai-e2e-*`,
+      ],
     }));
     controllerRole.addToPolicy(new iam.PolicyStatement({
       actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],

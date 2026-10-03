@@ -314,6 +314,12 @@ describe('BankaiFoundationStack', () => {
     expect(JSON.stringify(prRole)).not.toMatch(/cloudformation|ecr:PutImage/);
   });
 
+  it('allows the Jenkins controller to resolve only Jenkins and E2E credentials', () => {
+    const policies = JSON.stringify(nonprod.findResources('AWS::IAM::Policy'));
+    expect(policies).toContain('secret:jenkins-*');
+    expect(policies).toContain('secret:bankai-e2e-*');
+  });
+
   it('creates production deployment roles without a production Jenkins controller', () => {
     const roles = JSON.stringify(production.findResources('AWS::IAM::Role'));
     expect(roles).toContain('bankai-production-deployment');
