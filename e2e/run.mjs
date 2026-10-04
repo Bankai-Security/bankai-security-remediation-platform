@@ -152,7 +152,7 @@ async function fullWorkflow() {
       .sort();
     assert(
       finding,
-      `expected seeded vulnerability ${expectedRule} was not detected; observed rule IDs: ${observedRuleIds.join(', ') || '(none)'}`,
+      `expected seeded vulnerability ${expectedRule} was not detected; observed rule IDs: ${observedRuleIds.join(', ') || '(none)'}; request ID: ${requestId}; run ID: ${runId}`,
     );
     const created = await json(await client.post(`/api/projects/${project.id}/tickets`, { findingIds: [finding.id] }), [201]);
     assert(created.tickets.length === 1 && created.queued.includes(finding.id), 'ticket was not created and queued for remediation');
