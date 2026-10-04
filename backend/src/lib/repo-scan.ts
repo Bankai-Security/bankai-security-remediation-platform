@@ -131,6 +131,7 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
     repo: github.creds.repo,
     ref: github.defaultBranch,
     commitSha,
+    githubToken: github.creds.token,
   });
 
   const geminiFindings = !quincyResult && files.length > 0 ? await analyzeFiles(files, { repo: github.creds.repo, commitSha }) : [];
