@@ -146,7 +146,14 @@ async function fullWorkflow() {
   await check('Seeded vulnerability becomes a remediation ticket', async () => {
     const listing = await json(await client.request(`/api/projects/${project.id}/findings`), [200]);
     const finding = listing.findings.find((item) => item.externalId === expectedRule);
-    assert(finding, `expected seeded vulnerability ${expectedRule} was not detected`);
+    const observedRuleIds = listing.findings
+      .map((item) => item.externalId)
+      .filter((value) => typeof value === 'string' && value.length > 0)
+      .sort();
+    assert(
+      finding,
+      `expected seeded vulnerability ${expectedRule} was not detected; observed rule IDs: ${observedRuleIds.join(', ') || '(none)'}`,
+    );
     const created = await json(await client.post(`/api/projects/${project.id}/tickets`, { findingIds: [finding.id] }), [201]);
     assert(created.tickets.length === 1 && created.queued.includes(finding.id), 'ticket was not created and queued for remediation');
     ticket = created.tickets[0];
