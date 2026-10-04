@@ -183,6 +183,11 @@ export class JenkinsFoundation extends Construct {
       actions: ['cloudformation:DescribeStacks'],
       resources: [`arn:${cdk.Aws.PARTITION}:cloudformation:${config.region}:${config.account}:stack/Bankai-nonprod-*/*`],
     }));
+    trustedAgentRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['ecs:DescribeServices', 'ecs:DescribeTaskDefinition'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'aws:RequestedRegion': config.region } },
+    }));
     const agentHostKeyArn = `arn:${cdk.Aws.PARTITION}:secretsmanager:${config.region}:${config.account}:secret:jenkins-agent-host-private-key-*`;
     for (const agentRole of [prValidationRole, trustedAgentRole]) {
       agentRole.addToPolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [agentHostKeyArn] }));

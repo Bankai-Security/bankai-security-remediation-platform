@@ -320,6 +320,12 @@ describe('BankaiFoundationStack', () => {
     expect(policies).toContain('secret:bankai-e2e-*');
   });
 
+  it('allows trusted E2E agents to read nonproduction ECS release metadata', () => {
+    const policies = JSON.stringify(nonprod.findResources('AWS::IAM::Policy'));
+    expect(policies).toContain('ecs:DescribeServices');
+    expect(policies).toContain('ecs:DescribeTaskDefinition');
+  });
+
   it('creates production deployment roles without a production Jenkins controller', () => {
     const roles = JSON.stringify(production.findResources('AWS::IAM::Role'));
     expect(roles).toContain('bankai-production-deployment');
