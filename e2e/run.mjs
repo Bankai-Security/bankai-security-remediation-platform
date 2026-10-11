@@ -159,14 +159,32 @@ async function fullWorkflow() {
     ticket = created.tickets[0];
   });
   await check('Quincy remediation, PR, verification, and ticket state converge', async () => {
-    ticket = await poll('remediation workflow', async () => {
-      const listing = await json(await client.request(`/api/projects/${project.id}/tickets`), [200]);
-      const current = listing.tickets.find((item) => item.id === ticket.id);
-      if (!current) throw new Error('ticket disappeared during remediation');
-      const failure = current.githubPrError || current.ciError;
-      if (failure && current.ciStatus === 'failed') throw new Error(`remediation failed: ${failure}`);
-      return { done: Boolean(current.githubPrNumber) && current.ciStatus === 'passed', value: current };
-    }, 45 * 60_000);
+    let lastState = null;
+    try {
+      ticket = await poll('remediation workflow', async () => {
+        const listing = await json(await client.request(`/api/projects/${project.id}/tickets`), [200]);
+        const current = listing.tickets.find((item) => item.id === ticket.id);
+        if (!current) throw new Error('ticket disappeared during remediation');
+        lastState = {
+          status: current.status ?? null,
+          githubPrNumber: current.githubPrNumber ?? null,
+          githubPrState: current.githubPrState ?? null,
+          githubPrError: current.githubPrError ?? null,
+          ciStatus: current.ciStatus ?? null,
+          ciError: current.ciError ?? null,
+        };
+        if (current.githubPrError) throw new Error(`remediation failed: ${current.githubPrError}`);
+        if (current.ciStatus === 'failed' || current.ciStatus === 'pending_setup') {
+          throw new Error(`remediation CI ${current.ciStatus}: ${current.ciError ?? 'no CI error was recorded'}`);
+        }
+        return { done: Boolean(current.githubPrNumber) && current.ciStatus === 'passed', value: current };
+      }, 45 * 60_000);
+    } catch (error) {
+      if (String(error).includes('did not finish') && lastState) {
+        throw new Error(`${error.message}; last ticket state: ${JSON.stringify(lastState)}`);
+      }
+      throw error;
+    }
     assert(['In Review', 'Done'].includes(ticket.status), `unexpected final ticket status ${ticket.status}`);
     githubCleanup.pullRequest = ticket.githubPrNumber;
   });
