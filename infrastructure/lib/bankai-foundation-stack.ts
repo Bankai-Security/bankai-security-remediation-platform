@@ -372,6 +372,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       actions: ['s3:GetObject', 's3:PutObject'],
       resources: [jobBucket.arnForObjects('jobs/*')],
     }));
+    jobKey.grantEncryptDecrypt(codeBuildProject);
     quincyRepository.grantPull(codeBuildProject);
     backendSecret.grantRead(codeBuildProject);
 
