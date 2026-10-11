@@ -471,6 +471,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
       resources: [jobBucket.arnForObjects('jobs/*')],
     }));
+    jobKey.grantEncryptDecrypt(quincyTask.taskRole);
     const fileSystemActions = ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'];
     quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
       actions: fileSystemActions,
