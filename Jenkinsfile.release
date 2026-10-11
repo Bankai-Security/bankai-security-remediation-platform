@@ -73,14 +73,6 @@ pipeline {
           bash scripts/release/assume-role.sh "$DEPLOYMENT_ROLE_ARN" deployment "bankai-preflight-deploy-$BUILD_NUMBER"
           bash scripts/release/assume-role.sh "$CLOUDFORMATION_ROLE_ARN" cloudformation "bankai-preflight-cfn-$BUILD_NUMBER"
         '''
-        withCredentials([string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY')]) {
-          sh '''
-            set -eu
-            set +x
-            . release/runtime.env
-            curl --fail --silent --show-error "https://api.${DATADOG_SITE}/api/v1/validate" -H "DD-API-KEY: $DD_API_KEY" > reports/release/datadog-preflight.json
-          '''
-        }
       }
     }
 
@@ -278,30 +270,26 @@ pipeline {
       post { always { junit testResults: 'reports/e2e/junit.xml', allowEmptyResults: false } }
     }
 
-    stage('Record release and Datadog event') {
+    stage('Record release') {
       steps {
-        withCredentials([string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY')]) {
-          sh '''
-            set -euo pipefail
-            set -a
-            . release/runtime.env
-            set +a
-            export JENKINS_BUILD="${BUILD_URL:-$BUILD_TAG}"
-            node scripts/release/write-release-manifest.mjs release/release-manifest.json
-            output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
-            bucket=$(output FrontendBucketName)
-            aws s3 cp release/release-manifest.json "s3://$bucket/releases/$RELEASE_ID/release-manifest.json" --profile deployment --region "$AWS_REGION" --only-show-errors
-            node -e "require('fs').writeFileSync('release/datadog-event.json', JSON.stringify({title:'Bankai nonprod deployment',text:'Jenkins '+process.env.BUILD_URL+' deployed Bankai '+process.env.BANKAI_SHA+' and Quincy '+process.env.QUINCY_SHA,tags:['env:nonprod','service:bankai-api','service:bankai-worker','service:quincy','version:'+process.env.BANKAI_SHA,'git.sha:'+process.env.BANKAI_SHA,'deployment.id:'+process.env.RELEASE_ID,'jenkins.build:'+process.env.BUILD_NUMBER],alert_type:'success'}))"
-            curl --fail --silent --show-error -X POST "https://api.${DATADOG_SITE}/api/v1/events" -H "DD-API-KEY: $DD_API_KEY" -H 'Content-Type: application/json' --data @release/datadog-event.json > release/datadog-response.json
-          '''
-        }
+        sh '''
+          set -euo pipefail
+          set -a
+          . release/runtime.env
+          set +a
+          export JENKINS_BUILD="${BUILD_URL:-$BUILD_TAG}"
+          node scripts/release/write-release-manifest.mjs release/release-manifest.json
+          output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
+          bucket=$(output FrontendBucketName)
+          aws s3 cp release/release-manifest.json "s3://$bucket/releases/$RELEASE_ID/release-manifest.json" --profile deployment --region "$AWS_REGION" --only-show-errors
+        '''
       }
     }
   }
 
   post {
     always {
-      sh 'rm -rf .aws release/datadog-event.json release/datadog-response.json || :'
+      sh 'rm -rf .aws || :'
       script {
         if (fileExists('release/runtime.env')) {
           archiveArtifacts artifacts: 'release/**/*,reports/**/*,quincy/reports/**/*', excludes: '**/*-tmp/**,**/*-cache/**', allowEmptyArchive: false, fingerprint: true

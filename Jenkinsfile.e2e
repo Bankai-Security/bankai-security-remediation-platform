@@ -54,8 +54,6 @@ pipeline {
         withCredentials([
           usernamePassword(credentialsId: 'bankai-e2e-user', usernameVariable: 'E2E_USER_EMAIL', passwordVariable: 'E2E_USER_PASSWORD'),
           string(credentialsId: 'bankai-e2e-github-token', variable: 'E2E_GITHUB_TOKEN'),
-          string(credentialsId: 'jenkins-datadog-api-key', variable: 'DD_API_KEY'),
-          string(credentialsId: 'jenkins-datadog-app-key', variable: 'DD_APP_KEY'),
         ]) {
           sh '''
             set -euo pipefail
@@ -64,12 +62,6 @@ pipeline {
             export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
             export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
             export E2E_GITHUB_REPOSITORY="$(node -p "require('./infrastructure/config/nonprod.json').githubOrganization")/bankai-e2e-vulnerable"
-            task_definition=$(aws ecs describe-services --cluster bankai-nonprod --services bankai-nonprod-api --query 'services[0].taskDefinition' --output text)
-            export DEPLOYMENT_ID=$(aws ecs describe-task-definition --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[].environment[?name=='DEPLOYMENT_ID'].value[] | [0]" --output text)
-            export GIT_SHA=$(aws ecs describe-task-definition --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[].environment[?name=='GIT_SHA'].value[] | [0]" --output text)
-            export JENKINS_BUILD=$(aws ecs describe-task-definition --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[].environment[?name=='JENKINS_BUILD'].value[] | [0]" --output text)
-            quincy_task_definition=$(aws ecs describe-services --cluster bankai-nonprod --services bankai-nonprod-quincy --query 'services[0].taskDefinition' --output text)
-            export QUINCY_GIT_SHA=$(aws ecs describe-task-definition --task-definition "$quincy_task_definition" --query "taskDefinition.containerDefinitions[].environment[?name=='GIT_SHA'].value[] | [0]" --output text)
             node e2e/run.mjs --mode full
           '''
         }

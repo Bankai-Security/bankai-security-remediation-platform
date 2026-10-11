@@ -170,34 +170,6 @@ async function fullWorkflow() {
     assert(['In Review', 'Done'].includes(ticket.status), `unexpected final ticket status ${ticket.status}`);
     githubCleanup.pullRequest = ticket.githubPrNumber;
   });
-  await check('Datadog receives correlation and no sentinel secret', async () => {
-    const apiKey = required('DD_API_KEY');
-    const appKey = required('DD_APP_KEY');
-    const site = process.env.DATADOG_SITE ?? 'datadoghq.com';
-    await new Promise((resolve) => setTimeout(resolve, 30_000));
-    const search = async (query) => fetch(`https://api.${site}/api/v2/logs/events/search`, { method: 'POST', headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey, 'content-type': 'application/json' }, body: JSON.stringify({ filter: { from: 'now-30m', to: 'now', query }, page: { limit: 10 } }), signal: AbortSignal.timeout(30_000) }).then(async (response) => json(response, [200]));
-    const expectedMetadata = {
-      'deployment.id': required('DEPLOYMENT_ID'),
-      'jenkins.build': required('JENKINS_BUILD'),
-    };
-    const gitShaByService = {
-      'bankai-api': required('GIT_SHA'),
-      'bankai-worker': required('GIT_SHA'),
-      quincy: required('QUINCY_GIT_SHA'),
-      'quincy-codebuild': required('QUINCY_GIT_SHA'),
-    };
-    for (const service of Object.keys(gitShaByService)) {
-      const correlated = await search(`@service:${service} @env:nonprod @request_id:${requestId}`);
-      assert(correlated.data?.length > 0, `Datadog has no ${service} telemetry for request ${requestId}`);
-      const attributes = correlated.data[0]?.attributes?.attributes ?? {};
-      for (const [name, value] of Object.entries(expectedMetadata)) {
-        assert(String(attributes[name]) === value, `${service} log ${name} did not match release metadata`);
-      }
-      assert(String(attributes['git.sha']) === gitShaByService[service], `${service} log git.sha did not match its deployed revision`);
-    }
-    const leaked = await search(`"bankai-e2e-intentionally-invalid"`);
-    assert((leaked.data?.length ?? 0) === 0, 'the secret-redaction sentinel appeared in Datadog logs');
-  });
 }
 
 async function cleanup() {

@@ -28,9 +28,7 @@ trusted VPC agent it verifies:
 7. promote it to a ticket and require remediation to be queued;
 8. wait for Quincy/CodeBuild to produce a PR and Bankai verification to pass;
 9. require the ticket to reach `In Review` or `Done`;
-10. query Datadog for the E2E correlation ID and prove the invalid-token
-    sentinel was not indexed;
-11. delete the Bankai project, registered webhook, and remediation branch.
+10. delete the Bankai project, registered webhook, and remediation branch.
 
 The real workflow exercises API-to-Redis enqueueing, worker consumption,
 Bankai-to-Quincy authentication and response contracts, Quincy CodeBuild
@@ -47,7 +45,7 @@ token handling without fault-injecting the shared non-production services.
   scheduled nightly.
 - The same job in `full` mode is the mandatory pre-production gate.
 - All executions use the single-use `trusted-docker` fleet. PR jobs cannot
-  obtain the E2E, GitHub, Datadog, or deployment credentials.
+  obtain the E2E, GitHub, or deployment credentials.
 - Any skipped/missing JUnit output, failed check, telemetry gap, or cleanup
   error fails the job.
 
@@ -62,13 +60,10 @@ Before enabling the schedule:
    `e2e/fixtures/seeded-vulnerability.csv`, a scanner rule producing
    `BANKAI-E2E-001`, and the real `bankai-verify.yml` commands.
 3. Create a dedicated confirmed Supabase E2E user with no production access.
-4. Store `bankai-e2e-user`, `bankai-e2e-github-token`, and
-   `jenkins-datadog-app-key` as Jenkins-discoverable Secrets Manager
-   credentials. Restrict the GitHub token to that single repository and the
-   Datadog application key to log search.
-5. Ensure the Datadog log pipeline retains `x-bankai-e2e-run-id` correlation
-   but redacts authorization, cookies, tokens, and secret-shaped fields.
-6. Run `npm run validate:e2e` from `infrastructure/`, then invoke the Jenkins
+4. Store `bankai-e2e-user` and `bankai-e2e-github-token` as
+   Jenkins-discoverable Secrets Manager credentials. Restrict the GitHub token
+   to that single repository.
+5. Run `npm run validate:e2e` from `infrastructure/`, then invoke the Jenkins
    job once manually in `full` mode and confirm the project, webhook, branch,
    and any temporary CodeBuild/S3 job objects are gone.
 

@@ -6,7 +6,7 @@ const stages = [
   'Rerun Quincy quality gates', 'Build release assets once', 'Publish immutable images',
   'Synthesize exact release', 'Prepare and review change set', 'Execute reviewed change set',
   'Wait for services', 'Publish frontend', 'Smoke and integration checks',
-  'Record release and Datadog event',
+  'Record release',
 ];
 let previous = -1;
 for (const stage of stages) {
@@ -25,5 +25,8 @@ for (const required of ["label 'trusted-docker'", "BRANCH_NAME != 'main'", '--me
 }
 for (const forbidden of [':latest', '--force-new-deployment', 'allowEmptyArchive: true', 'returnStatus: true', '|| true', 'dir /source', 'ecr describe-images']) {
   if (pipeline.includes(forbidden)) throw new Error(`forbidden release construct: ${forbidden}`);
+}
+for (const removed of ['jenkins-datadog-api-key', '/api/v1/validate', '/api/v1/events']) {
+  if (pipeline.includes(removed)) throw new Error(`retired Datadog dependency remains in release pipeline: ${removed}`);
 }
 console.log(`Release Jenkinsfile policy passed: ${stages.length} ordered stages and fail-closed deployment controls.`);

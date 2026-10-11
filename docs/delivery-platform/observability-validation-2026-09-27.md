@@ -1,6 +1,12 @@
-# Observability validation — updated 2026-10-03 IST
+# Observability validation — updated 2026-10-11 IST
 
 Phase 10 status: **PARTIAL**. AWS metrics, structured application logs, bounded facets, 12 log-based metrics, five dashboards, nine monitors, API/worker/Quincy APM, and controlled Redis and E2E alert/recovery tests are live. The full synthetic remediation, the remaining critical-monitor recovery tests, representative-day cost review, and owner-approved SLO activation remain open.
+
+## Datadog trial retirement
+
+The Datadog trial ended before the remaining live gates were completed. Commit pending from this update removes Datadog credentials, API validation, event publication, and log-search assertions from `Jenkinsfile.release` and `Jenkinsfile.e2e`. Release manifests continue to be written and uploaded to the versioned S3 release path, and the full E2E continues to require the real API → Redis worker → Quincy → CodeBuild → GitHub workflow and cleanup.
+
+The Datadog configuration scripts and the historical evidence below remain in the repository for audit and possible future reactivation. Datadog-only monitor recovery, cost, trace-correlation, and SLO activation gates are closed as **not completed before trial expiry**; they are not reported as passed. CloudWatch logs and existing AWS alarms remain the available operational evidence.
 
 ## Live evidence
 
@@ -56,15 +62,13 @@ Release 24 produced live Quincy APM data in Datadog under `env:nonprod service:q
 
 ## Remaining live gates
 
-1. Create the dedicated nonproduction `bankai-e2e-user` and single-repository `bankai-e2e-github-token` credentials, then rerun `Jenkinsfile.e2e` in `full` mode.
-2. Collect representative job traffic before adding queue depth/age thresholds. The nine baseline-backed monitors are active.
-3. Observe a real CodeBuild metric and structured Quincy failure event before creating those additional monitors. Define an EFS capacity policy before creating an EFS capacity monitor.
-4. Trigger and recover the remaining critical nonproduction monitors. Redis and E2E alert/recovery transitions are proven.
-5. Activate SLOs only after their exact targets and owners are approved.
-6. Recheck usage and cost after one representative traced day. Grant the scoped Jenkins Datadog application key trace-read access only if automated trace assertions are retained; UI validation works with the current user session. Recheck the monthly estimate after Datadog Plan & Usage becomes available.
+1. Rerun `Jenkinsfile.e2e` in `full` mode with the existing dedicated nonproduction user and single-repository GitHub credential.
+2. Verify the real remediation produces a CodeBuild result and synthetic pull request, then confirm cleanup removes the isolated project, webhook, branch, and pull request.
+3. Keep owner-approved SLO activation deferred unless a monitoring platform is restored and new representative traffic is observed.
 
 ## Rollback
 
 - Revert the Phase 10 commit and run the nonproduction release pipeline to restore the previous task definitions.
 - Remove only the three Phase 10 subscription filters if forwarding itself must be rolled back; do not touch old groups or production resources.
 - Keep existing CloudWatch alarms until Datadog monitors have passed alert and recovery tests.
+- If the Datadog subscription is not renewed, disable its AWS log subscriptions and runtime sidecars in a separately reviewed infrastructure change after confirming CloudWatch coverage; the pipeline retirement does not delete cloud resources.
