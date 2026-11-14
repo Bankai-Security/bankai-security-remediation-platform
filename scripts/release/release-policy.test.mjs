@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { stackOutput } from './stack-output.mjs';
+import { requiredSmokeChecks } from './verify-smoke-evidence.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const review = fileURLToPath(new URL('./review-change-set.mjs', import.meta.url));
@@ -52,7 +53,7 @@ test('preflight validates every output before appending a usable shell environme
   writeFileSync(runtimePath, 'BANKAI_SHA=existing\n');
   execFileSync(process.execPath, [prepare, configPath, stackPath, runtimePath]);
   assert.match(readFileSync(runtimePath, 'utf8'), /PUBLISHING_ROLE_ARN=arn:aws:iam::123456789012:role\/bankai-nonprod-ecr-publishing\n/);
-  assert.match(readFileSync(runtimePath, 'utf8'), /DATADOG_SITE=datadoghq.com\n/);
+  assert.doesNotMatch(readFileSync(runtimePath, 'utf8'), /DATADOG_SITE/);
   const before = readFileSync(runtimePath, 'utf8');
   stack.Outputs = stack.Outputs.filter(output => !output.OutputKey.includes('EcrPublishingRoleArn'));
   writeFileSync(stackPath, JSON.stringify({ Stacks: [stack] }));
@@ -60,7 +61,7 @@ test('preflight validates every output before appending a usable shell environme
   assert.equal(readFileSync(runtimePath, 'utf8'), before);
 });
 
-for (const fault of ['wrong-account-role', 'wrong-repository', 'busy-stack', 'wrong-stack', 'invalid-datadog-site']) {
+for (const fault of ['wrong-account-role', 'wrong-repository', 'busy-stack', 'wrong-stack']) {
   test(`preflight refuses ${fault}`, () => {
     const dir = mkdtempSync(join(tmpdir(), 'bankai-preflight-'));
     const { config, stack } = releaseFixture();
@@ -193,11 +194,16 @@ test('writes the required traceability manifest and artifact checksum', () => {
   const artifact = join(directory, 'frontend.tgz');
   const output = join(directory, 'manifest.json');
   writeFileSync(artifact, 'frontend');
+  const template = join(directory, 'template.json');
+  const smoke = join(directory, 'smoke.json');
+  writeFileSync(template, '{"Resources":{}}');
+  writeFileSync(smoke, JSON.stringify({ mode: 'smoke', release: { deploymentId: 'bankai-test-7', gitSha: 'a'.repeat(40), quincyGitSha: 'b'.repeat(40), jenkinsBuild: 'build-7' }, results: requiredSmokeChecks.map(name => ({ name, error: null })) }));
   execFileSync(process.execPath, [manifest, output], { env: { ...process.env,
     BANKAI_SHA: 'a'.repeat(40), QUINCY_SHA: 'b'.repeat(40), BANKAI_IMAGE_DIGEST: `sha256:${'c'.repeat(64)}`,
     QUINCY_IMAGE_DIGEST: `sha256:${'d'.repeat(64)}`, FRONTEND_ARTIFACT: artifact, JENKINS_BUILD: 'build-7',
     CDK_SHA: 'a'.repeat(40), CHANGE_SET_ID: 'cs-7', AWS_ACCOUNT_ID: '123456789012', AWS_REGION: 'ap-south-1',
-    RELEASE_TIMESTAMP: '2026-09-21T00:00:00Z',
+    RELEASE_TIMESTAMP: '2026-09-21T00:00:00Z', RELEASE_ID: 'bankai-test-7',
+    INFRASTRUCTURE_TEMPLATE: template, SMOKE_RESULT: smoke,
   } });
   const value = JSON.parse(readFileSync(output));
   assert.equal(value.environment, 'nonprod');

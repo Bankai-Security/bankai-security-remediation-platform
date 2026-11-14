@@ -172,11 +172,9 @@ async function analyzeChunk(files: ScannableFile[], context: GeminiScanContext):
     return result.data.findings;
   }
 
-  // Best-effort, matching the rest of this codebase's philosophy for
-  // external integrations: a chunk Gemini couldn't analyze after a retry is
-  // dropped (logged above) rather than failing the whole scan.
-  logger.error({ files: files.map((f) => f.path) }, "Dropping this chunk after repeated AI failures");
-  return [];
+  // An unavailable or invalid assessment is not evidence of a clean scan.
+  // Propagate failure before findings are reconciled or the scan is marked Done.
+  throw new Error("AI assessment failed after retries; scan is incomplete. Check provider access and response errors.");
 }
 
 export async function analyzeFiles(files: ScannableFile[], context: GeminiScanContext): Promise<GeminiFinding[]> {

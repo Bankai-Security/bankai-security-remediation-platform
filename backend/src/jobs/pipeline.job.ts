@@ -1,6 +1,12 @@
 import type { Job } from "bullmq";
 import { env } from "../env.js";
-import { runQuincyTriageScan } from "../lib/quincy.js";
+import {
+  explicitQuincyTargetComparison,
+  persistQuincyScanEvidence,
+  quincyEvidenceIsComparable,
+  quincyEvidenceSupportsVerification,
+  runQuincyTriageScan,
+} from "../lib/quincy.js";
 import { securityRegression } from "../lib/security-regression.js";
 import { enqueueFixRetry } from "../lib/queue.js";
 import { ensureCiBootstrapReady } from "../lib/ci-bootstrap.js";
@@ -34,6 +40,8 @@ interface PipelineFindingRow {
   cwe: string | null;
   line_start: number | null;
   line_end: number | null;
+  legacy_fingerprint: string | null;
+  occurrence_id: string | null;
 }
 
 // workflow_dispatch's run doesn't appear in the list-runs API instantly —
@@ -67,7 +75,7 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
 
   const { data: ticketData, error: ticketError } = await supabase
     .from("tickets")
-    .select("id, github_branch_name, ci_fix_attempt, findings(external_id, file_path, cwe, line_start, line_end)")
+    .select("id, github_branch_name, ci_fix_attempt, findings(external_id, file_path, cwe, line_start, line_end, legacy_fingerprint, occurrence_id)")
     .eq("id", ticketId)
     .eq("project_id", projectId)
     .maybeSingle();
@@ -126,12 +134,48 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
       const headSha = await getBranchHeadSha(github.creds, branch);
       const baseSha = await getBranchHeadSha(github.creds, github.defaultBranch);
       const baseline = await runQuincyTriageScan({ repo: github.creds.repo, ref: baseSha, commitSha: baseSha, scoreFindings: false, githubToken: github.creds.token });
-      const current = await runQuincyTriageScan({ repo: github.creds.repo, ref: headSha, commitSha: headSha, scoreFindings: false, githubToken: github.creds.token });
-      if (!baseline || !current) {
+      if (!baseline || !quincyEvidenceSupportsVerification(baseline, baseSha) || !baseline.evidence) {
         await setPipelineError(ticketId, "Quincy security verification is unavailable. Retry CI when Quincy is healthy.");
         return;
       }
       const finding = Array.isArray(ticket.findings) ? ticket.findings[0] : ticket.findings;
+      if (!finding || !finding.legacy_fingerprint) {
+        await setPipelineError(ticketId, "The target finding lacks the versioned identity required for security comparison.");
+        return;
+      }
+      const target = {
+        legacyFingerprint: finding.legacy_fingerprint,
+        occurrenceId: finding.occurrence_id,
+        externalId: finding.external_id,
+        filePath: finding.file_path,
+      };
+      const current = await runQuincyTriageScan({
+        repo: github.creds.repo,
+        ref: headSha,
+        commitSha: headSha,
+        scoreFindings: false,
+        githubToken: github.creds.token,
+        comparison: { baselineEvidence: baseline.evidence, target },
+      });
+      if (!current) {
+        await setPipelineError(ticketId, "Quincy security verification is unavailable. Retry CI when Quincy is healthy.");
+        return;
+      }
+      if (!quincyEvidenceIsComparable(baseline, current, baseSha, headSha)) {
+        await setPipelineError(ticketId, "Quincy security evidence is incomplete or incomparable. Retry with matching complete scanner observations.");
+        return;
+      }
+      const baselineEvidenceId = await persistQuincyScanEvidence(supabase, { projectId, result: baseline });
+      const candidateEvidenceId = await persistQuincyScanEvidence(supabase, { projectId, result: current });
+      if (!baselineEvidenceId || !candidateEvidenceId) {
+        await setPipelineError(ticketId, "Security verification evidence could not be persisted. Retry CI.");
+        return;
+      }
+      const targetComparison = explicitQuincyTargetComparison(baseline, current, target, baseSha, headSha);
+      if (targetComparison.outcome !== "not_detected") {
+        await setPipelineError(ticketId, `Quincy could not prove target removal: ${targetComparison.reason}.`);
+        return;
+      }
       const regression = securityRegression(baseline.findings, current.findings, { externalId: finding?.external_id ?? null, filePath: finding?.file_path ?? null, cwe: finding?.cwe ?? null, lineStart: finding?.line_start ?? null, lineEnd: finding?.line_end ?? null });
       if (regression) {
         await setPipelineError(ticketId, regression);
@@ -151,6 +195,13 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
         scanner: "quincy",
         baseline_findings: baseline.findings,
         current_findings: current.findings,
+        baseline_evidence_id: baselineEvidenceId,
+        candidate_evidence_id: candidateEvidenceId,
+        comparison_outcome: targetComparison.outcome,
+        comparison_reason: targetComparison.reason,
+        verification_policy: "bankai-complete-repository-differential-v1",
+        final_decision: "accepted",
+        decision_evidence_digest: current.evidence?.evidence_digest,
         verified_at: new Date().toISOString(),
       }, { onConflict: "ticket_id,commit_sha,scanner" });
       if (verificationError) {

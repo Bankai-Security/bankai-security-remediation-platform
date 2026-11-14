@@ -20,6 +20,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as cdk from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 import type { EnvironmentConfig } from './environment-config';
+import { NativeObservability } from './native-observability';
 import { JenkinsFoundation } from './jenkins-foundation';
 
 export interface BankaiFoundationStackProps extends cdk.StackProps {
@@ -101,13 +102,10 @@ export class BankaiFoundationStack extends cdk.Stack {
       imageScanOnPush: true,
       imageTagMutability: ecr.TagMutability.IMMUTABLE,
       encryption: ecr.RepositoryEncryption.AES_256,
-      emptyOnDelete: !production,
-      removalPolicy: production ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
-      lifecycleRules: [{
-        description: `Retain the newest ${config.ecrRetainedImageCount} images`,
-        maxImageCount: config.ecrRetainedImageCount,
-        rulePriority: 1,
-      }],
+      emptyOnDelete: false,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      // No count-based expiry: ECS does not protect active/rollback digests from ECR lifecycle deletion.
+
     };
     const backendRepository = new ecr.Repository(this, 'BackendRepository', {
       ...repositoryProps,
@@ -142,6 +140,13 @@ export class BankaiFoundationStack extends cdk.Stack {
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       webAclId: config.frontendWebAclArn,
       defaultRootObject: 'index.html',
+      additionalBehaviors: {
+        'runtime-config.js': {
+          origin: origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        },
+      },
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -176,43 +181,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       'QuincyApiToken',
       `bankai/${stage}/quincy-api-token`,
     );
-    const datadogApiKey = secretsmanager.Secret.fromSecretNameV2(
-      this,
-      'DatadogApiKey',
-      'DdApiKeySecret-29EQhXLytstx',
-    );
-    const datadogAgentImage = ecs.ContainerImage.fromRegistry(
-      'public.ecr.aws/datadog/agent@sha256:6c7c8091ad7ef8715aa39f863febc1f974986214cad7629f4ee43673ae5e05c7',
-    );
-    const addDatadogAgent = (task: ecs.FargateTaskDefinition, service: string) => {
-      const agent = task.addContainer('DatadogAgent', {
-        image: datadogAgentImage,
-        essential: true,
-        memoryReservationMiB: 128,
-        environment: {
-          ECS_FARGATE: 'true',
-          DD_APM_ENABLED: 'true',
-          DD_APM_NON_LOCAL_TRAFFIC: 'true',
-          DD_ENV: stage,
-          DD_SERVICE: service,
-          DD_SITE: config.datadogSite,
-          DD_LOG_LEVEL: 'WARN',
-        },
-        secrets: { DD_API_KEY: ecs.Secret.fromSecretsManager(datadogApiKey) },
-        healthCheck: {
-          command: ['CMD-SHELL', 'agent health'],
-          interval: cdk.Duration.seconds(30),
-          timeout: cdk.Duration.seconds(10),
-          retries: 3,
-          startPeriod: cdk.Duration.seconds(30),
-        },
-        logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'datadog-agent', logRetention }),
-      });
-      agent.addPortMappings({ containerPort: 8126, protocol: ecs.Protocol.TCP });
-      datadogApiKey.grantRead(task.obtainExecutionRole());
-      return agent;
-    };
-
     const appSecurityGroup = new ec2.SecurityGroup(this, 'AppSecurityGroup', {
       vpc,
       description: 'Bankai API and worker tasks',
@@ -308,7 +276,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       encryption: s3.BucketEncryption.KMS,
       encryptionKey: jobKey,
       enforceSSL: true,
-      versioned: production,
+      versioned: true,
       lifecycleRules: [{ expiration: cdk.Duration.days(production ? 7 : 1) }],
       autoDeleteObjects: !production,
       removalPolicy: production ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
@@ -392,9 +360,10 @@ export class BankaiFoundationStack extends cdk.Stack {
       vpc,
       encrypted: true,
       allowAnonymousAccess: true,
+      enableAutomaticBackups: true,
       securityGroup: fileSystemSecurityGroup,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-      removalPolicy: production ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
     const accessPoint = fileSystem.addAccessPoint('QuincyDataAccessPoint', {
       path: '/quincy-data',
@@ -433,13 +402,13 @@ export class BankaiFoundationStack extends cdk.Stack {
         GIT_SHA: quincyVersion,
         DEPLOYMENT_ID: deploymentId,
         JENKINS_BUILD: jenkinsBuild,
-        DD_AGENT_HOST: '127.0.0.1',
-        DD_TRACE_AGENT_PORT: '8126',
-        DD_LOGS_INJECTION: 'true',
-        DD_TRACE_SAMPLE_RATE: production ? '0.1' : '1.0',
-        DD_TRACE_PROPAGATION_STYLE: 'datadog,tracecontext',
-        DD_TRACE_HEADER_TAGS: 'x-request-id:request_id',
-        DD_RUNTIME_METRICS_ENABLED: 'true',
+
+
+
+
+
+
+
         LOG_FORMAT: 'json',
         MODEL_PROVIDER: 'openrouter',
         JOB_EXECUTION_BACKEND: 'codebuild',
@@ -463,8 +432,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       },
       stopTimeout: cdk.Duration.seconds(120),
     });
-    const quincyAgent = addDatadogAgent(quincyTask, 'quincy');
-    quincyContainer.addContainerDependencies({ container: quincyAgent, condition: ecs.ContainerDependencyCondition.HEALTHY });
     quincyContainer.addPortMappings({ containerPort: 8000 });
     quincyContainer.addMountPoints({ containerPath: '/app/data', sourceVolume: 'quincy-data', readOnly: false });
     quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
@@ -508,8 +475,9 @@ export class BankaiFoundationStack extends cdk.Stack {
       cloudMapOptions: { name: 'quincy' },
     });
     quincyService.node.addDependency(fileSystem.mountTargetsAvailable);
-    quincyService.autoScaleTaskCount({ minCapacity: quincyDesiredCount, maxCapacity: production ? 6 : 2 })
-      .scaleOnCpuUtilization('QuincyCpuScaling', { targetUtilizationPercent: 65 });
+    const quincyScaling = quincyService.autoScaleTaskCount({ minCapacity: quincyDesiredCount, maxCapacity: production ? 6 : 2 });
+    quincyScaling.scaleOnCpuUtilization('QuincyCpuScaling', { targetUtilizationPercent: 65 });
+    quincyScaling.scaleOnMemoryUtilization('QuincyMemoryScaling', { targetUtilizationPercent: 75 });
     const quincyApiUrl = `http://quincy.${stage}.bankai.local:8000`;
 
     const environment = {
@@ -518,15 +486,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       GIT_SHA: bankaiVersion,
       DEPLOYMENT_ID: deploymentId,
       JENKINS_BUILD: jenkinsBuild,
-      DD_AGENT_HOST: '127.0.0.1',
-      DD_TRACE_AGENT_PORT: '8126',
-      DD_LOGS_INJECTION: 'true',
-      DD_TRACE_SAMPLE_RATE: production ? '0.1' : '1.0',
-      DD_TRACE_PROPAGATION_STYLE: 'datadog,tracecontext',
-      DD_TRACE_HEADER_TAGS: 'x-request-id:request_id',
-      DD_RUNTIME_METRICS_ENABLED: 'true',
-      DD_TRACE_REMOVE_INTEGRATION_SERVICE_NAMES_ENABLED: 'true',
-      NODE_OPTIONS: '--import dd-trace/initialize.mjs',
+
       NODE_ENV: 'production',
       APP_ENV: 'production',
       PORT: '4000',
@@ -590,6 +550,7 @@ export class BankaiFoundationStack extends cdk.Stack {
       apiServiceResource.addPropertyOverride('DesiredCount', 0);
     }
     apiLoadBalancerResource.addPropertyOverride('LoadBalancerAttributes', [
+      ...(production ? [{ Key: 'deletion_protection.enabled', Value: 'true' }] : []),
       { Key: 'routing.http.drop_invalid_header_fields.enabled', Value: 'true' },
       { Key: 'routing.http.desync_mitigation_mode', Value: 'strictest' },
     ]);
@@ -602,13 +563,12 @@ export class BankaiFoundationStack extends cdk.Stack {
       StartPeriod: 30,
     });
     apiTaskResource.addPropertyOverride('ContainerDefinitions.0.StopTimeout', 60);
-    const apiAgent = addDatadogAgent(api.taskDefinition, 'bankai-api');
-    api.taskDefinition.defaultContainer?.addContainerDependencies({ container: apiAgent, condition: ecs.ContainerDependencyCondition.HEALTHY });
     api.targetGroup.configureHealthCheck({ path: '/healthz', healthyHttpCodes: '200' });
     if (redisService) api.service.node.addDependency(redisService);
     api.service.node.addDependency(quincyService);
-    api.service.autoScaleTaskCount({ minCapacity: apiDesiredCount, maxCapacity: production ? 10 : 3 })
-      .scaleOnCpuUtilization('ApiCpuScaling', { targetUtilizationPercent: 60 });
+    const apiScaling = api.service.autoScaleTaskCount({ minCapacity: apiDesiredCount, maxCapacity: production ? 10 : 3 });
+    apiScaling.scaleOnCpuUtilization('ApiCpuScaling', { targetUtilizationPercent: 60 });
+    apiScaling.scaleOnMemoryUtilization('ApiMemoryScaling', { targetUtilizationPercent: 75 });
 
     const workerTask = new ecs.FargateTaskDefinition(this, 'WorkerTask', {
       runtimePlatform,
@@ -623,8 +583,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'worker', logRetention }),
       stopTimeout: cdk.Duration.seconds(120),
     });
-    const workerAgent = addDatadogAgent(workerTask, 'bankai-worker');
-    workerContainer.addContainerDependencies({ container: workerAgent, condition: ecs.ContainerDependencyCondition.HEALTHY });
     const workerService = new ecs.FargateService(this, 'WorkerService', {
       cluster,
       serviceName: `bankai-${stage}-worker`,
@@ -640,8 +598,9 @@ export class BankaiFoundationStack extends cdk.Stack {
     workerService.node.addDependency(api.service);
     if (redisService) workerService.node.addDependency(redisService);
     workerService.node.addDependency(quincyService);
-    workerService.autoScaleTaskCount({ minCapacity: workerDesiredCount, maxCapacity: 2 })
-      .scaleOnCpuUtilization('WorkerCpuScaling', { targetUtilizationPercent: 70 });
+    const workerScaling = workerService.autoScaleTaskCount({ minCapacity: workerDesiredCount, maxCapacity: 2 });
+    workerScaling.scaleOnCpuUtilization('WorkerCpuScaling', { targetUtilizationPercent: 70 });
+    workerScaling.scaleOnMemoryUtilization('WorkerMemoryScaling', { targetUtilizationPercent: 75 });
 
     new route53.ARecord(this, 'ApiAliasRecord', {
       zone: hostedZone,
@@ -705,6 +664,25 @@ export class BankaiFoundationStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
+    // Keep retired sidecar log-group construct paths so removing paid agents
+    // cannot delete historical logs or silently change their ownership.
+    for (const task of [api.taskDefinition, workerTask, quincyTask]) {
+      const retiredAgent = new Construct(task, 'DatadogAgent');
+      new logs.LogGroup(retiredAgent, 'LogGroup', {
+        retention: logRetention, removalPolicy: cdk.RemovalPolicy.RETAIN,
+      });
+    }
+
+    new NativeObservability(this, 'NativeObservability', {
+      stage, cluster: cluster.clusterName,
+      services: [api.service.serviceName, workerService.serviceName, quincyService.serviceName, ...(redisService ? [redisService.serviceName] : [])],
+      apiLogGroup: api.taskDefinition.defaultContainer!.logDriverConfig!.options!['awslogs-group'],
+      workerLogGroup: workerContainer.logDriverConfig!.options!['awslogs-group'],
+      loadBalancer: api.loadBalancer.loadBalancerFullName, targetGroup: api.targetGroup.targetGroupFullName,
+      fileSystem: fileSystem.fileSystemId, project: codeBuildProject.projectName,
+      distribution: distribution.distributionId, webAcl: cdk.Fn.select(1, cdk.Fn.split('/', config.frontendWebAclArn)),
+    });
+
     new JenkinsFoundation(this, 'Jenkins', {
       config,
       vpc,
@@ -714,6 +692,12 @@ export class BankaiFoundationStack extends cdk.Stack {
       quincySecurityGroup,
       frontendBucket,
     });
+
+    for (const resource of this.node.findAll()) {
+      if (resource instanceof logs.CfnLogGroup || (production && resource instanceof route53.CfnRecordSet)) {
+        resource.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+      }
+    }
 
     cdk.Tags.of(this).add('Application', 'Bankai');
     cdk.Tags.of(this).add('Service', 'delivery-platform');

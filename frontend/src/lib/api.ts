@@ -1,4 +1,6 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+import { resolveApiOrigin } from './api-origin';
+
+const API_BASE_URL = resolveApiOrigin(window.__BANKAI_CONFIG__?.apiBaseUrl, import.meta.env.VITE_API_BASE_URL);
 
 export class ApiError extends Error {
   readonly status: number;

@@ -1,0 +1,8 @@
+{
+  "nonprodAccount": "926827998551",
+  "productionAccount": "643681121175",
+  "productionAccountEmail": "aws-production@bankaisecurity.com",
+  "operationsEmail": "admin@bankaisecurity.com",
+  "monthlyBudgetUsd": 50,
+  "temporaryNonprodValidationSpendApprovedOn": "2026-10-21"
+}

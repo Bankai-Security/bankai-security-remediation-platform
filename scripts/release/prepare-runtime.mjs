@@ -15,7 +15,6 @@ const values = {
   AWS_ACCOUNT_ID: config.account,
   AWS_REGION: config.region,
   STACK_NAME: stack.StackName,
-  DATADOG_SITE: config.datadogSite,
   IMAGE_ARCHITECTURE: 'arm64',
   BACKEND_REPOSITORY: stackOutput(stack, 'BackendRepositoryUri'),
   QUINCY_REPOSITORY_URI: stackOutput(stack, 'QuincyRepositoryUri'),
@@ -36,13 +35,10 @@ if (values.BACKEND_REPOSITORY !== `${registry}/bankai/nonprod/backend` ||
 for (const key of ['EcsClusterName', 'ApiServiceName', 'WorkerServiceName', 'QuincyServiceName', 'FrontendBucketName', 'FrontendDistributionId']) {
   stackOutput(stack, key);
 }
-if (!['datadoghq.com', 'datadoghq.eu', 'us3.datadoghq.com', 'us5.datadoghq.com', 'ddog-gov.com', 'ap1.datadoghq.com', 'ap2.datadoghq.com'].includes(values.DATADOG_SITE)) {
-  throw new Error('Invalid Datadog API site');
-}
 for (const [key, value] of Object.entries(values)) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_:/.-]+$/.test(value)) throw new Error(`Unsafe runtime value ${key}`);
 }
 // Validate the whole contract before writing anything; shell printf previously
 // masked failed output lookups and allowed empty role ARNs through preflight.
 appendFileSync(outputPath, Object.entries(values).map(([key, value]) => `${key}=${value}\n`).join(''), { mode: 0o600 });
-console.log('Validated release outputs, role ARNs, repositories, and observability site');
+console.log('Validated release outputs, role ARNs, repositories');

@@ -101,7 +101,7 @@ pipeline {
           npm --prefix backend run build
           npm --prefix frontend run lint
           npm --prefix frontend run test:junit
-          VITE_API_BASE_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")" npm --prefix frontend run build:verify
+          VITE_API_BASE_URL="" npm --prefix frontend run build:verify
           npm --prefix infrastructure run format:check
           npm --prefix infrastructure run build
           npm --prefix infrastructure test -- --runInBand
@@ -250,6 +250,8 @@ pipeline {
           distribution=$(output FrontendDistributionId)
           aws s3 sync frontend/dist/ "s3://$bucket/releases/$RELEASE_ID/" --profile deployment --region "$AWS_REGION" --only-show-errors
           aws s3 sync frontend/dist/ "s3://$bucket/" --profile deployment --region "$AWS_REGION" --only-show-errors
+          node scripts/release/write-runtime-config.mjs infrastructure/config/nonprod.json release/runtime-config.js
+          aws s3 cp release/runtime-config.js "s3://$bucket/runtime-config.js" --profile deployment --region "$AWS_REGION" --content-type application/javascript --cache-control no-store --only-show-errors
           aws cloudfront create-invalidation --profile deployment --distribution-id "$distribution" --paths '/*' > release/cloudfront-invalidation.json
           invalidation=$(node -p "require('./release/cloudfront-invalidation.json').Invalidation.Id")
           aws cloudfront wait invalidation-completed --profile deployment --distribution-id "$distribution" --id "$invalidation"
@@ -261,6 +263,11 @@ pipeline {
       steps {
         sh '''
           set -euo pipefail
+          set -a
+          . release/runtime.env
+          set +a
+          export DEPLOYMENT_ID="$RELEASE_ID" GIT_SHA="$BANKAI_SHA" QUINCY_GIT_SHA="$QUINCY_SHA"
+          export JENKINS_BUILD="${BUILD_URL:-$BUILD_TAG}"
           export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
           export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
           export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
@@ -278,6 +285,8 @@ pipeline {
           . release/runtime.env
           set +a
           export JENKINS_BUILD="${BUILD_URL:-$BUILD_TAG}"
+          export INFRASTRUCTURE_TEMPLATE="release/cdk.out/$STACK_NAME.template.json"
+          export SMOKE_RESULT="reports/e2e/result.json"
           node scripts/release/write-release-manifest.mjs release/release-manifest.json
           output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
           bucket=$(output FrontendBucketName)

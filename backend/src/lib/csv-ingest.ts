@@ -34,6 +34,10 @@ export interface NormalizedFinding {
   lineEnd?: number | null;
   commitSha?: string | null;
   source?: "csv" | "github_ai";
+  scannerProvenance?: unknown[] | null;
+  legacyFingerprint?: string | null;
+  occurrenceId?: string | null;
+  confidenceAsReported?: string | null;
 }
 
 // Scanner exports don't agree on column names, so each canonical field
@@ -271,6 +275,10 @@ export interface FindingUpsertRow {
   line_end: number | null;
   commit_sha: string | null;
   source: "csv" | "github_ai" | "jira_import";
+  scanner_provenance?: unknown[] | null;
+  legacy_fingerprint?: string | null;
+  occurrence_id?: string | null;
+  confidence_as_reported?: string | null;
 }
 
 export interface IngestCounts {
@@ -284,6 +292,11 @@ export interface IngestPlan {
   upsertRows: FindingUpsertRow[];
   resolvedFingerprints: string[];
   counts: IngestCounts;
+}
+
+export interface MissingResolutionPolicy {
+  /** Only explicit, comparison-backed negative evidence may resolve these fingerprints. */
+  allowedFingerprints: ReadonlySet<string>;
 }
 
 // Rule-based stand-in for "AI confidence" — not a trained model. Weighted so
@@ -308,6 +321,7 @@ export function planIngest(
   // there's no CSV data to say which one a given row belongs to, so it's
   // left null ("Unassigned") rather than guessed.
   defaultService: string | null = null,
+  missingResolutionPolicy?: MissingResolutionPolicy,
 ): IngestPlan {
   const existingByFingerprint = new Map(existing.map((f) => [f.fingerprint, f]));
   const seenFingerprints = new Set<string>();
@@ -375,11 +389,19 @@ export function planIngest(
       line_end: row.lineEnd ?? null,
       commit_sha: row.commitSha ?? null,
       source: row.source ?? "csv",
+      scanner_provenance: row.scannerProvenance ?? null,
+      legacy_fingerprint: row.legacyFingerprint ?? null,
+      occurrence_id: row.occurrenceId ?? null,
+      confidence_as_reported: row.confidenceAsReported ?? null,
     });
   }
 
   const resolvedFingerprints = existing
-    .filter((f) => !seenFingerprints.has(f.fingerprint) && f.bucket !== "Resolved")
+    .filter((f) =>
+      !seenFingerprints.has(f.fingerprint)
+      && f.bucket !== "Resolved"
+      && (!missingResolutionPolicy || missingResolutionPolicy.allowedFingerprints.has(f.fingerprint)),
+    )
     .map((f) => f.fingerprint);
   counts.resolved = resolvedFingerprints.length;
 

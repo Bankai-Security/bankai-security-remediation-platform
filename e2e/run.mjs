@@ -101,8 +101,15 @@ async function smoke() {
     assert(response.ok && /<div id=["']root["']/.test(html), 'CloudFront did not return the frontend boot document');
     const assets = [...html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css))["']/g)].map((match) => new URL(match[1], `${frontend}/`).href);
     assert(assets.length > 0, 'frontend document contains no versioned JS/CSS assets');
-    const bodies = await Promise.all(assets.filter((url) => url.endsWith('.js')).map((url) => fetch(url).then((result) => result.text())));
-    assert(bodies.some((body) => body.includes(new URL(api).hostname)), 'frontend bundle is not configured for the non-production Bankai API');
+    await Promise.all(assets.map(async url => {
+      const asset = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      assert(asset.ok, `frontend asset failed with HTTP ${asset.status}`);
+    }));
+    const configResponse = await fetch(`${frontend}/runtime-config.js`, { signal: AbortSignal.timeout(30_000) });
+    const configText = await configResponse.text();
+    const match = configText.match(/^window\.__BANKAI_CONFIG__\s*=\s*(\{[^\n]+\});\s*$/);
+    assert(configResponse.ok && match, 'missing deployment runtime configuration');
+    assert(JSON.parse(match[1]).apiBaseUrl === new URL(api).origin, 'frontend runtime configuration targets the wrong API');
   });
 }
 

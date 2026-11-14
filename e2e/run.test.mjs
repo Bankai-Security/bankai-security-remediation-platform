@@ -19,6 +19,10 @@ test('smoke runner verifies Redis, Quincy rejection, CloudFront, and cleanup', a
       return send(response, 401, { detail: 'invalid token' });
     }
     if (request.url === '/assets/app.js') { response.writeHead(200, { 'content-type': 'application/javascript' }); return response.end('const api="127.0.0.1";'); }
+    if (request.url === '/runtime-config.js') {
+      response.writeHead(200, { 'content-type': 'application/javascript' });
+      return response.end(`window.__BANKAI_CONFIG__ = ${JSON.stringify({ apiBaseUrl: `http://127.0.0.1:${server.address().port}` })};`);
+    }
     response.writeHead(200, { 'content-type': 'text/html' }); response.end('<div id="root"></div><script src="/assets/app.js"></script>');
   });
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));

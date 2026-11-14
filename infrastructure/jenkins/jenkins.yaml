@@ -150,18 +150,6 @@ unclassified:
       filters:
         - key: "tag-key"
           values: ["jenkins:credentials:type"]
-  datadogGlobalConfiguration:
-    datadogClientConfiguration:
-      datadogApiConfiguration:
-        intake:
-          datadogIntakeSite:
-            site: "${DATADOG_SITE}"
-        apiKey:
-          datadogCredentialsApiKey:
-            credentialsId: "jenkins-datadog-api-key"
-    enableCiVisibility: true
-    ciInstanceName: "bankai-jenkins"
-    collectBuildLogs: true
 
 jobs:
   - script: >
@@ -237,7 +225,7 @@ jobs:
       }
   - script: >
       pipelineJob('bankai-nonprod-observability') {
-        description('Idempotent, ordered Datadog configuration for nonproduction: metrics must be verified before dashboards.')
+        description('Read-only AWS inventory and local native-observability validation.')
         definition {
           cpsScm {
             scm {

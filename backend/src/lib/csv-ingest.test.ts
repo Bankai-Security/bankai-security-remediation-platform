@@ -47,4 +47,20 @@ describe("finding normalization and deduplication", () => {
     const shifted = computeAiFingerprint({ filePath: "SRC/DB.TS", cwe: "cwe-89", lineStart: 29 });
     expect(first).toBe(shifted);
   });
+
+  it("preserves missing findings when no explicit negative evidence authorizes resolution", () => {
+    const plan = planIngest(
+      "project",
+      "scan",
+      [{ fingerprint: "id:old", severity: "Low", cvssScore: null, bucket: "In Progress" }],
+      [],
+      new Date("2026-09-19T00:00:00Z"),
+      policy,
+      null,
+      { allowedFingerprints: new Set() },
+    );
+
+    expect(plan.resolvedFingerprints).toEqual([]);
+    expect(plan.counts.resolved).toBe(0);
+  });
 });

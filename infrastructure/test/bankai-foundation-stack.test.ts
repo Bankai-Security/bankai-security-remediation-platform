@@ -138,28 +138,26 @@ describe('BankaiFoundationStack', () => {
     }
   });
 
-  it('runs a digest-pinned Datadog APM agent beside every application container', () => {
-    const tasks = Object.values(nonprod.findResources('AWS::ECS::TaskDefinition'));
-    const applicationTasks = tasks.filter(task => task.Properties.ContainerDefinitions.some(
-      (container: { Environment?: { Name: string }[] }) => container.Environment?.some(entry => entry.Name === 'DD_AGENT_HOST')));
-    expect(applicationTasks).toHaveLength(3);
-    for (const task of applicationTasks) {
-      const agent = task.Properties.ContainerDefinitions.find((container: { Name: string }) => container.Name === 'DatadogAgent');
-      expect(agent).toBeDefined();
-      expect(agent.Image).toMatch(/^public\.ecr\.aws\/datadog\/agent@sha256:[0-9a-f]{64}$/);
-      expect(agent.Secrets.some((entry: { Name: string }) => entry.Name === 'DD_API_KEY')).toBe(true);
-      expect(agent.Environment).toContainEqual({ Name: 'DD_APM_ENABLED', Value: 'true' });
-      expect(agent.Environment).toContainEqual({ Name: 'ECS_FARGATE', Value: 'true' });
-      const tracedContainer = task.Properties.ContainerDefinitions.find(
-        (container: { Name: string; Environment?: { Name: string; Value: string }[] }) =>
-          container.Environment?.some(entry => entry.Name === 'DD_AGENT_HOST'),
-      );
-      expect(tracedContainer).toBeDefined();
-      if (tracedContainer?.Name !== 'Quincy') {
-        expect(tracedContainer.Environment).toContainEqual({
-          Name: 'NODE_OPTIONS', Value: '--import dd-trace/initialize.mjs',
-        });
-      }
+  it('uses native monitoring without paid agents or automatic artifact expiration', () => {
+    const tasks = JSON.stringify(nonprod.findResources('AWS::ECS::TaskDefinition'));
+    expect(tasks).not.toContain('DatadogAgent');
+    expect(tasks).not.toContain('dd-trace/initialize');
+    nonprod.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    nonprod.resourceCountIs('AWS::SNS::Topic', 1);
+    nonprod.resourceCountIs('AWS::Budgets::Budget', 1);
+    const filters = Object.values(nonprod.findResources('AWS::Logs::MetricFilter'));
+    expect(filters.length).toBeGreaterThan(10);
+    for (const f of filters) expect(f.Properties.MetricTransformations[0].Dimensions).toBeUndefined();
+    expect(JSON.stringify(filters)).toContain('ci-pipeline');
+    for (const repo of Object.values(production.findResources('AWS::ECR::Repository'))) expect(repo.Properties.LifecyclePolicy).toBeUndefined();
+    production.hasResourceProperties('AWS::EFS::FileSystem', { BackupPolicy: { Status: 'ENABLED' } });
+    const alarms = Object.values(nonprod.findResources('AWS::CloudWatch::Alarm'));
+    expect(alarms.some(a => a.Properties.MetricName === 'FailedBuilds')).toBe(true);
+  });
+
+  it('denies production role assumption until an independent production principal is configured', () => {
+    for (const role of Object.values(production.findResources('AWS::IAM::Role')).filter(r => /bankai-production-(deployment|cloudformation-deployment)$/.test(r.Properties.RoleName ?? ''))) {
+      expect(role.Properties.AssumeRolePolicyDocument.Statement).toContainEqual(expect.objectContaining({ Effect: 'Deny', Action: 'sts:AssumeRole' }));
     }
   });
 
@@ -253,7 +251,7 @@ describe('BankaiFoundationStack', () => {
   });
 
   it('uses customer-managed rotating keys and attaches the global CloudFront WAF', () => {
-    production.resourceCountIs('AWS::KMS::Key', 2);
+    production.resourceCountIs('AWS::KMS::Key', 3);
     production.hasResourceProperties('AWS::KMS::Key', { EnableKeyRotation: true });
     production.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: Match.objectLike({

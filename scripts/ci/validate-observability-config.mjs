@@ -1,114 +1,14 @@
-import { readFileSync, rmSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-
-const root = new URL('../../', import.meta.url);
-const pipeline = readFileSync(new URL('Jenkinsfile.observability', root), 'utf8');
-for (const required of [
-  "label 'linux'",
-  "choices: ['baseline', 'metrics', 'dashboards', 'monitor-validate', 'monitors', 'dry-run']",
-  'jenkins-datadog-api-key',
-  'jenkins-datadog-app-key',
-  'configure-datadog.mjs --metrics',
-  'configure-datadog.mjs --dashboards',
-  'configure-datadog.mjs --monitor-validate',
-  'configure-datadog.mjs --monitors',
-  'configure-datadog.mjs --baseline',
-  'configure-datadog.mjs --all --dry-run',
-]) {
-  if (!pipeline.includes(required)) throw new Error(`missing observability pipeline control: ${required}`);
+import { readFileSync } from 'node:fs';
+const read = p => readFileSync(new URL('../../' + p, import.meta.url), 'utf8');
+const pipeline = read('Jenkinsfile.observability');
+const native = read('infrastructure/lib/native-observability.ts');
+const foundation = read('infrastructure/lib/bankai-foundation-stack.ts');
+const casc = read('infrastructure/jenkins/jenkins.yaml');
+for (const forbidden of ['jenkins-datadog', 'configure-datadog', 'datadogGlobalConfiguration', 'addDatadogAgent', '--import dd-trace']) {
+  if ([pipeline, foundation, casc].some(s => s.includes(forbidden))) throw new Error('Retired dependency: ' + forbidden);
 }
-for (const forbidden of ['choices: [\'metrics\', \'dashboards\', \'all\'', 'configure-datadog.mjs --all ;;', 'slo']) {
-  if (pipeline.toLowerCase().includes(forbidden)) throw new Error(`forbidden observability pipeline construct: ${forbidden}`);
+for (const required of ['FailedBuilds', 'DesiredTaskCount', 'RunningTaskCount', 'StorageClass', 'FORECASTED', 'SnsAction', 'ci-pipeline', 'TreatMissingData.BREACHING']) {
+  if (!native.includes(required)) throw new Error('Missing native monitoring contract: ' + required);
 }
-
-const run = spawnSync(process.execPath, ['scripts/observability/configure-datadog.mjs', '--all', '--dry-run'], {
-  cwd: root,
-  encoding: 'utf8',
-});
-if (run.status !== 0) throw new Error(`observability dry-run failed:\n${run.stderr || run.stdout}`);
-
-const reportUrl = new URL('reports/observability/datadog-plan.json', root);
-const plan = JSON.parse(readFileSync(reportUrl, 'utf8'));
-const expectedMetrics = [
-  'bankai.queue.depth', 'bankai.queue.oldest_waiting_age_ms', 'bankai.queue.active',
-  'bankai.queue.completed', 'bankai.queue.failed', 'bankai.queue.stalled',
-  'bankai.queue.retries', 'bankai.queue.completion_duration_ms', 'bankai.api.requests',
-  'bankai.api.errors_4xx', 'bankai.api.errors_5xx', 'bankai.api.request_latency_ms',
-];
-const metricIds = plan.logMetrics.map((item) => item.data.id);
-if (JSON.stringify(metricIds) !== JSON.stringify(expectedMetrics)) throw new Error('unexpected or reordered log metric definitions');
-if (new Set(metricIds).size !== metricIds.length) throw new Error('duplicate log metric id');
-
-const allowedTags = new Set(['service', 'env', 'queue']);
-for (const item of plan.logMetrics) {
-  const tags = item.data.attributes.group_by.map((group) => group.tag_name);
-  if (tags.some((tag) => !allowedTags.has(tag))) throw new Error(`unbounded group on ${item.data.id}: ${tags.join(', ')}`);
-  if (item.data.id.startsWith('bankai.api.') && tags.includes('queue')) throw new Error(`API metric grouped by queue: ${item.data.id}`);
-}
-
-const expectedDashboards = [
-  'Bankai nonprod — Platform health', 'Bankai nonprod — API', 'Bankai nonprod — Workers',
-  'Bankai nonprod — Quincy', 'Bankai nonprod — Delivery',
-];
-if (JSON.stringify(plan.dashboards.map((item) => item.title)) !== JSON.stringify(expectedDashboards)) {
-  throw new Error('expected exactly the five reviewed dashboards');
-}
-for (const dashboard of plan.dashboards) {
-  const variables = dashboard.template_variables.map((item) => item.name).sort();
-  if (JSON.stringify(variables) !== JSON.stringify(['env', 'service'])) throw new Error(`invalid template variables on ${dashboard.title}`);
-  for (const [index, widget] of dashboard.widgets.entries()) {
-    const expectedLayout = {
-      x: (index % 3) * 4,
-      y: Math.floor(index / 3) * 3,
-      width: 4,
-      height: 3,
-    };
-    if (JSON.stringify(widget.layout) !== JSON.stringify(expectedLayout)) {
-      throw new Error(`invalid widget layout on ${dashboard.title} at position ${index}`);
-    }
-  }
-}
-
-const expectedMonitors = [
-  '[nonprod] Bankai API target 5xx',
-  '[nonprod] Bankai API p95 latency',
-  '[nonprod] Bankai API unhealthy ALB targets',
-  '[nonprod] Bankai ECS desired/running mismatch',
-  '[nonprod] Bankai Redis service unavailable',
-  '[nonprod] Bankai failed or stalled queue jobs',
-  '[nonprod] Bankai API telemetry missing',
-  '[nonprod] Bankai worker telemetry missing',
-  '[nonprod] Bankai post-deployment E2E failure',
-];
-if (JSON.stringify(plan.monitors.map((item) => item.name)) !== JSON.stringify(expectedMonitors)) {
-  throw new Error('unexpected or reordered monitor definitions');
-}
-for (const monitor of plan.monitors) {
-  for (const required of [
-    'severity:', 'owner: Bankai Platform', 'runbook: https://github.com/Bankai-Security/',
-    'alert condition:', '{{#is_recovery}}Recovery:', '@team-bankai-platform',
-  ]) {
-    if (!monitor.message.includes(required)) throw new Error(`missing monitor metadata on ${monitor.name}: ${required}`);
-  }
-  if (!monitor.tags.includes('env:nonprod') || !monitor.tags.includes('team:bankai-platform')) {
-    throw new Error(`missing bounded monitor tags on ${monitor.name}`);
-  }
-  for (const group of monitor.query.matchAll(/by \{([^}]+)\}/g)) {
-    if (!['service', 'servicename', 'queue'].includes(group[1])) {
-      throw new Error(`unbounded multi-alert group on ${monitor.name}: ${group[1]}`);
-    }
-  }
-}
-for (const name of [
-  '[nonprod] Bankai API target 5xx',
-  '[nonprod] Bankai failed or stalled queue jobs',
-  '[nonprod] Bankai post-deployment E2E failure',
-]) {
-  const monitor = plan.monitors.find(item => item.name === name);
-  if (monitor.options.on_missing_data !== 'resolve') {
-    throw new Error(`event-count monitor must recover when its series expires: ${name}`);
-  }
-}
-
-rmSync(new URL('reports/observability', root), { recursive: true, force: true });
-console.log('Observability policy passed: 12 bounded log metrics, 5 ordered dashboards, 9 reviewed monitors, and no live combined apply.');
+if (!pipeline.includes('inventory.mjs') || /execute-change-set|cdk deploy/.test(pipeline)) throw new Error('Inventory job must remain read-only');
+console.log('AWS-native observability policy passed; live metric, email and alarm validation still required.');

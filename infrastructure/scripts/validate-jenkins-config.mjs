@@ -5,7 +5,7 @@ const plugins = readFileSync(new URL('../jenkins/plugins.txt', import.meta.url),
 const casc = readFileSync(new URL('../jenkins/jenkins.yaml', import.meta.url), 'utf8');
 
 const required = ['configuration-as-code', 'github-branch-source', 'job-dsl', 'ec2-fleet',
-  'aws-secrets-manager-credentials-provider', 'credentials-binding', 'datadog'];
+  'aws-secrets-manager-credentials-provider', 'credentials-binding'];
 for (const id of required) {
   if (!plugins.some((line) => line.startsWith(`${id}:`))) throw new Error(`missing pinned plugin: ${id}`);
 }
@@ -13,7 +13,7 @@ for (const line of plugins) {
   if (!/^[a-z0-9-]+:[A-Za-z0-9_.-]+$/.test(line)) throw new Error(`plugin is not exactly pinned: ${line}`);
 }
 for (const text of ['numExecutors: 0', "scanCredentialsId('jenkins-github-app')",
-  'enableCiVisibility: true', "multibranchPipelineJob('bankai')", "multibranchPipelineJob('quincy')",
+  "multibranchPipelineJob('bankai')", "multibranchPipelineJob('quincy')",
   "pipelineJob('bankai-nonprod-release')", "upstream('bankai/main', 'SUCCESS')", "scriptPath('Jenkinsfile.release')",
   "pipelineJob('bankai-nonprod-e2e')", "scriptPath('Jenkinsfile.e2e')",
   "pipelineJob('bankai-nonprod-observability')", "scriptPath('Jenkinsfile.observability')"]) {

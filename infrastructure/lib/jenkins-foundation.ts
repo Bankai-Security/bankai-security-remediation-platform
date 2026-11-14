@@ -42,26 +42,30 @@ export class JenkinsFoundation extends Construct {
     super(scope, id);
     const { config } = props;
     const trustedPrincipal = new iam.ArnPrincipal(config.jenkinsTrustedRoleArn);
-    const jenkinsDatadogSite = ({
-      'datadoghq.com': 'US1',
-      'us3.datadoghq.com': 'US3',
-      'us5.datadoghq.com': 'US5',
-      'ddog-gov.com': 'US1_FED',
-      'datadoghq.eu': 'EU1',
-      'ap1.datadoghq.com': 'AP1',
-      'ap2.datadoghq.com': 'AP2',
-    } as Record<string, string>)[config.datadogSite];
 
     // Production only receives cross-account roles. The controller and agents
     // live in the non-production delivery account and never duplicate here.
     if (!config.jenkinsEnabled) {
-      const productionDeployment = assumptionRole(this, 'ProductionDeploymentRole', 'bankai-production-deployment', trustedPrincipal);
+      // An independently approved production role must broker access. The
+      // nonprod Jenkins agent can never acquire these roles directly.
+      const approvalRole = this.node.tryGetContext('productionApprovalRoleArn') as string | undefined;
+      if (approvalRole && (!approvalRole.startsWith(`arn:aws:iam::${config.account}:role/`) || approvalRole === config.jenkinsTrustedRoleArn)) {
+        throw new Error('productionApprovalRoleArn must be an independent role in the production account');
+      }
+      const productionPrincipal = approvalRole ? new iam.ArnPrincipal(approvalRole) : new iam.AccountRootPrincipal();
+      const productionDeployment = assumptionRole(this, 'ProductionDeploymentRole', 'bankai-production-deployment', productionPrincipal);
+      if (!approvalRole) productionDeployment.assumeRolePolicy!.addStatements(new iam.PolicyStatement({
+        effect: iam.Effect.DENY, actions: ['sts:AssumeRole'], principals: [new iam.AnyPrincipal()],
+      }));
       productionDeployment.addToPolicy(new iam.PolicyStatement({
-        actions: ['ecs:DescribeServices', 'ecs:DescribeTaskDefinition', 'ecs:UpdateService'],
+        actions: ['ecs:DescribeServices', 'ecs:DescribeTaskDefinition'],
         resources: ['*'],
         conditions: { StringEquals: { 'aws:RequestedRegion': config.region } },
       }));
-      const cloudFormation = assumptionRole(this, 'CloudFormationDeploymentRole', 'bankai-production-cloudformation-deployment', trustedPrincipal);
+      const cloudFormation = assumptionRole(this, 'CloudFormationDeploymentRole', 'bankai-production-cloudformation-deployment', productionPrincipal);
+      if (!approvalRole) cloudFormation.assumeRolePolicy!.addStatements(new iam.PolicyStatement({
+        effect: iam.Effect.DENY, actions: ['sts:AssumeRole'], principals: [new iam.AnyPrincipal()],
+      }));
       cloudFormation.addToPolicy(new iam.PolicyStatement({
         actions: ['cloudformation:CreateChangeSet', 'cloudformation:DescribeChangeSet', 'cloudformation:DescribeStacks',
           'cloudformation:DescribeStackEvents', 'cloudformation:ExecuteChangeSet', 'cloudformation:DeleteChangeSet'],
@@ -298,7 +302,7 @@ export class JenkinsFoundation extends Construct {
       'chown -R 1000:1000 /mnt/jenkins',
       `docker run -d --name jenkins --restart unless-stopped -p 8080:8080 -v /mnt/jenkins:/var/jenkins_home ` +
         `-e CASC_JENKINS_CONFIG=/var/jenkins_home/casc/jenkins.yaml -e AWS_REGION=${config.region} ` +
-        `-e JENKINS_URL=https://${config.jenkinsDomainName}/ -e DATADOG_SITE=${jenkinsDatadogSite} ` +
+        `-e JENKINS_URL=https://${config.jenkinsDomainName}/ ` +
         `-e GITHUB_ORGANIZATION=${config.githubOrganization} -e GITHUB_APP_ID=${config.githubAppId} ` +
         `-e BANKAI_REPOSITORY=${config.bankaiRepository} ` +
         `-e QUINCY_REPOSITORY=${config.quincyRepository} -e GENERAL_AGENT_FLEET=${generalFleet.autoScalingGroupName} ` +

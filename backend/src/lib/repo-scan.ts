@@ -10,7 +10,7 @@ import {
 import { analyzeFiles, type ScannableFile } from "./gemini.js";
 import { compareCommits, getBlobs, getBranchHeadSha, getTree, type GithubCredentials } from "./github.js";
 import { logger } from "./logger.js";
-import { runQuincyTriageScan } from "./quincy.js";
+import { persistQuincyScanEvidence, quincyNegativeEvidenceFingerprints, runQuincyTriageScan } from "./quincy.js";
 import { filterScannableFiles, isScannablePath } from "./repo-file-filter.js";
 import type { SlaPolicyDays } from "./sla.js";
 import {
@@ -129,10 +129,13 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
 
   const quincyResult = await runQuincyTriageScan({
     repo: github.creds.repo,
-    ref: github.defaultBranch,
+    ref: commitSha,
     commitSha,
     githubToken: github.creds.token,
   });
+  const quincyEvidenceId = quincyResult
+    ? await persistQuincyScanEvidence(supabase, { projectId, bankaiScanId: scanId, result: quincyResult })
+    : null;
 
   const geminiFindings = !quincyResult && files.length > 0 ? await analyzeFiles(files, { repo: github.creds.repo, commitSha }) : [];
 
@@ -194,7 +197,21 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
     existing = existing.filter((f) => f.filePath && touchedFilePaths.has(f.filePath));
   }
 
-  const rawPlan = planIngest(projectId, scanId, existing, rows, new Date(), slaPolicyDays, defaultService);
+  // Absence is not remediation. Only an explicitly persisted Quincy
+  // `not_detected` comparison may authorize a missing fingerprint.
+  const allowedResolutions = quincyResult && quincyEvidenceId
+    ? quincyNegativeEvidenceFingerprints(quincyResult, commitSha)
+    : new Set<string>();
+  const rawPlan = planIngest(
+    projectId,
+    scanId,
+    existing,
+    rows,
+    new Date(),
+    slaPolicyDays,
+    defaultService,
+    { allowedFingerprints: allowedResolutions },
+  );
 
   // Loaded once, reused below for change-propagation, resolved findings, and
   // the already-ticketed-in-Jira filter just below.
