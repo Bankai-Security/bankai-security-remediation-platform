@@ -36,4 +36,28 @@ describe("remediation command contract", () => {
       diagnostic: "Human review required", created_at: new Date(0).toISOString(), updated_at: new Date(0).toISOString(),
     }).failure_classification).toBe("retry_exhausted");
   });
+  it("recovers durable in-flight state through a fresh repository instance", async () => {
+    const persisted = {
+      id, schema_version: "1.0", project_id: id, finding_id: id,
+      repository_id: "https://github.com/example/repo", state: "VERIFYING",
+      retry_limit: 2, attempt_count: 1, revision: 4, current_attempt_id: id,
+      failure_classification: null, diagnostic: null,
+      created_at: new Date(0).toISOString(), updated_at: new Date(1).toISOString(),
+    };
+    const limit = vi.fn().mockResolvedValue({ data: [persisted], error: null });
+    const order = vi.fn().mockReturnValue({ limit });
+    const inState = vi.fn().mockReturnValue({ order });
+    const select = vi.fn().mockReturnValue({ in: inState });
+    const from = vi.fn().mockReturnValue({ select });
+    // A new repository instance models worker startup after an application restart.
+    const restartedRepository = new RemediationRepository({ from } as unknown as SupabaseClient);
+
+    await expect(restartedRepository.recover(10)).resolves.toEqual([persisted]);
+    expect(from).toHaveBeenCalledExactlyOnceWith("remediations");
+    expect(inState).toHaveBeenCalledExactlyOnceWith("state", [
+      "DISCOVERED", "TRIAGED", "PATCH_GENERATED", "VERIFICATION_PENDING",
+      "VERIFYING", "VERIFICATION_FAILED", "PATCH_REVISION", "VERIFIED",
+    ]);
+    expect(limit).toHaveBeenCalledExactlyOnceWith(10);
+  });
 });
