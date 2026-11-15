@@ -24,6 +24,11 @@ export const GITHUB_SSO_SCOPES = "repo";
 // never a way to log into Bankai, and this one is never a way to grant
 // repo-scanning access.
 export function ssoCallbackUrl(): string {
-  const base = env.BACKEND_PUBLIC_URL ?? `http://localhost:${env.PORT}`;
-  return `${base}/api/auth/sso/callback`;
+  // The authorize response sets the PKCE verifier cookie on the frontend
+  // origin because /api is reverse-proxied there. Send Supabase back through
+  // that same origin so the browser includes the verifier cookie.
+  const base = env.NODE_ENV === "production"
+    ? env.FRONTEND_ORIGIN
+    : env.BACKEND_PUBLIC_URL ?? `http://localhost:${env.PORT}`;
+  return new URL("/api/auth/sso/callback", base).toString();
 }
