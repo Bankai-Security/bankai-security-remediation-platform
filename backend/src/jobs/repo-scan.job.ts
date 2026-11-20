@@ -99,7 +99,9 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
         new_delta_count: result.counts.newDelta,
         changed_count: result.counts.changed,
         in_progress_count: result.counts.inProgress,
-        resolved_count: result.counts.resolved,
+        // Kept in the legacy database column until the next schema cleanup;
+        // the public API exposes this as notDetectedCount.
+        resolved_count: result.counts.notDetected,
         scanner_runs: result.scanners,
         scan_complete: true,
       })
@@ -118,7 +120,7 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
       summary: "completed an AI scan of",
       linkLabel: github.creds.repo,
       linkTo: "intake",
-      meta: `${result.findingCount} findings · ${result.counts.newDelta} new · ${result.counts.changed} changed · ${result.counts.resolved} resolved`,
+      meta: `${result.findingCount} findings · ${result.counts.newDelta} new · ${result.counts.changed} changed · ${result.counts.notDetected} not detected`,
     });
   } catch (err) {
     const message = err instanceof GithubApiError ? err.message : err instanceof Error ? err.message : "AI repo scan failed.";

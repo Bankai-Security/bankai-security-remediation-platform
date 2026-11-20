@@ -242,7 +242,7 @@ export default function ReportIntake() {
                 {scan.status === 'Done' && (
                   <>
                     Scan complete: {scan.findingCount ?? 0} finding(s) · {scan.newDeltaCount} new · {scan.changedCount} changed ·{' '}
-                    {scan.resolvedCount} resolved. <Link to={`/workspace/${project?.id}/triage`}>View Triage</Link>
+                    {scan.notDetectedCount} not detected in this scan; findings and tickets remain open until verified. <Link to={`/workspace/${project?.id}/triage`}>View Triage</Link>
                   </>
                 )}
                 {scan.status === 'Failed' && `Scan failed: ${scan.errorMessage ?? 'Unknown error.'}`}

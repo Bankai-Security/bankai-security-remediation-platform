@@ -285,18 +285,13 @@ export interface IngestCounts {
   newDelta: number;
   changed: number;
   inProgress: number;
-  resolved: number;
+  notDetected: number;
 }
 
 export interface IngestPlan {
   upsertRows: FindingUpsertRow[];
-  resolvedFingerprints: string[];
+  notDetectedFingerprints: string[];
   counts: IngestCounts;
-}
-
-export interface MissingResolutionPolicy {
-  /** Only explicit, comparison-backed negative evidence may resolve these fingerprints. */
-  allowedFingerprints: ReadonlySet<string>;
 }
 
 // Rule-based stand-in for "AI confidence" — not a trained model. Weighted so
@@ -321,12 +316,11 @@ export function planIngest(
   // there's no CSV data to say which one a given row belongs to, so it's
   // left null ("Unassigned") rather than guessed.
   defaultService: string | null = null,
-  missingResolutionPolicy?: MissingResolutionPolicy,
 ): IngestPlan {
   const existingByFingerprint = new Map(existing.map((f) => [f.fingerprint, f]));
   const seenFingerprints = new Set<string>();
   const upsertRows: FindingUpsertRow[] = [];
-  const counts: IngestCounts = { newDelta: 0, changed: 0, inProgress: 0, resolved: 0 };
+  const counts: IngestCounts = { newDelta: 0, changed: 0, inProgress: 0, notDetected: 0 };
 
   for (const row of rows) {
     // A duplicate fingerprint within the same CSV (e.g. re-exported rows) —
@@ -396,16 +390,18 @@ export function planIngest(
     });
   }
 
-  const resolvedFingerprints = existing
+  // Missing from this scan is useful evidence for triage, but it is not
+  // proof of remediation. Keep the finding's bucket and any linked ticket
+  // untouched; a human verifies resolution after reviewing the fix.
+  const notDetectedFingerprints = existing
     .filter((f) =>
       !seenFingerprints.has(f.fingerprint)
       && f.bucket !== "Resolved"
-      && (!missingResolutionPolicy || missingResolutionPolicy.allowedFingerprints.has(f.fingerprint)),
     )
     .map((f) => f.fingerprint);
-  counts.resolved = resolvedFingerprints.length;
+  counts.notDetected = notDetectedFingerprints.length;
 
-  return { upsertRows, resolvedFingerprints, counts };
+  return { upsertRows, notDetectedFingerprints, counts };
 }
 
 // Applied after planIngest, before the caller upserts plan.upsertRows —
@@ -434,7 +430,7 @@ export function excludeAlreadyTicketedFindings(
 
   return {
     upsertRows,
-    resolvedFingerprints: plan.resolvedFingerprints,
+    notDetectedFingerprints: plan.notDetectedFingerprints,
     counts: { ...plan.counts, newDelta: plan.counts.newDelta - skipped },
   };
 }

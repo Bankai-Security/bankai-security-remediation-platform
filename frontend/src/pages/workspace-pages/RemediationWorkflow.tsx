@@ -174,7 +174,7 @@ export default function RemediationWorkflow() {
               { value: latestScan.newDeltaCount, label: 'New Delta' },
               { value: overview?.kpis.inReviewTickets ?? 0, label: 'Already in Review' },
               { value: latestScan.changedCount, label: 'Changed' },
-              { value: latestScan.resolvedCount, label: 'Resolved/Not Present' },
+              { value: latestScan.notDetectedCount, label: 'Not detected (open)' },
             ].map((s) => (
               <div key={s.label} className="ws-stat-tile">
                 <div className="ws-stat-tile-value" style={{ fontSize: 30 }}>{s.value}</div>

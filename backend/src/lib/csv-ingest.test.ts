@@ -26,7 +26,7 @@ describe("finding normalization and deduplication", () => {
     expect(normalizeDate("not-a-date")).toBeNull();
   });
 
-  it("keeps the first duplicate fingerprint and resolves findings absent from the scan", () => {
+  it("keeps the first duplicate fingerprint and reports missing findings without resolving them", () => {
     const rows = parseFindingsCsv(Buffer.from("id,title,severity\nA,first,high\nA,duplicate,critical\n"));
     const plan = planIngest(
       "project",
@@ -38,8 +38,8 @@ describe("finding normalization and deduplication", () => {
     );
     expect(plan.upsertRows).toHaveLength(1);
     expect(plan.upsertRows[0]?.title).toBe("first");
-    expect(plan.resolvedFingerprints).toEqual(["id:old"]);
-    expect(plan.counts).toEqual({ newDelta: 1, changed: 0, inProgress: 0, resolved: 1 });
+    expect(plan.notDetectedFingerprints).toEqual(["id:old"]);
+    expect(plan.counts).toEqual({ newDelta: 1, changed: 0, inProgress: 0, notDetected: 1 });
   });
 
   it("uses a coarse line bucket for stable AI finding identity", () => {
@@ -48,7 +48,7 @@ describe("finding normalization and deduplication", () => {
     expect(first).toBe(shifted);
   });
 
-  it("preserves missing findings when no explicit negative evidence authorizes resolution", () => {
+  it("reports missing findings as not detected without changing their status", () => {
     const plan = planIngest(
       "project",
       "scan",
@@ -57,10 +57,9 @@ describe("finding normalization and deduplication", () => {
       new Date("2026-09-19T00:00:00Z"),
       policy,
       null,
-      { allowedFingerprints: new Set() },
     );
 
-    expect(plan.resolvedFingerprints).toEqual([]);
-    expect(plan.counts.resolved).toBe(0);
+    expect(plan.notDetectedFingerprints).toEqual(["id:old"]);
+    expect(plan.counts.notDetected).toBe(1);
   });
 });

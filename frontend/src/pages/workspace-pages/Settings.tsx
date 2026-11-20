@@ -788,7 +788,7 @@ export default function Settings() {
                 {scan.status === 'Queued' && 'Scan queued — waiting for the next available worker…'}
                 {scan.status === 'Processing' && 'Scanning the repository with Bankai scanners — this can take a few minutes for larger repos…'}
                 {scan.status === 'Done' &&
-                  `Scan complete: ${scan.findingCount ?? 0} finding(s) · ${scan.newDeltaCount} new · ${scan.changedCount} changed · ${scan.resolvedCount} resolved.`}
+                  `Scan complete: ${scan.findingCount ?? 0} finding(s) · ${scan.newDeltaCount} new · ${scan.changedCount} changed · ${scan.notDetectedCount} not detected (still open).`}
                 {scan.scannerRuns.length > 0 && (
                   <div style={{ marginTop: 8 }}>Scanners: {scan.scannerRuns.map((run) => `${run.scanner} ${run.version} (${run.status}${run.status === 'complete' ? `, ${run.findings}` : run.reason ? `, ${run.reason}` : ''})`).join(' · ')}</div>
                 )}

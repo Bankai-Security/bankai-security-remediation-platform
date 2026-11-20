@@ -305,7 +305,7 @@ export interface Scan {
   newDeltaCount: number;
   changedCount: number;
   inProgressCount: number;
-  resolvedCount: number;
+  notDetectedCount: number;
   status: "Queued" | "Processing" | "Done" | "Failed";
   errorMessage: string | null;
   source: "csv" | "github_ai";
@@ -352,6 +352,7 @@ export interface Finding {
   sla: SlaStatus;
   slaDueDate: string | null;
   bucket: Bucket;
+  notDetectedInLatestScan: boolean;
   confidence: number;
   firstSeen: string;
   dateFound: string | null;

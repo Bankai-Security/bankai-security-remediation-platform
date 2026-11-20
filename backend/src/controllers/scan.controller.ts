@@ -12,7 +12,6 @@ import { requireRole } from "../lib/roles.js";
 import { SCAN_SELECT, toPublicScan, type ScanRow } from "../lib/scans.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import {
-  closeTicketsForResolvedFindings,
   fetchAlreadyTicketedFingerprints,
   loadJiraCreds,
   updateTicketsForChangedFindings,
@@ -98,7 +97,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
 
   const rawPlan = planIngest(project.id, scan.id, existing, rows, new Date(), project.slaPolicyDays, defaultService);
 
-  // Loaded once, reused below for change-propagation, resolved findings, and
+  // Loaded once, reused below for change-propagation and
   // the already-ticketed-in-Jira filter just below.
   const jira = await loadJiraCreds(supabase, project.id);
 
@@ -124,23 +123,6 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
     });
   }
 
-  if (plan.resolvedFingerprints.length > 0) {
-    const { data: resolvedRows, error: resolveError } = await supabase
-      .from("findings")
-      .update({ bucket: "Resolved", rationale: "Present in a previous scan but not found in this intake — marked resolved." })
-      .eq("project_id", project.id)
-      .in("fingerprint", plan.resolvedFingerprints)
-      .select("id");
-    if (resolveError) {
-      throw new HttpError(500, "Could not update resolved findings.");
-    }
-    await closeTicketsForResolvedFindings(supabase, {
-      projectId: project.id,
-      resolvedFindingIds: (resolvedRows ?? []).map((r) => r.id),
-      jira: jira?.creds ?? null,
-    });
-  }
-
   const serviceCount = new Set(plan.upsertRows.map((r) => r.service).filter((s): s is string => !!s)).size;
 
   const { error: finalizeError } = await supabase
@@ -150,7 +132,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
       new_delta_count: plan.counts.newDelta,
       changed_count: plan.counts.changed,
       in_progress_count: plan.counts.inProgress,
-      resolved_count: plan.counts.resolved,
+      resolved_count: plan.counts.notDetected,
     })
     .eq("id", scan.id);
 
@@ -181,7 +163,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
     summary: "completed triage for",
     linkLabel: file.originalname,
     linkTo: "intake",
-    meta: `${rows.length} findings · ${plan.counts.newDelta} new delta · ${plan.counts.inProgress} already in progress · ${plan.counts.changed} changed · ${plan.counts.resolved} resolved`,
+    meta: `${rows.length} findings · ${plan.counts.newDelta} new delta · ${plan.counts.inProgress} already in progress · ${plan.counts.changed} changed · ${plan.counts.notDetected} not detected in this intake`,
   });
 
   res.status(201).json({
@@ -194,7 +176,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
       new_delta_count: plan.counts.newDelta,
       changed_count: plan.counts.changed,
       in_progress_count: plan.counts.inProgress,
-      resolved_count: plan.counts.resolved,
+      resolved_count: plan.counts.notDetected,
       status: "Done",
       error_message: null,
       source: "csv",

@@ -329,7 +329,10 @@ export default function AITriage() {
                 <span className="triage-service">{r.service}</span>
                 <span><span className={sevBadgeClass(r.severity)}>{r.severity}</span></span>
                 <span className="ws-dot-status" style={{ color: sla.color }}><span className="ws-dot" style={{ background: sla.dot }} />{r.sla}</span>
-                <span><span className={bucketBadgeClass(r.bucket)}>{r.bucket}</span></span>
+                <span>
+                  <span className={bucketBadgeClass(r.bucket)}>{r.bucket}</span>
+                  {r.notDetectedInLatestScan && <span className="ws-badge ws-badge--outline ws-badge--bucket-changed" title="Missing from the latest completed repository scan; finding remains open until verified.">Not detected</span>}
+                </span>
                 <span className="ws-col-right triage-review-link">
                   {canReopenTicket(r) ? 'Reopen' : (r.ticketKey ?? 'Review')}
                 </span>
@@ -373,6 +376,11 @@ export default function AITriage() {
                 <div>
                   <div className="triage-drawer-label">EVIDENCE</div>
                   <div className="triage-drawer-evidence">{openRow.evidence}</div>
+                </div>
+              )}
+              {openRow.notDetectedInLatestScan && (
+                <div role="status" className="settings-notice">
+                  This finding was not detected in the latest completed repository scan. It remains open; verify the fix before marking it resolved.
                 </div>
               )}
               {openRow.remediationGuidance && (

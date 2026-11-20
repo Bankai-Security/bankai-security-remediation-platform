@@ -33,6 +33,7 @@ interface FindingRow {
   sla_due_date: string | null;
   first_seen_at: string;
   created_at: string;
+  last_seen_at: string;
   source: "csv" | "github_ai" | "jira_import";
   remediation_guidance: string | null;
   line_start: number | null;
@@ -62,6 +63,7 @@ function toPublicFinding(row: FindingRow, policyDays: SlaPolicyDays) {
     sla: computeSlaStatus(row.severity, row.sla_due_date, policyDays),
     slaDueDate: row.sla_due_date,
     bucket: row.bucket,
+    notDetectedInLatestScan: false,
     confidence: row.confidence,
     firstSeen: row.first_seen_at,
     dateFound: row.date_found,
@@ -84,7 +86,7 @@ function toPublicFinding(row: FindingRow, policyDays: SlaPolicyDays) {
 }
 
 const SELECT_FINDING =
-  "id, external_id, title, service, severity, cvss_score, cwe, component, file_path, finding_type, bucket, confidence, rationale, description, fix_available, source_url, date_found, sla_due_date, first_seen_at, created_at, source, remediation_guidance, line_start, line_end, commit_sha, tickets ( id, key, status )";
+  "id, external_id, title, service, severity, cvss_score, cwe, component, file_path, finding_type, bucket, confidence, rationale, description, fix_available, source_url, date_found, sla_due_date, first_seen_at, created_at, last_seen_at, source, remediation_guidance, line_start, line_end, commit_sha, tickets ( id, key, status )";
 
 export async function listFindings(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
@@ -105,7 +107,23 @@ export async function listFindings(req: Request, res: Response): Promise<void> {
     throw new HttpError(500, "Could not load findings.");
   }
 
-  let findings = (data as unknown as FindingRow[]).map((row) => toPublicFinding(row, req.project!.slaPolicyDays));
+  const { data: latestScan, error: latestScanError } = await supabase
+    .from("scans")
+    .select("created_at")
+    .eq("project_id", req.project!.id)
+    .eq("source", "github_ai")
+    .eq("status", "Done")
+    .eq("scan_complete", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestScanError) throw new HttpError(500, "Could not check the latest completed repository scan.");
+
+  const latestScanAt = latestScan?.created_at ? new Date(latestScan.created_at).getTime() : null;
+  let findings = (data as unknown as FindingRow[]).map((row) => ({
+    ...toPublicFinding(row, req.project!.slaPolicyDays),
+    notDetectedInLatestScan: latestScanAt !== null && new Date(row.last_seen_at).getTime() < latestScanAt,
+  }));
 
   const { sla } = req.query;
   if (typeof sla === "string" && sla !== "all") {

@@ -9,7 +9,6 @@ import { getBranchHeadSha, type GithubCredentials } from "./github.js";
 import { scanRepository } from "./scanners.js";
 import type { SlaPolicyDays } from "./sla.js";
 import {
-  closeTicketsForResolvedFindings,
   fetchAlreadyTicketedFingerprints,
   loadJiraCreds,
   updateTicketsForChangedFindings,
@@ -39,7 +38,7 @@ export interface RepoScanResult {
   filesEligible: number;
   findingCount: number;
   scanners: import("./scanners.js").ScannerRun[];
-  counts: { newDelta: number; changed: number; inProgress: number; resolved: number };
+  counts: { newDelta: number; changed: number; inProgress: number; notDetected: number };
 }
 
 export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScanResult> {
@@ -98,22 +97,6 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
       findingIds: (upsertedRows ?? []).map((r) => r.id),
       jira: jiraCreds?.creds ?? null,
       slaPolicyDays,
-    });
-  }
-
-  if (plan.resolvedFingerprints.length > 0) {
-    const { data: resolvedRows, error } = await supabase
-      .from("findings")
-      .update({ bucket: "Resolved", rationale: "Not found in the latest AI scan — marked resolved." })
-      .eq("project_id", projectId)
-      .in("fingerprint", plan.resolvedFingerprints)
-      .select("id");
-    if (error) throw new Error("Could not update resolved findings.");
-
-    await closeTicketsForResolvedFindings(supabase, {
-      projectId,
-      resolvedFindingIds: (resolvedRows ?? []).map((r) => r.id),
-      jira: jiraCreds?.creds ?? null,
     });
   }
 

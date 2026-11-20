@@ -37,7 +37,7 @@ export function toPublicScan(row: ScanRow) {
     newDeltaCount: row.new_delta_count,
     changedCount: row.changed_count,
     inProgressCount: row.in_progress_count,
-    resolvedCount: row.resolved_count,
+    notDetectedCount: row.resolved_count,
     status: row.status,
     errorMessage: row.error_message,
     source: row.source,
