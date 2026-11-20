@@ -392,22 +392,33 @@ export default function ReportIntake() {
                     ? 'ws-badge--pill-red'
                     : 'ws-badge--pill-blue';
               const isDone = row.status === 'Done';
+              const failedScanners = row.scannerRuns.filter((run) => run.status === 'failed');
               return (
-                <div key={row.id} className="intake-history-row">
-                  <span className="intake-history-filename">
-                    <span className={`ws-badge ${row.source === 'github_ai' ? 'ws-badge--pill-blue' : 'ws-badge--pill-neutral'}`} style={{ marginRight: 8 }}>
-                      {row.source === 'github_ai' ? 'GitHub AI' : 'CSV'}
+                <div key={row.id}>
+                  <div className="intake-history-row">
+                    <span className="intake-history-filename">
+                      <span className={`ws-badge ${row.source === 'github_ai' ? 'ws-badge--pill-blue' : 'ws-badge--pill-neutral'}`} style={{ marginRight: 8 }}>
+                        {row.source === 'github_ai' ? 'GitHub AI' : 'CSV'}
+                      </span>
+                      {label}
+                      {row.source === 'github_ai' && row.triggerType === 'webhook' && (
+                        <span className="ws-card-hint" style={{ marginLeft: 6 }}>(auto, on push)</span>
+                      )}
                     </span>
-                    {label}
-                    {row.source === 'github_ai' && row.triggerType === 'webhook' && (
-                      <span className="ws-card-hint" style={{ marginLeft: 6 }}>(auto, on push)</span>
-                    )}
-                  </span>
-                  <span className="intake-history-date">{formatDate(row.createdAt)}</span>
-                  <span className="ws-col-right">{isDone ? row.rowCount : '—'}</span>
-                  <span className="ws-col-right">{isDone ? (row.findingCount ?? row.rowCount) : '—'}</span>
-                  <span><span className={`ws-badge ${statusClass}`}>{row.status}</span></span>
-                  <span className="ws-col-right">{isDone ? `+${row.newDeltaCount}` : row.status === 'Failed' ? (row.errorMessage ?? '—') : '—'}</span>
+                    <span className="intake-history-date">{formatDate(row.createdAt)}</span>
+                    <span className="ws-col-right">{isDone ? row.rowCount : '—'}</span>
+                    <span className="ws-col-right">{isDone ? (row.findingCount ?? row.rowCount) : '—'}</span>
+                    <span><span className={`ws-badge ${statusClass}`}>{row.status}</span></span>
+                    <span className="ws-col-right">{isDone ? `+${row.newDeltaCount}` : row.status === 'Failed' ? (row.errorMessage ?? '—') : '—'}</span>
+                  </div>
+                  {failedScanners.length > 0 && (
+                    <details style={{ padding: '0 12px 12px', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      <summary style={{ cursor: 'pointer' }}>Show scanner error details</summary>
+                      <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                        {failedScanners.map((run) => <li key={run.scanner}><strong>{run.scanner}:</strong> {run.reason ?? 'Scanner failed.'}</li>)}
+                      </ul>
+                    </details>
+                  )}
                 </div>
               );
             })}

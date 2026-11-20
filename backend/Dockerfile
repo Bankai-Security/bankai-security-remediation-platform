@@ -33,6 +33,8 @@ RUN apk add --no-cache ca-certificates curl tar python3 libffi libstdc++ \
     && chown -R 10001:10001 /home/bankai
 
 ENV PATH="/opt/bankai-scanners/bin:${PATH}" \
+    HOME="/home/bankai" \
+    XDG_CACHE_HOME="/home/bankai/.cache" \
     TRIVY_CACHE_DIR=/tmp/trivy-cache
 
 COPY package.json package-lock.json ./

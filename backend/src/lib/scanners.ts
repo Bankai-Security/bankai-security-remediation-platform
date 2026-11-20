@@ -107,7 +107,8 @@ function normalize(scanner: string, data: unknown, repo: string, sha: string): N
 
 async function run(command: string, args: string[], cwd: string, allowFindings = false): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? tmpdir(), TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "C.UTF-8", SSL_CERT_FILE: process.env.SSL_CERT_FILE ?? "", TRIVY_CACHE_DIR: process.env.TRIVY_CACHE_DIR ?? join(tmpdir(), "bankai-trivy-cache"), PIP_DISABLE_PIP_VERSION_CHECK: "1", GIT_TERMINAL_PROMPT: "0", NPM_CONFIG_USERCONFIG: "/dev/null" }, stdio: ["ignore", "pipe", "pipe"] });
+    const home = process.env.HOME ?? tmpdir();
+    const child = spawn(command, args, { cwd, env: { PATH: process.env.PATH ?? "", HOME: home, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? join(home, ".cache"), TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "C.UTF-8", SSL_CERT_FILE: process.env.SSL_CERT_FILE ?? "", TRIVY_CACHE_DIR: process.env.TRIVY_CACHE_DIR ?? join(tmpdir(), "bankai-trivy-cache"), PIP_DISABLE_PIP_VERSION_CHECK: "1", GIT_TERMINAL_PROMPT: "0", NPM_CONFIG_USERCONFIG: "/dev/null" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = ""; let stderr = ""; let bytes = 0;
     const timer = setTimeout(() => child.kill("SIGKILL"), SCANNER_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_OUTPUT_BYTES) child.kill("SIGKILL"); else stdout += chunk.toString(); });
@@ -134,14 +135,16 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
       const result = await scanner(name, command, args, root, JSON.parse, allowFindings);
       const rows = normalize(name, result.value, repo, sha); result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
     } catch (error) {
-      runs.push({ scanner: name, version: "unknown", findings: 0, status: "failed", reason: error instanceof Error ? error.message : "Scanner failed." });
+      const reason = error instanceof Error ? error.message : "Scanner failed.";
+      logger.warn({ scanner: name, reason }, "Repository scanner failed");
+      runs.push({ scanner: name, version: "unknown", findings: 0, status: "failed", reason });
     }
   };
   const files = await readdir(root, { recursive: true });
   const names = files.map(String);
   await invoke("trivy", "trivy", ["fs", "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", root]);
   await invoke("semgrep", "semgrep", ["scan", "--json", "--quiet", "--metrics=off", "--config", "p/security-audit", root], true);
-  await invoke("gitleaks", "gitleaks", ["dir", "--report-format", "json", "--report-path", "/dev/stdout", "--exit-code", "0", root]);
+  await invoke("gitleaks", "gitleaks", ["dir", "--report-format", "json", "--report-path", "-", "--exit-code", "0", root]);
   const addSkipped = (name: string, reason: string) => runs.push({ scanner: name, version: "not-run", findings: 0, status: "skipped", reason });
   if (names.some(n => n.endsWith(".py"))) await invoke("bandit", "bandit", ["-q", "-f", "json", "-r", root], true);
   else addSkipped("bandit", "No Python source files were found.");
