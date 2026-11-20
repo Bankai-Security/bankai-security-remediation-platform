@@ -45,6 +45,13 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M2.5 10h3.2l2.1-5 3.9 10 2.1-5h3.7" />
     </svg>
   ),
+  jenkins: (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#D33833" d="M11.95 1.2c-1.65 0-2.56 2.19-2.56 4.06 0 1.19.49 2.14 1.17 2.58l-.31 1.42-3.2 1.08c-.54.18-.98.62-1.17 1.16l-1.1 3.08c-.15.42-.09.88.16 1.24l1.65 2.35c.28.4.74.62 1.22.58l3.98-.32.47 1.02-1.55 2.22a.9.9 0 0 0 .74 1.42h2.93a.9.9 0 0 0 .74-1.42l-1.55-2.22.47-1.02 3.98.32c.48.04.94-.18 1.22-.58l1.65-2.35c.25-.36.31-.82.16-1.24l-1.1-3.08a1.72 1.72 0 0 0-1.17-1.16l-3.2-1.08-.31-1.42c.68-.44 1.17-1.39 1.17-2.58 0-1.87-.91-4.06-2.56-4.06h-.93Z"/>
+      <circle cx="10.4" cy="5" r=".55" fill="#fff"/><circle cx="13.55" cy="5" r=".55" fill="#fff"/>
+      <path d="M10.7 13.2c.85.55 1.75.55 2.6 0" fill="none" stroke="#fff" strokeWidth=".8" strokeLinecap="round"/>
+    </svg>
+  ),
 };
 
 const NAV_ITEMS = [
@@ -54,6 +61,7 @@ const NAV_ITEMS = [
   { key: 'triage', label: 'AI Triage', path: 'triage' },
   { key: 'tickets', label: 'Tickets', path: 'tickets' },
   { key: 'activity', label: 'Activity', path: 'activity' },
+  { key: 'jenkins', label: 'Jenkins', path: 'jenkins' },
 ];
 
 const STORAGE_KEY = 'bankai-sidebar-collapsed';

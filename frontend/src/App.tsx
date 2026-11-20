@@ -33,6 +33,7 @@ import {
   IntakeDetail,
   DefectGenerationDetail,
   JiraTicketsDetail,
+  JenkinsDownload,
 } from './pages/workspace-pages';
 
 export default function App() {
@@ -89,6 +90,7 @@ export default function App() {
         <Route path="triage" element={<AITriage />} />
         <Route path="tickets" element={<Tickets />} />
         <Route path="activity" element={<Activity />} />
+        <Route path="jenkins" element={<JenkinsDownload />} />
         <Route path="settings" element={<Settings />} />
       </Route>
 
