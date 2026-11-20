@@ -324,7 +324,7 @@ export default function AITriage() {
                     {checked ? '✓' : ''}
                   </span>
                 </span>
-                <span className="ws-mono triage-id">{r.externalId ?? r.id.slice(0, 8)}</span>
+                <span className="triage-id" title={r.externalId ?? r.id.slice(0, 8)}>{r.externalId ?? r.id.slice(0, 8)}</span>
                 <span className="triage-title">{r.title}</span>
                 <span className="triage-service">{r.service}</span>
                 <span><span className={sevBadgeClass(r.severity)}>{r.severity}</span></span>
@@ -350,7 +350,7 @@ export default function AITriage() {
             <div className="triage-drawer-header">
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="triage-drawer-tags">
-                  <span className="ws-mono triage-drawer-id">{openRow.externalId ?? openRow.id.slice(0, 8)}</span>
+                  <span className="triage-drawer-id">{openRow.externalId ?? openRow.id.slice(0, 8)}</span>
                   <span className={sevBadgeClass(openRow.severity)} style={{ padding: '3px 9px', fontSize: 10.5 }}>{openRow.severity}</span>
                   <span className={`ws-badge ${openRow.source === 'github_ai' ? 'ws-badge--pill-blue' : 'ws-badge--pill-neutral'}`}>
                     {openRow.source === 'github_ai' ? 'GitHub AI' : openRow.source === 'jira_import' ? 'Jira Import' : 'CSV'}
