@@ -379,8 +379,12 @@ export default function AITriage() {
                 </div>
               )}
               {openRow.notDetectedInLatestScan && (
-                <div role="status" className="settings-notice">
-                  This finding was not detected in the latest completed repository scan. It remains open; verify the fix before marking it resolved.
+                <div role="status" className="triage-scan-notice">
+                  <span className="triage-scan-notice-icon" aria-hidden="true">i</span>
+                  <div className="triage-scan-notice-content">
+                    <div className="triage-scan-notice-label">SCAN STATUS</div>
+                    <p>This finding was not detected in the latest completed repository scan. It remains open; verify the fix before marking it resolved.</p>
+                  </div>
                 </div>
               )}
               {openRow.remediationGuidance && (
