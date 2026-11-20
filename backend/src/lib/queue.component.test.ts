@@ -37,11 +37,4 @@ describe("BullMQ queue rules with isolated Redis", () => {
     expect((await queues.repoScanQueue.getJobs(["waiting"])).filter((job) => job.id === jobId)).toHaveLength(1);
   });
 
-  it("round-trips progress and preserves ticket ordering", async () => {
-    const first = { ticketId: randomUUID(), projectId: "project" };
-    const secondId = randomUUID();
-    const progress = { summary: "Validating patch", activeAttempt: 2, completedAttempts: 1, updatedAt: "2026-09-19T00:00:00Z" };
-    await queues.saveRemediationProgress(first, progress);
-    expect(await queues.getRemediationProgress("project", [secondId, first.ticketId])).toEqual([null, progress]);
-  });
 });

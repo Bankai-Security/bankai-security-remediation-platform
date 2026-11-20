@@ -32,45 +32,17 @@ function formatDue(dueDate: string | null): string {
   return new Date(`${dueDate}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function formatRemediationStage(summary: string): string {
-  const stage = summary.replace(/\s*\([^)]*\)\s*$/, '').trim();
-  const labels: Record<string, string> = {
-    'Running baseline scan and tests': 'Checking code and tests',
-    'Assessing finding': 'Assessing vulnerability',
-    'Starting patch attempt': 'Preparing security fix',
-    'Generating patch': 'Generating security fix',
-    'Validating patch application and safety': 'Validating security fix',
-    'Running patched scan and tests': 'Preparing remediation pull request',
-    'Analyzing validation failure': 'Reviewing validation results',
-    'Checking attack variants': 'Testing attack variants',
-    'Patch rejected; preparing retry': 'Refining security fix',
-    'Patch accepted': 'Security fix validated',
-  };
-  return labels[stage] ?? stage;
-}
-
 function RemediationProgress({ ticket, compact = false }: { ticket: Ticket; compact?: boolean }) {
-  const progress = ticket.remediationProgress;
-  if (!progress) return null;
-  const stage = formatRemediationStage(progress.summary);
-  const attempt = progress.activeAttempt > 0 ? `Attempt ${progress.activeAttempt}` : null;
+  if (ticket.status !== 'In Progress' || ticket.githubPrNumber || ticket.githubPrError) return null;
   return (
     <span
       className={`tickets-remediation-progress${compact ? ' tickets-remediation-progress--compact' : ''}`}
-      title={`Remediation in progress${attempt ? ` · ${attempt}` : ''}${progress.updatedAt ? ` · Updated ${new Date(progress.updatedAt).toLocaleString()}` : ''}`}
+      title="Bankai is preparing a remediation pull request"
     >
       <span className="tickets-remediation-progress-spinner" aria-hidden="true" />
-      {compact ? (
-        <span className="tickets-remediation-progress-stage">{stage}</span>
-      ) : (
-        <span className="tickets-remediation-progress-content">
-          <span className="tickets-remediation-progress-header">
-            <span>Remediation in progress</span>
-            {attempt && <span className="tickets-remediation-progress-attempt">{attempt}</span>}
-          </span>
-          <span className="tickets-remediation-progress-stage">{stage}</span>
-        </span>
-      )}
+      <span className="tickets-remediation-progress-stage">
+        {compact ? 'Preparing remediation pull request' : 'Remediation in progress · Preparing pull request'}
+      </span>
     </span>
   );
 }

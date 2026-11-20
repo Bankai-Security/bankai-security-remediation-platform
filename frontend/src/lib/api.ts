@@ -406,7 +406,6 @@ export function reassignFindingService(projectId: string, findingId: string, ser
 // ---------------------------------------------------------------------
 
 export interface Ticket {
-  remediationProgress?: { summary: string; activeAttempt: number; completedAttempts: number; updatedAt: string | null } | null;
   id: string;
   key: string;
   title: string;

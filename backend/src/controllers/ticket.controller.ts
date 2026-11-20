@@ -12,7 +12,6 @@ import {
   transitionIssue,
 } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
-import { getRemediationProgress } from "../lib/queue.js";
 import { enqueueFixPrResume } from "../lib/queue.js";
 import { requireRole } from "../lib/roles.js";
 import { computeSlaStatus, ttrStatusLabel } from "../lib/sla.js";
@@ -63,10 +62,8 @@ export async function listTickets(req: Request, res: Response): Promise<void> {
 
   const tickets = data as TicketRow[];
 
-  const progress = await getRemediationProgress(req.project!.id, tickets.map(t => t.id)).catch(() => []);
-  res.status(200).json({ tickets: tickets.map((ticket, index) => ({
+  res.status(200).json({ tickets: tickets.map((ticket) => ({
     ...toPublicTicket(ticket),
-    remediationProgress: ticket.status === "In Progress" && !ticket.github_pr_number && !ticket.github_pr_error ? progress[index] ?? null : null,
   })) });
 }
 

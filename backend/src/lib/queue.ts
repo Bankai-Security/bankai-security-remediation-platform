@@ -38,25 +38,6 @@ export interface FixPrJobData {
   projectId: string;
 }
 
-export interface RemediationProgress {
-  summary: string;
-  activeAttempt: number;
-  completedAttempts: number;
-  updatedAt: string | null;
-}
-
-export async function saveRemediationProgress(data: FixPrJobData, progress: RemediationProgress): Promise<void> {
-  await redisConnection.set(`bankai:progress:${data.projectId}:${data.ticketId}`, JSON.stringify(progress), "EX", 3600);
-}
-
-export async function getRemediationProgress(projectId: string, ticketIds: string[]): Promise<(RemediationProgress | null)[]> {
-  if (!ticketIds.length) return [];
-  const values = await redisConnection.mget(...ticketIds.map(id => `bankai:progress:${projectId}:${id}`));
-  return values.map(value => {
-    try { return value ? JSON.parse(value) as RemediationProgress : null; } catch { return null; }
-  });
-}
-
 export const FIX_PR_QUEUE_NAME = "fix-pr";
 
 export const fixPrQueue = new Queue<FixPrJobData>(FIX_PR_QUEUE_NAME, { connection: redisConnection });

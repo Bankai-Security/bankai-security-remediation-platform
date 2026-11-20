@@ -153,37 +153,6 @@
   animation: tickets-remediation-spin 0.8s linear infinite;
 }
 
-.tickets-remediation-progress-content {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.tickets-remediation-progress-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--color-text-subtle);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.tickets-remediation-progress-attempt {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #DBEAFE;
-  color: #1D4ED8;
-  font-size: 9px;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
 .tickets-remediation-progress-stage {
   min-width: 0;
   overflow: hidden;
