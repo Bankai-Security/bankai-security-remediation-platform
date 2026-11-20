@@ -42,7 +42,7 @@ export function isSafePatchPath(path: string): boolean {
 
 /** Strip only Bankai's known temporary checkout prefix from older findings. */
 export function normalizeRepositoryFilePath(path: string): string {
-  const match = path.replaceAll("\\", "/").match(/^\/tmp\/bankai-scan-[^/]+\/repo\/(.+)$/);
+  const match = path.replaceAll("\\", "/").match(/^\/tmp\/(?:bankai-scan-[^/]+\/repo|[^/]+_workspaces\/[^/]+)\/(.+)$/);
   return match?.[1] ?? path;
 }
 
