@@ -348,9 +348,9 @@ export default function AITriage() {
           <div className="triage-drawer-backdrop" onClick={() => setOpenId(null)} />
           <div className="triage-drawer">
             <div className="triage-drawer-header">
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="triage-drawer-header-content">
                 <div className="triage-drawer-tags">
-                  <span className="triage-drawer-id">{openRow.externalId ?? openRow.id.slice(0, 8)}</span>
+                  <span className="triage-drawer-id" title={openRow.externalId ?? openRow.id.slice(0, 8)}>{openRow.externalId ?? openRow.id.slice(0, 8)}</span>
                   <span className={sevBadgeClass(openRow.severity)} style={{ padding: '3px 9px', fontSize: 10.5 }}>{openRow.severity}</span>
                   <span className={`ws-badge ${openRow.source === 'github_ai' ? 'ws-badge--pill-blue' : 'ws-badge--pill-neutral'}`}>
                     {openRow.source === 'github_ai' ? 'GitHub AI' : openRow.source === 'jira_import' ? 'Jira Import' : 'CSV'}

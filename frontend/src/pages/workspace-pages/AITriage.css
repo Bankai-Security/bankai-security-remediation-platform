@@ -148,17 +148,37 @@
   border-bottom: 1px solid var(--color-divider);
 }
 
+.triage-drawer-header-content {
+  flex: 1;
+  min-width: 0;
+}
+
 .triage-drawer-tags {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 
 .triage-drawer-id {
+  display: block;
+  flex: 0 1 150px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text-muted);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triage-drawer-tags > .ws-badge,
+.triage-drawer-tags > .ws-dot-status {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .triage-drawer-title {
