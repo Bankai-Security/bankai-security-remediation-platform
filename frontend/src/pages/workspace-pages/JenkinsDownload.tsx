@@ -1,18 +1,9 @@
 import { useState } from 'react';
+import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
 
 const downloadUrl = import.meta.env.VITE_BANKAI_DESKTOP_DOWNLOAD_URL;
-
-function JenkinsMark({ large = false }: { large?: boolean }) {
-  return (
-    <svg className={large ? 'jenkins-download-mark jenkins-download-mark--large' : 'jenkins-download-mark'} viewBox="0 0 24 24" role="img" aria-label="Jenkins">
-      <path fill="#D33833" d="M11.95 1.2c-1.65 0-2.56 2.19-2.56 4.06 0 1.19.49 2.14 1.17 2.58l-.31 1.42-3.2 1.08c-.54.18-.98.62-1.17 1.16l-1.1 3.08c-.15.42-.09.88.16 1.24l1.65 2.35c.28.4.74.62 1.22.58l3.98-.32.47 1.02-1.55 2.22a.9.9 0 0 0 .74 1.42h2.93a.9.9 0 0 0 .74-1.42l-1.55-2.22.47-1.02 3.98.32c.48.04.94-.18 1.22-.58l1.65-2.35c.25-.36.31-.82.16-1.24l-1.1-3.08a1.72 1.72 0 0 0-1.17-1.16l-3.2-1.08-.31-1.42c.68-.44 1.17-1.39 1.17-2.58 0-1.87-.91-4.06-2.56-4.06h-.93Z" />
-      <circle cx="10.4" cy="5" r=".55" fill="#fff" /><circle cx="13.55" cy="5" r=".55" fill="#fff" />
-      <path d="M10.7 13.2c.85.55 1.75.55 2.6 0" fill="none" stroke="#fff" strokeWidth=".8" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 export default function JenkinsDownload() {
   const { project } = useProject();
@@ -28,7 +19,7 @@ export default function JenkinsDownload() {
   return (
     <main className="ws-page ws-page--narrow jenkins-download-page">
       <div className="jenkins-download-card">
-        <div className="jenkins-download-icon"><JenkinsMark large /></div>
+        <div className="jenkins-download-icon"><img src={jenkinsLogo} className="jenkins-download-mark jenkins-download-mark--large" alt="Jenkins" /></div>
         <div className="jenkins-download-eyebrow">BANKAI DESKTOP</div>
         <h1 className="jenkins-download-title">Run Jenkins from Bankai</h1>
         {desktopStatus === 'desktop' ? (
