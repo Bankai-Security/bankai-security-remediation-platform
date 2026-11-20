@@ -360,7 +360,7 @@ export default function Tickets() {
                             <RetryFixButton
                               onClick={() => void handleRetryFix(t.id)}
                               retrying={retryingFixId === t.id}
-                              title="Retry Gemini fix generation"
+                              title="Retry fix generation"
                             />
                           )}
 
@@ -437,7 +437,7 @@ export default function Tickets() {
                           <RetryFixButton
                             onClick={() => void handleRetryFix(t.id)}
                             retrying={retryingFixId === t.id}
-                            title="Retry Gemini fix generation"
+                            title="Retry fix generation"
                             size={18}
                           />
                         )}
