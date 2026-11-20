@@ -475,6 +475,7 @@ export function syncTicketsToJira(projectId: string): Promise<{
   imported: number;
   prMerged: number;
   prClosed: number;
+  prFailed: number;
 }> {
   return apiFetch(`/projects/${projectId}/tickets/sync`, { method: "POST" });
 }

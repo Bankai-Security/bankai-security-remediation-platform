@@ -622,33 +622,46 @@ export async function closeTicketsForResolvedFindings(
 export async function markTicketPrMerged(
   supabase: SupabaseClient,
   input: { projectId: string; prNumber: number },
-): Promise<void> {
-  const { data: ticket, error } = await supabase
+): Promise<boolean> {
+  const { data: ticket, error: loadError } = await supabase
     .from("tickets")
-    .update({ github_pr_state: "merged", github_pr_error: null })
+    .select("id, key, title, jira_issue_key, status")
     .eq("project_id", input.projectId)
     .eq("github_pr_number", input.prNumber)
-    .select("id, key, title, jira_issue_key")
     .maybeSingle();
 
-  if (error) {
-    logger.error({ err: error, ...input }, "Could not record the merged PR on its ticket");
-    return;
+  if (loadError) {
+    logger.error({ err: loadError, ...input }, "Could not load the ticket for a merged PR");
+    return false;
   }
-  if (!ticket) return;
+  if (!ticket) return false;
 
-  const nextStatus = "Done";
-  const { data: transitioned, error: transitionError } = await supabase.from("tickets").update({ status: nextStatus })
-    .eq("id", ticket.id).neq("status", nextStatus).select("id").maybeSingle();
-  if (transitionError) {
-    logger.error({ err: transitionError, ticketId: ticket.id }, "Could not reconcile completion after PR merge");
-    return;
+  // Persist merge evidence and completion together so database completion
+  // guards can evaluate the merged state in the same write.
+  const { data: updated, error: updateError } = await supabase
+    .from("tickets")
+    .update({ github_pr_state: "merged", github_pr_error: null, status: "Done" })
+    .eq("id", ticket.id)
+    .eq("project_id", input.projectId)
+    .select("status")
+    .maybeSingle();
+  if (updateError) {
+    logger.error({ err: updateError, ticketId: ticket.id }, "Could not complete the ticket after its PR merged");
+    return false;
   }
-  if (!transitioned) return;
+  if (!updated || updated.status !== "Done") {
+    logger.error(
+      { ticketId: ticket.id, prNumber: input.prNumber, persistedStatus: updated?.status ?? null },
+      "Database did not move the merged-PR ticket to Done",
+    );
+    return false;
+  }
+
+  if (ticket.status === "Done") return true;
 
   if (ticket.jira_issue_key) {
     const jira = await loadJiraCreds(supabase, input.projectId);
-    if (jira) await transitionIssue(jira.creds, ticket.jira_issue_key, nextStatus);
+    if (jira) await transitionIssue(jira.creds, ticket.jira_issue_key, "Done");
   }
 
   await recordActivity(supabase, {
@@ -661,6 +674,7 @@ export async function markTicketPrMerged(
     linkTo: "tickets",
     meta: `${ticket.title} · PR #${input.prNumber}`,
   });
+  return true;
 }
 
 // Reopens a Done ticket whose finding is still open (bucket != Resolved) so

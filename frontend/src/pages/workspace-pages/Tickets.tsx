@@ -113,7 +113,7 @@ export default function Tickets() {
     setSyncing(true);
     setSyncMessage(null);
     try {
-      const { synced, failed, statusPulled, removed, reconciled, imported, prMerged, prClosed } = await syncTicketsToJira(project.id);
+      const { synced, failed, statusPulled, removed, reconciled, imported, prMerged, prClosed, prFailed } = await syncTicketsToJira(project.id);
       const parts = [
         synced > 0 && `${synced} created`,
         reconciled > 0 && `${reconciled} linked to existing Jira issue(s)`,
@@ -122,6 +122,7 @@ export default function Tickets() {
         removed > 0 && `${removed} removed (deleted in Jira)`,
         prMerged > 0 && `${prMerged} pull request(s) merged`,
         prClosed > 0 && `${prClosed} pull request(s) closed without merge`,
+        prFailed > 0 && `${prFailed} merged pull request(s) could not move its ticket to Done`,
         failed > 0 && `${failed} failed`,
       ].filter(Boolean);
       setSyncMessage(parts.length > 0 ? parts.join(', ') : 'Everything is already up to date.');

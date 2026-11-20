@@ -229,6 +229,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   // isn't connected — this sync only ever requires Jira.
   let prMerged = 0;
   let prClosed = 0;
+  let prFailed = 0;
   const openPrTickets = new Set<string>();
   if (github) {
     const { data: prRows } = await supabase
@@ -243,8 +244,9 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
         const pr = await getPullRequest(github.creds, row.github_pr_number);
         if (!pr) continue; // PR no longer reachable — leave the ticket as-is
         if (pr.merged) {
-          await markTicketPrMerged(supabase, { projectId: project.id, prNumber: row.github_pr_number });
-          prMerged++;
+          const completed = await markTicketPrMerged(supabase, { projectId: project.id, prNumber: row.github_pr_number });
+          if (completed) prMerged++;
+          else prFailed++;
         } else if (pr.state === "closed") {
           await markTicketPrClosedWithoutMerge(supabase, { projectId: project.id, prNumber: row.github_pr_number });
           prClosed++;
@@ -427,7 +429,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
     });
   }
 
-  res.status(200).json({ synced, failed, statusPulled, removed, reconciled, imported, prMerged, prClosed });
+  res.status(200).json({ synced, failed, statusPulled, removed, reconciled, imported, prMerged, prClosed, prFailed });
 }
 
 export async function updateTicket(req: Request, res: Response): Promise<void> {
