@@ -244,7 +244,7 @@
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 12px;
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   color: var(--color-text-subtle);
   line-height: 1.7;
   white-space: pre-line;
