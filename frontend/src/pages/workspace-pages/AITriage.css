@@ -291,10 +291,10 @@
   letter-spacing: 0.06em;
 }
 
-.triage-scan-notice p {
+.triage-scan-notice-text {
   margin: 0;
   color: #1E3A8A;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
   font-size: 11px;
   line-height: 1.65;
   overflow-wrap: anywhere;
