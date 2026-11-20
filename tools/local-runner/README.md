@@ -2,6 +2,8 @@
 
 This guide uses the intended split setup: **Bankai runs in Railway staging; Quincy, Jenkins, and the companion run on your Windows computer.** The companion makes outbound HTTPS requests to Bankai and loopback requests to local Quincy/Jenkins. It submits one explicitly selected remediation attempt and uploads Quincy's manifest and evidence artifacts to Bankai. It is a developer workflow, not a trusted CI service.
 
+For the desktop UI, see [desktop/README.md](desktop/README.md). The companion source is in `desktop/`; launch it with `npm ci` and `npm run dev` from that folder, or use the unsigned preview installer in `desktop/release` if it was provided with your local build. The desktop UI can pair with Bankai, save tokens in Windows Credential Manager, check readiness, start the local Jenkins/Quincy services, and run the companion poller. The command-line setup below remains available for troubleshooting.
+
 ## What a successful run means
 
 - Bankai records the result as a **local pass** after checking the attempt and candidate SHA, Quincy manifest, uploaded artifact hashes, evidence completeness, and target comparison.

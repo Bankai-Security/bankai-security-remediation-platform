@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import https from 'node:https';
 
 const configDir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'BankaiLocalRunner');
@@ -59,7 +60,7 @@ async function requestJson(url, options = {}) {
   return response.json();
 }
 
-async function pair() {
+export async function pair({ onLog = (message) => console.log(message) } = {}) {
   const bankaiUrl = process.env.BANKAI_API_URL?.replace(/\/$/, '');
   const quincyUrl = process.env.QUINCY_API_URL?.replace(/\/$/, '');
   const pairingCode = process.env.BANKAI_PAIRING_CODE;
@@ -86,7 +87,7 @@ async function pair() {
     jenkinsCaPath: process.env.QUINCY_JENKINS_CA || null });
   delete process.env.BANKAI_PAIRING_CODE;
   delete process.env.QUINCY_API_TOKEN;
-  console.log(`Paired runner ${enrolled.runner_id}. Credentials are protected for this Windows user.`);
+  onLog(`Paired runner ${enrolled.runner_id}. Credentials are protected for this Windows user.`);
 }
 
 function httpsHealth(url, caPath) {
@@ -132,7 +133,7 @@ async function reportProgress(config, task, sequence, stage, status, message) {
   });
 }
 
-async function runTask(config, task) {
+async function runTask(config, task, signal) {
   let sequence = 0;
   await reportProgress(config, task, sequence++, 'preparing_environment', 'started', 'Checking local Quincy and Jenkins readiness.');
   const request = {
@@ -152,6 +153,7 @@ async function runTask(config, task) {
   const quincyId = started.execution_id;
   await reportProgress(config, task, sequence++, 'checkout', 'started', 'Quincy accepted the exact candidate revision.');
   let lastHeartbeat = 0;
+  let cancelSent = false;
   let status;
   while (true) {
     if (Date.now() - lastHeartbeat > 20_000) {
@@ -164,8 +166,9 @@ async function runTask(config, task) {
       lastHeartbeat = Date.now();
     }
     const control = await api(config, `/tasks/${encodeURIComponent(task.execution_id)}`);
-    if (control.cancel_requested) {
+    if ((control.cancel_requested || signal?.aborted) && !cancelSent) {
       await quincy(config, `/v1/verifications/${encodeURIComponent(quincyId)}/cancel`, { method: 'POST' }).catch(() => undefined);
+      cancelSent = true;
     }
     status = await quincy(config, `/v1/verifications/${encodeURIComponent(quincyId)}`);
     if (!['queued', 'running'].includes(status.state)) break;
@@ -207,7 +210,7 @@ async function runTask(config, task) {
   });
 }
 
-async function main() {
+export async function main({ signal, onLog = (level, message) => console[level === 'error' ? 'error' : 'log'](message) } = {}) {
   if (process.argv[2] === 'pair') return pair();
   const config = loadConfig();
   let readiness = { docker_ready: false, jenkins_ready: false, quincy_ready: false };
@@ -218,24 +221,27 @@ async function main() {
     }) });
   };
   await refreshReadiness();
-  while (true) {
+  while (!signal?.aborted) {
     if (!readiness.docker_ready || !readiness.jenkins_ready || !readiness.quincy_ready) {
-      console.log('Waiting for Docker Desktop, trusted local Jenkins TLS, and local Quincy API readiness.');
+      onLog('info', 'Waiting for Docker Desktop, trusted local Jenkins TLS, and local Quincy API readiness.');
       await sleep(15_000);
+      if (signal?.aborted) break;
       try { await refreshReadiness(); } catch { /* Keep the last safe capabilities; next retry refreshes them. */ }
       continue;
     }
     try {
       const { task } = await api(config, '/tasks/claim', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
       if (!task) { await sleep(3000); continue; }
-      console.log(`Claimed verification ${task.execution_id} for ${task.repository} at ${task.candidate_sha.slice(0, 12)}.`);
-      try { await runTask(config, task); console.log(`Completed local verification ${task.execution_id}.`); }
-      catch { console.error(`Verification ${task.execution_id} stopped without an accepted result; lease recovery will mark it incomplete.`); }
+      onLog('info', `Claimed verification ${task.execution_id} for ${task.repository} at ${task.candidate_sha.slice(0, 12)}.`);
+      try { await runTask(config, task, signal); onLog('info', `Completed local verification ${task.execution_id}.`); }
+      catch { onLog('error', `Verification ${task.execution_id} stopped without an accepted result; lease recovery will mark it incomplete.`); }
     } catch {
-      console.error('Bankai runner request failed; retrying shortly.');
+      onLog('error', 'Bankai runner request failed; retrying shortly.');
       await sleep(5000);
     }
   }
 }
 
-main().catch((error) => { console.error(error instanceof Error ? error.message : 'Local runner failed.'); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => { console.error(error instanceof Error ? error.message : 'Local runner failed.'); process.exitCode = 1; });
+}

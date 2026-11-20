@@ -18,6 +18,9 @@ backend/reports/
 frontend/reports/
 /reports/
 /release/
+/tools/local-runner/desktop/release/
+/tools/local-runner/desktop/build-output/
+/tools/local-runner/desktop/electron-startup.log
 /.aws/
 /quincy/
 
