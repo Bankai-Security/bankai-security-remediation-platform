@@ -16,6 +16,7 @@ import { orgRouter } from "./routes/org.routes.js";
 import { projectRouter } from "./routes/project.routes.js";
 import { teamInviteRouter } from "./routes/team-invite.routes.js";
 import { webhookRouter } from "./routes/webhook.routes.js";
+import { localRunnerPairingRouter, localRunnerRouter } from "./routes/local-runner.routes.js";
 
 export function createApp(): Express {
   const app = express();
@@ -86,6 +87,8 @@ export function createApp(): Express {
   });
 
   app.use("/api/auth", authRouter);
+  app.use("/api/local-runner", localRunnerPairingRouter);
+  app.use("/api/local-runner", localRunnerRouter);
   app.use("/api/projects", projectRouter);
   app.use("/api/orgs", orgRouter);
   app.use("/api/invites", inviteRouter);

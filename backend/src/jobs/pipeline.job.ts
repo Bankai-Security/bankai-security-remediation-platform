@@ -9,7 +9,6 @@ import {
 } from "../lib/quincy.js";
 import { securityRegression } from "../lib/security-regression.js";
 import { enqueueFixRetry } from "../lib/queue.js";
-import { ensureCiBootstrapReady } from "../lib/ci-bootstrap.js";
 import { CI_WORKFLOW_FILE, CI_WORKFLOW_PATH } from "../lib/ci-template.js";
 import {
   dispatchWorkflowRun,
@@ -95,26 +94,11 @@ export async function processPipelineJob(job: Job<PipelineJobData>): Promise<voi
       await setPipelineError(ticketId, "GitHub is not connected. Reconnect GitHub for this project, then retry CI.");
       return;
     }
-    const bootstrapReady = await ensureCiBootstrapReady(supabase, projectId, github);
-    if (!bootstrapReady) {
-      // Either the bootstrap PR was just opened, or one is already open —
-      // either way this ticket waits for handlePullRequestEvent to
-      // re-enqueue it once that PR merges (see markBootstrapPrMerged).
-      await supabase.from("tickets").update({ ci_status: "pending_setup", ci_error: null }).eq("id", ticketId);
-      return;
-    }
-
     await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId);
 
-    // The remediation branch may have been created before bankai-verify.yml
-    // landed on the default branch — every ticket that was still open when
-    // the bootstrap PR merged has a branch whose own history predates the
-    // file. GitHub validates workflow_dispatch's trigger against the ref
-    // being dispatched, not the default branch, so dispatching straight
-    // against a stale branch 422s ("Workflow does not have 'workflow_dispatch'
-    // trigger"). Bring the branch up to date first — cheap no-op once it's
-    // already in sync (mergeBranchFromBase 204s and every later dispatch on
-    // this branch skips straight past this check).
+    // GitHub validates workflow_dispatch on the target ref. Bring the
+    // remediation branch up to date when the repo's existing workflow is
+    // available only on the default branch.
     if (!(await repoFileExists(github.creds, CI_WORKFLOW_PATH, branch))) {
       await mergeBranchFromBase(github.creds, {
         base: branch,

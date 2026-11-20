@@ -29,6 +29,34 @@ const GeminiFixResultSchema = z.object({
 
 export type GeneratedFix = z.infer<typeof GeminiFixResultSchema>;
 
+/** GitHub's Contents API accepts arbitrary repository paths. Keep model output
+ * confined to ordinary, repository-relative paths before it can reach a commit.
+ */
+export function isSafePatchPath(path: string): boolean {
+  return path.length > 0 && path.length <= 512 &&
+    !path.startsWith("/") && !path.includes("\\") &&
+    ![...path].some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127) &&
+    !/^[A-Za-z]:/.test(path) &&
+    path.split("/").every((part) => part !== "" && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
+}
+
+/** Extra files may only be changed when their exact source was supplied to the model. */
+export function generatedFixPathsAreInScope(
+  fix: GeneratedFix,
+  targetPath: string,
+  suppliedContextPaths: ReadonlySet<string>,
+): boolean {
+  if (!isSafePatchPath(targetPath)) return false;
+  const seen = new Set([targetPath]);
+  for (const file of fix.filesToUpdate ?? []) {
+    if (!isSafePatchPath(file.filePath)) return false;
+    if (file.filePath === targetPath) continue; // The main file content wins on a collision.
+    if (seen.has(file.filePath) || !suppliedContextPaths.has(file.filePath)) return false;
+    seen.add(file.filePath);
+  }
+  return true;
+}
+
 // Confidence is advisory metadata, not a validation verdict. A changed retry
 // patch still has to pass Bankai's scanner, CI-parity, and repository tests, so
 // discarding it here prevents those deterministic gates from doing their job.

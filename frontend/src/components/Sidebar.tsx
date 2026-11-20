@@ -40,6 +40,12 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M12.5 5v10" strokeDasharray="2 2.2" />
     </svg>
   ),
+  verification: (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 2.5 16 5v4.8c0 3.7-2.5 6.2-6 7.7-3.5-1.5-6-4-6-7.7V5l6-2.5Z" />
+      <path d="m7 9.8 2 2 4-4" />
+    </svg>
+  ),
   activity: (
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2.5 10h3.2l2.1-5 3.9 10 2.1-5h3.7" />
@@ -53,6 +59,7 @@ const NAV_ITEMS = [
   { key: 'intake', label: 'Report Intake', path: 'intake' },
   { key: 'triage', label: 'AI Triage', path: 'triage' },
   { key: 'tickets', label: 'Tickets', path: 'tickets' },
+  { key: 'verification', label: 'Jenkins Verification', path: 'local-verification' },
   { key: 'activity', label: 'Activity', path: 'activity' },
 ];
 

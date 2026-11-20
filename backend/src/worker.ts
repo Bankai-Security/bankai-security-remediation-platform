@@ -4,6 +4,7 @@ import { processFixRetryJob } from "./jobs/fix-retry.job.js";
 import { processPipelineJob } from "./jobs/pipeline.job.js";
 import { processRepoScanJob } from "./jobs/repo-scan.job.js";
 import { env } from "./env.js";
+import { reconcileExpiredLocalRunnerLeases } from "./lib/local-runner-recovery.js";
 import { logger } from "./lib/logger.js";
 import { waitingAgeMs } from "./lib/queue-telemetry.js";
 import { fixPrQueue, fixRetryQueue, FIX_PR_QUEUE_NAME, FIX_RETRY_QUEUE_NAME, pipelineQueue, PIPELINE_QUEUE_NAME, redisConnection, repoScanQueue, REPO_SCAN_QUEUE_NAME } from "./lib/queue.js";
@@ -80,8 +81,8 @@ fixPrWorker.on("failed", (job, err) => {
 logger.info(`Fix-PR worker listening on queue "${FIX_PR_QUEUE_NAME}"`);
 
 // Same process for v1, same crash-isolation rationale as the two workers
-// above — dispatching/bootstrapping GitHub Actions runs is just as slow and
-// external-API-dependent.
+// above — dispatching repository-configured GitHub Actions runs is just as
+// slow and external-API-dependent.
 const pipelineWorker = new Worker(PIPELINE_QUEUE_NAME, processPipelineJob, {
   connection: redisConnection,
   concurrency: 2,
@@ -147,3 +148,19 @@ const sampleQueueDepth = async () => {
 };
 void sampleQueueDepth();
 setInterval(() => { void sampleQueueDepth(); }, 60_000).unref();
+
+let recoveringLocalRunners = false;
+const recoverLocalRunnerLeases = async () => {
+  if (recoveringLocalRunners) return;
+  recoveringLocalRunners = true;
+  try {
+    const expired = await reconcileExpiredLocalRunnerLeases();
+    if (expired > 0) logger.warn({ expired }, "Expired local runner tasks were marked incomplete");
+  } catch (err) {
+    logger.error({ err }, "Could not reconcile expired local runner leases");
+  } finally {
+    recoveringLocalRunners = false;
+  }
+};
+void recoverLocalRunnerLeases();
+setInterval(() => { void recoverLocalRunnerLeases(); }, 30_000).unref();

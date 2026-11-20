@@ -97,14 +97,10 @@ For a ticket with a connected GitHub repo, Bankai:
    retries — up to a bounded number of attempts — before handing off to a human.
 
 ### 5. CI/CD Verification Pipeline
-Bankai does not trust its own fixes blindly. If a target repository has no
-`.github/workflows/bankai-verify.yml`, Bankai opens a one-time **bootstrap PR** to add
-one, with `build` / `functional-test` / `integration-test` commands **auto-detected** from
-the repo's stack (Node, Python, Java, Go, Rust, C#, Ruby, PHP, C++) wherever inferable,
-and `image` / `deploy-dev` left as clearly marked placeholders for infra that can't be
-guessed. Once merged, every remediation PR's branch is dispatched through this workflow,
-and the resulting `workflow_run` webhook (job-by-job: Build → Image → Deploy Dev →
-Functional Test → Integration Test) drives the ticket's live CI status in the UI.
+Bankai can dispatch a repository owner's existing `.github/workflows/bankai-verify.yml`
+workflow and records its `workflow_run` evidence. Bankai does not create a bootstrap
+branch or write workflow files into customer repositories. Local Jenkins companion
+verification is optional and under development; it is not currently dispatched.
 
 ### 6. Collaboration & Access Control
 Projects support multi-user membership with four roles — **Owner, Admin, Editor,
@@ -355,7 +351,7 @@ Schema evolves through ordered migrations in `supabase/migrations/`. Principal t
 | Table | Purpose |
 | --- | --- |
 | `profiles` | User profile, including linked GitHub OAuth identity |
-| `projects` | One per managed application/repo — SLA policy, GitHub/Jira connection state, CI bootstrap status, ticket key sequence |
+| `projects` | One per managed application/repo — SLA policy, GitHub/Jira connection state, ticket key sequence |
 | `project_services` | Services/components tracked under a project |
 | `project_members` / `project_invites` | Role-based membership and pending email invites |
 | `scans` | A single ingestion run (CSV upload or AI repo scan), with status, commit range, and trigger type |
@@ -430,11 +426,9 @@ Two distinct CI/CD surfaces exist in this repository:
 
 1. **This repository's own pipeline** — [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
    builds the frontend and type-checks + builds the backend on every push/PR to `main`.
-2. **The verification pipeline Bankai manages for *customer* repositories** —
-   `bankai-verify.yml`, which Bankai itself generates and bootstraps into a connected
-   repo (`build → image → deploy-dev → functional-test → integration-test`), dispatches
-   against every remediation branch, and uses as the source of truth for a ticket's CI
-   status.
+2. **Repository-configured verification** — when a connected repository already has a
+   compatible `bankai-verify.yml`, Bankai can dispatch it and record the result. The
+   repository owner controls workflow content and branch-protection policy.
 
 ---
 
@@ -470,7 +464,7 @@ alongside the API server — it is not started automatically by `npm start`.
 Actively developed. Implemented end-to-end: authentication (including SSO and
 forgot/reset password), project and team management, CSV and AI-driven scan ingestion,
 finding triage with SLA tracking, Jira ticket sync, AI-generated remediation PRs, and the
-CI bootstrap/dispatch/retry-on-failure verification loop.
+repository-configured CI dispatch/retry-on-failure verification loop.
 
 Known limitation: Arcjet's local fingerprint generator (`@arcjet/node@1.9.1`) currently
 prevents rate-limiting `/login` by submitted email in addition to IP — see

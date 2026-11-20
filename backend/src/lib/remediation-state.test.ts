@@ -28,6 +28,29 @@ describe("remediation command contract", () => {
     await expect(new RemediationRepository({ rpc } as unknown as SupabaseClient).command({})).rejects.toThrow();
     expect(rpc).not.toHaveBeenCalled();
   });
+  it("treats an identical persisted verification manifest as an idempotent replay", async () => {
+    const digest = `sha256-${"a".repeat(64)}`;
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { manifest_id: "m1", execution_id: "q1", manifest_digest: digest }, error: null });
+    const eq = vi.fn().mockReturnValue({ maybeSingle });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    const repo = new RemediationRepository({ from } as unknown as SupabaseClient);
+    await expect(repo.recordVerificationManifest({ attemptId: id, manifestId: "m1", executionId: "q1", digest, manifest: { integrity_digest: digest } })).resolves.toBeUndefined();
+    expect(from).toHaveBeenCalledExactlyOnceWith("remediation_verification_manifests");
+  });
+  it("loads the finalized manifest after worker restart and rejects conflicting replay", async () => {
+    const digest = `sha256-${"a".repeat(64)}`;
+    const persisted = { manifest_id: "m1", execution_id: "q1", manifest_digest: digest, manifest: { integrity_digest: digest } };
+    const maybeSingle = vi.fn().mockResolvedValue({ data: persisted, error: null });
+    const eq = vi.fn().mockReturnValue({ maybeSingle });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    const restarted = new RemediationRepository({ from } as unknown as SupabaseClient);
+
+    await expect(restarted.verificationManifest(id)).resolves.toEqual(persisted);
+    await expect(restarted.recordVerificationManifest({ attemptId: id, manifestId: "other", executionId: "q1", digest, manifest: persisted.manifest }))
+      .rejects.toThrow("conflicts with immutable attempt evidence");
+  });
   it("parses persisted terminal diagnosis fields", () => {
     expect(RemediationRecord.parse({
       id, schema_version: "1.0", project_id: id, finding_id: id, repository_id: "repo",

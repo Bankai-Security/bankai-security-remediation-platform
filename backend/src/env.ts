@@ -46,6 +46,10 @@ const envSchema = z.object({
   QUINCY_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
   QUINCY_REMEDIATION_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
 
+  // Explicit opt-in for local runner enqueue and claims. Keep false until the
+  // operator has configured local Quincy/Jenkins and approved the trust model.
+  LOCAL_RUNNER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+
   // Backs the repo-scan job queue (backend/src/lib/queue.ts) — required by
   // both the API server (to enqueue) and the worker (backend/src/worker.ts,
   // to process). Defaults to a local Redis for dev.

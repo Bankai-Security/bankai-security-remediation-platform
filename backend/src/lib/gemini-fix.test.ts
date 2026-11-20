@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateFix, isActionableFixCandidate, type FixFindingInput } from "./gemini-fix.js";
+import { generateFix, generatedFixPathsAreInScope, isActionableFixCandidate, isSafePatchPath, type FixFindingInput } from "./gemini-fix.js";
 
 const generateContent = vi.fn();
 
@@ -69,5 +69,26 @@ describe("retry candidate acceptance", () => {
       fixedContent: "unchanged\n",
       summary: "No safe change available.",
     }, "unchanged\n")).toBe(false);
+  });
+});
+
+describe("generated patch path validation", () => {
+  const fix = (paths: string[]) => ({
+    confident: true,
+    fixedContent: "patched",
+    summary: "Narrow fix",
+    filesToUpdate: paths.map((filePath) => ({ filePath, fixedContent: "context change" })),
+  });
+
+  it.each(["../outside.ts", "/etc/passwd", "C:/outside.ts", "src\\outside.ts", "src//file.ts", "src/./file.ts", ".git/config"])(
+    "rejects unsafe repository path %s",
+    (path) => expect(isSafePatchPath(path)).toBe(false),
+  );
+
+  it("permits only supplied context paths and safely ignores a duplicate target", () => {
+    const supplied = new Set(["src/helper.ts"]);
+    expect(generatedFixPathsAreInScope(fix(["src/helper.ts"]), "src/main.ts", supplied)).toBe(true);
+    expect(generatedFixPathsAreInScope(fix(["src/other.ts"]), "src/main.ts", supplied)).toBe(false);
+    expect(generatedFixPathsAreInScope(fix(["src/main.ts"]), "src/main.ts", supplied)).toBe(true);
   });
 });

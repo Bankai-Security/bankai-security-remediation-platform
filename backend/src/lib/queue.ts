@@ -97,7 +97,7 @@ export async function enqueueFixPr(data: FixPrJobData): Promise<void> {
   });
 }
 
-// Used after the CI bootstrap PR merges. The original fix-pr job completed
+// Used to resume a pending fix PR. The original fix-pr job completed
 // successfully when it marked the ticket pending_setup, so its deduped
 // `fix-pr-${ticketId}` id can still be retained in Redis. A resume must use
 // a fresh BullMQ id or it may silently no-op.
@@ -124,7 +124,7 @@ export const pipelineQueue = new Queue<PipelineJobData>(PIPELINE_QUEUE_NAME, { c
 // jobId dedupes on ticketId, same belt-and-suspenders rationale as
 // enqueueFixPr — processPipelineJob re-checks the ticket's own ci_status on
 // every run, so it stays safe even outside BullMQ's dedup window. Reused
-// both right after a PR opens and when a bootstrap PR merge re-triggers
+// both right after a PR opens and when a user retries
 // every ticket that was left at 'pending_setup'.
 export async function enqueuePipelineVerification(data: PipelineJobData): Promise<void> {
   await pipelineQueue.add("verify", data, {

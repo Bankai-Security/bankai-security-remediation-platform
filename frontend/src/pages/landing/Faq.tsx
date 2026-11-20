@@ -9,7 +9,7 @@ const QUESTIONS = [
   },
   {
     q: 'How are AI fixes verified before anyone reviews them?',
-    a: 'Bankai bootstraps a CI workflow into your repository with build, functional-test, and integration-test commands auto-detected from your stack. Every remediation branch is dispatched through it, and the workflow_run webhook drives the ticket\'s live CI status. A fix that has not passed CI is not presented as done.',
+    a: 'Bankai can dispatch a verification workflow that your repository already configures. It does not create or merge a CI setup branch. Local Jenkins companion verification is being built as an optional execution path; skipping it is never shown as a pass.',
   },
   {
     q: 'What happens when CI fails on a generated fix?',

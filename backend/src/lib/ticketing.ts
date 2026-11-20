@@ -829,40 +829,6 @@ export async function markTicketPipelineResult(
   });
 }
 
-// Called from webhook.controller.ts when the one-time "bankai/ci-bootstrap"
-// PR (adding bankai-verify.yml to the target repo's default branch) is
-// merged. Flips the project to 'ready' and returns every ticket that was
-// left at ci_status='pending_setup' waiting on this, so the caller can
-// re-enqueue their pipeline verification now that dispatch will work.
-export interface PendingBootstrapTicket {
-  id: string;
-  github_branch_name: string | null;
-  github_pr_number: number | null;
-}
-
-export async function markBootstrapPrMerged(supabase: SupabaseClient, projectId: string): Promise<PendingBootstrapTicket[]> {
-  const { error: projectError } = await supabase
-    .from("projects")
-    .update({ ci_bootstrap_status: "ready" })
-    .eq("id", projectId);
-  if (projectError) {
-    logger.error({ err: projectError, projectId }, "Could not mark CI bootstrap PR as merged");
-    return [];
-  }
-
-  const { data: pending, error: pendingError } = await supabase
-    .from("tickets")
-    .select("id, github_branch_name, github_pr_number")
-    .eq("project_id", projectId)
-    .eq("ci_status", "pending_setup");
-  if (pendingError) {
-    logger.error({ err: pendingError, projectId }, "Could not load tickets pending CI setup after bootstrap merge");
-    return [];
-  }
-
-  return (pending ?? []) as PendingBootstrapTicket[];
-}
-
 export interface ReconcileJiraTicketsInput {
   projectId: string;
   jira: { creds: JiraCredentials; projectKey: string };

@@ -78,8 +78,7 @@ function RemediationProgress({ ticket, compact = false }: { ticket: Ticket; comp
 }
 
 // Nothing re-triggers a stuck ticket's pipeline on its own — 'pending_setup'
-// can mean "genuinely waiting on a human to merge the bootstrap PR" or
-// "missed the one-time re-enqueue sweep", and 'failed'/a bare ciError both
+// means the repository workflow is missing or incomplete, and 'failed'/a bare ciError both
 // mean the last attempt didn't succeed. 'queued'/'running' are already
 // in-flight, so retrying those would just race the job already running.
 function canRetryCi(t: Ticket): boolean {

@@ -16,11 +16,8 @@ export function buildAuthorizeUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: env.GITHUB_OAUTH_CLIENT_ID,
     redirect_uri: callbackUrl(),
-    // "workflow" is required in addition to "repo" to write/update files
-    // under .github/workflows/ (the CI bootstrap PR) — GitHub rejects that
-    // specific path with a 404 under "repo" alone, same split as classic
-    // PATs' "workflow" scope.
-    scope: "repo,workflow",
+    // Bankai does not write workflow files into connected repositories.
+    scope: "repo",
     state,
   });
   return `https://github.com/login/oauth/authorize?${params.toString()}`;

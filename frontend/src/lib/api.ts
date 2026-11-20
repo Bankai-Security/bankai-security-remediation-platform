@@ -444,6 +444,77 @@ export function listTickets(projectId: string, filters: TicketFilters = {}): Pro
   return apiFetch(`/projects/${projectId}/tickets${toQueryString(filters)}`, { method: "GET" });
 }
 
+export interface LocalVerificationTask {
+  id: string;
+  remediation_id: string;
+  attempt_id: string;
+  finding_id: string;
+  execution_id: string;
+  repository: string;
+  baseline_sha: string;
+  candidate_sha: string;
+  profile: string;
+  policy_id: string;
+  state: 'queued' | 'leased' | 'running' | 'cancelling' | 'passed' | 'failed' | 'cancelled' | 'incomplete' | 'infrastructure_failure';
+  lease_expires_at: string | null;
+  last_sequence: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  result?: { manifest?: { integrity_digest?: string; jenkins_build_id?: string | null; comparison_outcome?: string | null }; reason?: string } | null;
+}
+
+export interface LocalRunnerInstallation {
+  id: string;
+  public_key: string;
+  protocol_version: string;
+  capabilities: { companion_version: string; docker_ready: boolean; jenkins_ready: boolean; quincy_ready: boolean };
+  status: 'active' | 'revoked';
+  last_seen_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface LocalVerificationEligible {
+  id: string;
+  finding_id: string;
+  repository_id: string;
+  state: string;
+  current_attempt_id: string;
+  attempt: { id: string; attempt_number: number; base_sha: string; candidate_sha: string; verification_profile: string };
+  finding_title: string;
+  choice: { choice: 'run' | 'skip'; updated_at: string } | null;
+}
+
+export function listLocalVerification(projectId: string): Promise<{ enabled: boolean; dispatch_enabled: boolean; tasks: LocalVerificationTask[]; runners: LocalRunnerInstallation[]; eligible: LocalVerificationEligible[] }> {
+  return apiFetch(`/projects/${projectId}/local-verification`);
+}
+
+export function chooseLocalVerification(projectId: string, remediationId: string, choice: 'run' | 'skip'): Promise<{ choice: 'run' | 'skip'; attempt_id: string; task: LocalVerificationTask | null }> {
+  return apiFetch(`/projects/${projectId}/local-verification/remediations/${remediationId}/choice`, { method: 'POST', body: JSON.stringify({ choice }) });
+}
+
+export async function downloadLocalVerificationArtifact(projectId: string, taskId: string, name: 'build-log' | 'test-report' | 'scan-evidence'): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/local-verification/${taskId}/artifacts/${name}`, { credentials: 'include' });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body.error ?? 'Could not download verification evidence.', body.details);
+  }
+  return response.blob();
+}
+
+export function cancelLocalVerification(projectId: string, taskId: string): Promise<{ task: LocalVerificationTask }> {
+  return apiFetch(`/projects/${projectId}/local-verification/${taskId}/cancel`, { method: 'POST', body: '{}' });
+}
+
+export function createLocalRunnerPairingCode(projectId: string): Promise<{ pairing_code: string; expires_at: string }> {
+  return apiFetch(`/projects/${projectId}/local-verification/pairing-codes`, { method: 'POST', body: '{}' });
+}
+
+export function revokeLocalRunner(projectId: string, runnerId: string): Promise<{ revoked: boolean }> {
+  return apiFetch(`/projects/${projectId}/local-verification/runners/${runnerId}/revoke`, { method: 'POST', body: '{}' });
+}
+
 export function createTickets(
   projectId: string,
   findingIds: string[],
@@ -461,9 +532,8 @@ export function reopenTicket(projectId: string, ticketId: string): Promise<{ tic
   return apiFetch(`/projects/${projectId}/tickets/${ticketId}/reopen`, { method: "POST" });
 }
 
-// For a ticket whose CI verification is stuck (failed, or left at
-// 'pending_setup' from before the repo's bootstrap PR merged) — nothing else
-// retries it automatically.
+// User-controlled retry for a configured repository workflow that failed or
+// was unavailable. Bankai does not create a workflow in the repository.
 export function retryTicketPipeline(projectId: string, ticketId: string): Promise<{ queued: boolean }> {
   return apiFetch(`/projects/${projectId}/tickets/${ticketId}/retry-pipeline`, { method: "POST" });
 }

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "../env.js";
 import type { QuincyTriageEvidence } from "./quincy.js";
-import { compareQuincyTarget, describeQuincyFallback, explicitQuincyTargetComparison, parseGithubPrNumber, persistQuincyScanEvidence, quincyEvidenceIsComparable, quincyEvidenceSupportsVerification, quincyNegativeEvidenceFingerprints, quincyRemediationPollTimeoutMs, runQuincyRemediationWorkflow, runQuincyTriageScan } from "./quincy.js";
+import { compareQuincyTarget, describeQuincyFallback, explicitQuincyTargetComparison, parseGithubPrNumber, persistQuincyScanEvidence, quincyEvidenceIsComparable, quincyEvidenceSupportsVerification, quincyNegativeEvidenceFingerprints, quincyRemediationPollTimeoutMs, runQuincyRemediationWorkflow, runQuincyTriageScan, runQuincyVerification } from "./quincy.js";
 
 const COMMIT = "a".repeat(40);
+const ORIGINAL_QUINCY_TOKEN = env.QUINCY_API_TOKEN;
 
 function triagePayload(status: "complete" | "partial" | "failed" | "cancelled" | "incomparable" = "complete", comparisons?: unknown[]) {
   const complete = status === "complete";
@@ -61,7 +62,7 @@ describe("Quincy triage evidence", () => {
   const originalQuincyUrl = env.QUINCY_API_URL;
 
   beforeEach(() => { env.QUINCY_API_URL = "http://quincy.local"; });
-  afterEach(() => { env.QUINCY_API_URL = originalQuincyUrl; vi.restoreAllMocks(); });
+  afterEach(() => { env.QUINCY_API_URL = originalQuincyUrl; env.QUINCY_API_TOKEN = ORIGINAL_QUINCY_TOKEN; vi.restoreAllMocks(); });
 
   it("accepts informational findings and retains Schrift identity and evidence", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json(triagePayload()));
@@ -489,5 +490,28 @@ describe("runQuincyRemediationWorkflow", () => {
     expect(fallback.kind).toBe("validation_failed");
     expect(fallback.logLevel).toBe("warn");
     expect(fallback.logMessage).toBe("Quincy workflow failed validation; continuing to Bankai fallback remediation");
+  });
+
+  it("submits a correlated versioned verification and persists its execution before polling", async () => {
+    env.QUINCY_API_TOKEN = "service-test-token";
+    const started: string[] = [];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ detail: "temporary" }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ execution_id: "execution-1", state: "queued" }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ state: "failed", result_current: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(runQuincyVerification({
+      idempotencyKey: "bankai-remediation:attempt-1", repository: "org/repo", baselineSha: "a".repeat(40), candidateSha: "b".repeat(40),
+      target: { legacyFingerprint: "legacy-1", occurrenceId: "occ-1", externalId: "SCHRIFT-1", filePath: "src/app.ts" },
+      remediationId: "00000000-0000-4000-8000-000000000001", attemptId: "00000000-0000-4000-8000-000000000002",
+      findingId: "00000000-0000-4000-8000-000000000003", profile: "jenkins-schrift-comparison-v1",
+      policyId: "bankai-complete-repository-differential-v1", onStarted: async (id) => { started.push(id); },
+    })).rejects.toThrow("current passing result");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/v1/verifications");
+    expect(fetchMock.mock.calls[1]![1].body).toBe(fetchMock.mock.calls[0]![1].body);
+    expect(body).toMatchObject({ schema_version: "1.0", profile: "jenkins-schrift-comparison-v1", baseline_sha: "a".repeat(40), candidate_sha: "b".repeat(40),
+      bankai_correlation: { attempt_id: "00000000-0000-4000-8000-000000000002" } });
+    expect(started).toEqual(["execution-1"]);
   });
 });

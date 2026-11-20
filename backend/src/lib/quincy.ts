@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env } from "../env.js";
 import type { NormalizedFinding } from "./csv-ingest.js";
 import { logger } from "./logger.js";
 import { normalizeSeverity } from "./csv-ingest.js";
+import { artifactDigest, QuincyVerificationManifestSchema, validateQuincyManifest, type QuincyVerificationManifest } from "./quincy-manifest.js";
 
 export class QuincyApiError extends Error {}
 
@@ -166,7 +168,7 @@ const QuincyFindingComparisonSchema = z.object({
   evidence_references: z.record(z.string(), z.unknown()).optional(),
 });
 
-const QuincyTriageEvidenceSchema = z.object({
+export const QuincyTriageEvidenceSchema = z.object({
   schema_version: z.literal("1.0"),
   scan_execution_id: z.string().min(1),
   repository_id: z.string().nullable(),
@@ -277,6 +279,116 @@ async function quincyGet(path: string, timeoutMs: number, requestId?: string): P
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function quincyTransientRetry(request: () => Promise<Response>): Promise<Response> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await request();
+      if (attempt === 1 || ![408, 429, 500, 502, 503, 504].includes(response.status)) return response;
+      await response.body?.cancel().catch(() => undefined);
+    } catch (error) {
+      if (attempt === 1) throw error;
+    }
+    await sleep(250);
+  }
+  throw new QuincyApiError("Quincy transport retry exhausted.");
+}
+
+export interface QuincyVerificationInput {
+  idempotencyKey: string; repository: string; repositoryId?: string; baselineSha: string; candidateSha: string;
+  target: QuincyTargetIdentity & { legacyFingerprint: string; occurrenceId?: string | null };
+  remediationId: string; attemptId: string; findingId: string; profile: string; policyId: string;
+  timeoutSeconds?: number; pollTimeoutMs?: number; requestId?: string;
+  onStarted?: (executionId: string) => Promise<void>;
+}
+
+/** Submit and consume Quincy verification v1. Every result is fetched through
+ * authenticated routes, correlated to this attempt, and artifact bytes are
+ * hashed before the manifest can be returned to a caller.
+ */
+export async function runQuincyVerification(input: QuincyVerificationInput): Promise<{
+  executionId: string; jenkinsBuildId: string | null; manifest: QuincyVerificationManifest;
+  baselineEvidence: QuincyTriageEvidence; candidateEvidence: QuincyTriageEvidence;
+}> {
+  if (!env.QUINCY_API_URL || !env.QUINCY_API_TOKEN) throw new QuincyApiError("Authenticated Quincy verification is not configured.");
+  if (input.profile !== "jenkins-schrift-comparison-v1") throw new QuincyApiError("Remediation attempt profile is not supported by Quincy Jenkins verification.");
+  const repository = `https://github.com/${input.repository}`;
+  const repositoryId = `quincy-repository-${createHash("sha256").update(`github_url:${repository}`).digest("hex")}`;
+  if (input.repositoryId && repositoryId !== input.repositoryId) throw new QuincyApiError("Remediation repository identity does not match Quincy repository identity.");
+  const policyId = input.policyId;
+  const body = {
+    schema_version: "1.0", idempotency_key: input.idempotencyKey,
+    repository: { kind: "github_url", value: repository }, repository_id: repositoryId,
+    baseline_sha: input.baselineSha, candidate_sha: input.candidateSha,
+    target: { legacy_fingerprint: input.target.legacyFingerprint, occurrence_id: input.target.occurrenceId ?? null,
+      rule_id: input.target.externalId, file_path: input.target.filePath },
+    profile: "jenkins-schrift-comparison-v1", timeout_seconds: input.timeoutSeconds ?? 1800,
+    policy_id: policyId,
+    bankai_correlation: { remediation_id: input.remediationId, attempt_id: input.attemptId,
+      finding_id: input.findingId, base_sha: input.baselineSha },
+  };
+  const submitted = await quincyTransientRetry(() => quincyPost("/v1/verifications", body, 15_000, input.requestId));
+  if (!submitted.ok) throw new QuincyApiError(`Quincy verification submission failed (${submitted.status}).`);
+  const start = z.object({ execution_id: z.string().min(1), state: z.string() }).passthrough().parse(await submitted.json());
+  await input.onStarted?.(start.execution_id);
+  const deadline = Date.now() + Math.min(input.pollTimeoutMs ?? 30 * 60_000, 30 * 60_000);
+  let status: Record<string, unknown> | undefined;
+  while (Date.now() < deadline) {
+    const response = await quincyTransientRetry(() => quincyGet(`/v1/verifications/${encodeURIComponent(start.execution_id)}`, 15_000, input.requestId));
+    if (!response.ok) throw new QuincyApiError(`Quincy verification status failed (${response.status}).`);
+    status = z.record(z.string(), z.unknown()).parse(await response.json());
+    if (["passed", "failed", "cancelled", "timed_out", "incomplete", "infrastructure_failure"].includes(String(status.state))) break;
+    if (status.state === "queued" || status.state === "running") {
+      await sleep(1000);
+      continue;
+    }
+    throw new QuincyApiError("Quincy returned an unsupported verification state.");
+  }
+  if (!status || status.state !== "passed" || status.result_current !== true) throw new QuincyApiError("Quincy verification did not produce a current passing result.");
+  const terminalManifest = QuincyVerificationManifestSchema.safeParse(status.verification_manifest);
+  if (!terminalManifest.success) throw new QuincyApiError("Quincy terminal status omitted its integrity-validated manifest.");
+  const manifestPayload: unknown = terminalManifest.data;
+  const baselineEvidence = QuincyTriageEvidenceSchema.parse(status.baseline_evidence);
+  const candidateEvidence = QuincyTriageEvidenceSchema.parse(status.evidence);
+  const manifest = validateQuincyManifest(manifestPayload, {
+    executionId: start.execution_id, repositoryId, repository, candidateSha: input.candidateSha,
+    baselineSha: input.baselineSha, profile: "jenkins-schrift-comparison-v1", policyId,
+    correlation: { remediation_id: input.remediationId, attempt_id: input.attemptId, finding_id: input.findingId, base_sha: input.baselineSha },
+  });
+  const fetchArtifact = (reference: string, timeout: number) => {
+    const url = new URL(reference, env.QUINCY_API_URL);
+    const base = new URL(env.QUINCY_API_URL!);
+    if (url.origin !== base.origin) throw new QuincyApiError("Quincy artifact reference points outside the configured service.");
+    return quincyTransientRetry(() => quincyGet(`${url.pathname}${url.search}`, timeout, input.requestId));
+  };
+  const scanArtifact = manifest.artifacts["scan-evidence"];
+  const scanArtifactResponse = await fetchArtifact(scanArtifact.reference, 30_000);
+  if (!scanArtifactResponse.ok) throw new QuincyApiError("Quincy scan evidence artifact could not be retrieved.");
+  const scanArtifactBytes = new Uint8Array(await scanArtifactResponse.arrayBuffer());
+  if (artifactDigest(scanArtifactBytes) !== scanArtifact.digest) throw new QuincyApiError("Quincy scan evidence artifact has an invalid digest.");
+  let storedEvidence: unknown;
+  try { storedEvidence = JSON.parse(new TextDecoder().decode(scanArtifactBytes)); }
+  catch { throw new QuincyApiError("Quincy scan evidence artifact is malformed."); }
+  const parsedStoredEvidence = z.object({ baseline_evidence: QuincyTriageEvidenceSchema, candidate_evidence: QuincyTriageEvidenceSchema }).strict().parse(storedEvidence);
+  if (parsedStoredEvidence.baseline_evidence.evidence_digest !== baselineEvidence.evidence_digest
+    || parsedStoredEvidence.candidate_evidence.evidence_digest !== candidateEvidence.evidence_digest) {
+    throw new QuincyApiError("Quincy terminal evidence does not match the immutable scan artifact.");
+  }
+  for (const name of ["build-log", "test-report"] as const) {
+    const evidence = manifest.artifacts[name];
+    const artifactResponse = await fetchArtifact(evidence.reference, 30_000);
+    if (!artifactResponse.ok || artifactDigest(new Uint8Array(await artifactResponse.arrayBuffer())) !== evidence.digest) {
+      throw new QuincyApiError("Quincy referenced artifact is missing or has an invalid digest.");
+    }
+  }
+  const baseline: QuincyTriageResult = { findings: [], rawFindingCount: 0, scanDurationSeconds: 0, evidence: baselineEvidence, baselineEvidence: null };
+  const candidate: QuincyTriageResult = { findings: [], rawFindingCount: 0, scanDurationSeconds: 0, evidence: candidateEvidence, baselineEvidence: null };
+  const targetComparison = explicitQuincyTargetComparison(baseline, candidate, input.target, input.baselineSha, input.candidateSha);
+  if (targetComparison.outcome !== "not_detected") {
+    throw new QuincyApiError(`Quincy target comparison is incomplete or does not prove fresh removal: ${targetComparison.reason}`);
+  }
+  return { executionId: start.execution_id, jenkinsBuildId: manifest.jenkins_build_id, manifest, baselineEvidence, candidateEvidence };
 }
 
 function metadataString(finding: QuincyFinding, key: string): string | null {

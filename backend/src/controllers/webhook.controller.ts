@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
-import { CI_BOOTSTRAP_BRANCH, CI_WORKFLOW_FILE, CI_WORKFLOW_PATH, PLACEHOLDER_MARKER } from "../lib/ci-template.js";
+import { CI_WORKFLOW_FILE, CI_WORKFLOW_PATH, PLACEHOLDER_MARKER } from "../lib/ci-template.js";
 import { decrypt } from "../lib/crypto.js";
 import {
   createPullRequestComment,
@@ -15,12 +15,11 @@ import { addPipelineEvidenceComment } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { assessPipelineVerdict } from "../lib/pipeline-verdict.js";
 import { PIPELINE_STAGE_LABELS, type PipelineStageName } from "../lib/pipeline-types.js";
-import { enqueueFixPrResume, enqueueFixRetry, enqueuePipelineRetry, enqueueRepoScan } from "../lib/queue.js";
+import { enqueueFixRetry, enqueueRepoScan } from "../lib/queue.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import {
   loadGithubCreds,
   loadJiraCreds,
-  markBootstrapPrMerged,
   markTicketPipelineResult,
   markTicketPrClosedWithoutMerge,
   markTicketPrMerged,
@@ -197,41 +196,10 @@ async function handlePullRequestEvent(projectId: string, rawBody: Buffer, res: R
     return;
   }
 
-  // The CI-bootstrap PR (adds bankai-verify.yml to the default branch) is
-  // not a remediation PR — its closed/merged transition drives
-  // ci_bootstrap_status, not a ticket's status.
-  if (payload.pull_request?.head?.ref === CI_BOOTSTRAP_BRANCH) {
-    if (payload.pull_request.merged) {
-      const pendingTickets = await markBootstrapPrMerged(supabaseAdmin, projectId);
-      for (const ticket of pendingTickets) {
-        // enqueuePipelineRetry, not enqueuePipelineVerification: every
-        // pending ticket here already ran its pipeline job once (that run
-        // is what left it at 'pending_setup' in the first place), so it
-        // already occupies the `ci-pipeline-${ticketId}` id. Re-adding under
-        // that same id would silently no-op — this needs a fresh id, same
-        // as the ticket-level "Retry CI" action.
-        if (ticket.github_branch_name && ticket.github_pr_number != null) {
-          enqueuePipelineRetry({ ticketId: ticket.id, projectId }).catch((err) => {
-            logger.error({ err, ticketId: ticket.id, projectId }, "Could not re-enqueue pipeline verification after CI bootstrap merge");
-          });
-        } else {
-          enqueueFixPrResume({ ticketId: ticket.id, projectId }).catch((err) => {
-            logger.error({ err, ticketId: ticket.id, projectId }, "Could not re-enqueue fix PR creation after CI bootstrap merge");
-          });
-        }
-      }
-    } else {
-      // Closed without merge — reset to 'none' so a future ticket's
-      // pipeline job can retry opening the bootstrap PR instead of being
-      // stuck waiting on one that will never merge.
-      const { error } = await supabaseAdmin
-        .from("projects")
-        .update({ ci_bootstrap_status: "none", ci_bootstrap_pr_url: null })
-        .eq("id", projectId);
-      if (error) {
-        logger.error({ err: error, projectId }, "Could not reset CI bootstrap status after its PR was closed unmerged");
-      }
-    }
+  // Ignore late webhook deliveries for legacy bootstrap PRs. New bootstrap
+  // branches are never created; this guard prevents an old PR event from
+  // being mistaken for a remediation PR event.
+  if (payload.pull_request?.head?.ref === "bankai/ci-bootstrap") {
     res.status(200).json({ ok: true });
     return;
   }

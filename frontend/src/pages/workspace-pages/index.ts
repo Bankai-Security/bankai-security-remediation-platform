@@ -8,3 +8,4 @@ export { default as Settings } from './Settings';
 export { default as IntakeDetail } from './IntakeDetail';
 export { default as DefectGenerationDetail } from './DefectGenerationDetail';
 export { default as JiraTicketsDetail } from './JiraTicketsDetail';
+export { default as LocalVerification } from './LocalVerification';

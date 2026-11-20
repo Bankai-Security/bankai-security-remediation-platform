@@ -102,7 +102,7 @@ const CELLS: Cell[] = [
     key: 'ci',
     className: 'ldg-cell-wide',
     title: 'CI-verified, job by job',
-    body: 'A bootstrap PR adds bankai-verify.yml with stack-detected commands. Every fix runs the full gauntlet before review.',
+    body: 'Use your repository’s existing CI checks alongside Bankai’s remediation evidence. Bankai does not add workflow files to your repository.',
     visual: <CiVisual />,
   },
   {

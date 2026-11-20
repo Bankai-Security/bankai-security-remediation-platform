@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { recordActivity } from "../lib/activity.js";
-import { generateFix, isActionableFixCandidate, type FixFindingInput } from "../lib/gemini-fix.js";
+import { generateFix, generatedFixPathsAreInScope, isActionableFixCandidate, isSafePatchPath, type FixFindingInput } from "../lib/gemini-fix.js";
 import { gatherRepoContext } from "../lib/repo-context.js";
 import { loadPythonDependencyContext } from "../lib/dependency-fix.js";
 import {
@@ -128,6 +128,10 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
   }
 
   const branch = ticket.github_branch_name;
+  if (!isSafePatchPath(finding.file_path)) {
+    await setTicketError(ticketId, "The finding target is not a safe repository-relative path; no retry was attempted.");
+    return;
+  }
   const findingInput: FixFindingInput = {
     title: finding.title,
     cwe: finding.cwe,
@@ -208,6 +212,15 @@ export async function processFixRetryJob(job: Job<FixRetryJobData>): Promise<voi
           logger.error({ status: posted.status, message: posted.message, ticketId, projectId }, "Could not post the fix-retry-exhausted comment on Jira");
         }
       }
+      return;
+    }
+
+    const suppliedContextPaths = new Set([
+      ...repoContext.importedFiles.map((file) => file.path),
+      ...repoContext.testFiles.map((file) => file.path),
+    ]);
+    if (!generatedFixPathsAreInScope(fix, finding.file_path, suppliedContextPaths)) {
+      await setTicketError(ticketId, "The retry patch included an invalid or out-of-scope repository path; no changes were committed.");
       return;
     }
 

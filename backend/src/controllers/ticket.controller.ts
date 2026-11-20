@@ -57,31 +57,8 @@ async function recoverPendingCiSetup(projectId: string, tickets: TicketRow[]): P
   if (!needsBranchResume) return;
 
   try {
-    const { data: project, error: projectError } = await supabaseAdmin
-      .from("projects")
-      .select("ci_bootstrap_status")
-      .eq("id", projectId)
-      .single();
-    if (projectError || !project) {
-      logger.error({ err: projectError, projectId }, "Could not load CI bootstrap status for pending-ticket recovery");
-      return;
-    }
-
-    let bootstrapReady = project.ci_bootstrap_status === "ready";
-    if (!bootstrapReady) {
-      const github = await loadGithubCreds(supabaseAdmin, projectId);
-      if (!github) return;
-
-      bootstrapReady = await repoFileExists(github.creds, CI_WORKFLOW_PATH, github.defaultBranch);
-      if (bootstrapReady) {
-        const { error } = await supabaseAdmin.from("projects").update({ ci_bootstrap_status: "ready" }).eq("id", projectId);
-        if (error) {
-          logger.error({ err: error, projectId }, "Could not mark CI bootstrap ready during pending-ticket recovery");
-        }
-      }
-    }
-
-    if (!bootstrapReady) return;
+    const github = await loadGithubCreds(supabaseAdmin, projectId);
+    if (!github || !(await repoFileExists(github.creds, CI_WORKFLOW_PATH, github.defaultBranch))) return;
 
     const { data: pending, error: pendingError } = await supabaseAdmin
       .from("tickets")
@@ -102,6 +79,9 @@ async function recoverPendingCiSetup(projectId: string, tickets: TicketRow[]): P
 
     for (const ticket of resumable) {
       if (ticket.github_branch_name && ticket.github_pr_number != null) {
+        // Legacy pending checks are retried only when the user asks through
+        // the existing recovery surface; the pipeline itself no longer
+        // creates or waits on a bootstrap PR.
         await enqueuePipelineRetry({ ticketId: ticket.id as string, projectId });
       } else {
         await enqueueFixPrResume({ ticketId: ticket.id as string, projectId });
@@ -630,8 +610,8 @@ export async function reopenTicketHandler(req: Request, res: Response): Promise<
 
 // Manual escape hatch for a ticket whose CI verification is stuck — e.g. it
 // failed before the repo's GitHub token had the right permissions. The ticket
-// list also best-effort recovers pending_setup tickets after the bootstrap
-// workflow is present, but this keeps a user-controlled retry available.
+// list also best-effort recovers legacy pending_setup tickets when a workflow
+// is present, but this keeps a user-controlled retry available.
 export async function retryTicketPipeline(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
   const supabase = userScopedClient(req);

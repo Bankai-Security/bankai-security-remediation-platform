@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { logger } from "./logger.js";
 
 export interface GithubCredentials {
@@ -14,6 +15,28 @@ export class GithubApiError extends Error {
     this.name = "GithubApiError";
     this.status = status;
   }
+}
+
+/** Publish an idempotent exact-SHA status for the local Jenkins workflow.
+ * A local pass remains pending until the trust policy can accept it; this
+ * endpoint never turns local evidence into a passing required check.
+ */
+export async function reportLocalVerificationCommitStatus(
+  creds: GithubCredentials,
+  input: { sha: string; state: "pending" | "failure" | "error"; description: string; targetUrl: string },
+): Promise<void> {
+  if (!/^[0-9a-f]{40}$/.test(input.sha)) throw new GithubApiError("Local verification status requires a full commit SHA.");
+  const context = "Bankai / Local Jenkins Verification";
+  const path = `/repos/${creds.repo}/commits/${input.sha}/statuses`;
+  const existing = await githubFetch(creds, `${path}?per_page=100`);
+  if (!existing.ok) throw new GithubApiError(`Could not read the local verification status (status ${existing.status}).`, existing.status);
+  const statuses = z.array(z.object({ context: z.string(), state: z.string(), description: z.string().nullable(), target_url: z.string().nullable() }).passthrough()).parse(await existing.json());
+  if (statuses.some((status) => status.context === context && status.state === input.state
+      && status.description === input.description && status.target_url === input.targetUrl)) return;
+  const response = await githubFetch(creds, `/repos/${creds.repo}/statuses/${input.sha}`, {
+    method: "POST", body: JSON.stringify({ state: input.state, context, description: input.description, target_url: input.targetUrl }),
+  });
+  if (!response.ok) throw new GithubApiError(`Could not publish the local verification status (status ${response.status}).`, response.status);
 }
 
 function githubFetch(creds: GithubCredentials, path: string, init: RequestInit = {}): Promise<Response> {
@@ -326,13 +349,24 @@ export async function createBranch(
 // tree/commit/ref primitives give directly; the Contents API's "one PUT per
 // file" shape doesn't expose that control.
 
-export async function getCommit(creds: GithubCredentials, sha: string): Promise<{ treeSha: string }> {
+export async function getCommit(creds: GithubCredentials, sha: string): Promise<{ treeSha: string; parentShas: string[] }> {
   const res = await githubFetch(creds, `/repos/${creds.repo}/git/commits/${sha}`);
   if (!res.ok) {
     throw new GithubApiError(`Could not read commit ${sha} (status ${res.status}).`, res.status);
   }
-  const body = (await res.json()) as { tree: { sha: string } };
-  return { treeSha: body.tree.sha };
+  const body = (await res.json()) as { tree: { sha: string }; parents?: Array<{ sha: string }> };
+  return { treeSha: body.tree.sha, parentShas: (body.parents ?? []).map((parent) => parent.sha) };
+}
+
+/** Return the exact patch GitHub serves for an immutable base/candidate pair. */
+export async function getCommitDiff(creds: GithubCredentials, baseSha: string, candidateSha: string): Promise<string> {
+  const res = await githubFetch(creds, `/repos/${creds.repo}/compare/${baseSha}...${candidateSha}`, {
+    headers: { Accept: "application/vnd.github.diff" },
+  });
+  if (!res.ok) throw new GithubApiError(`Could not read the generated commit diff (status ${res.status}).`, res.status);
+  const diff = await res.text();
+  if (!diff.trim()) throw new GithubApiError("GitHub returned an empty diff for the generated candidate.");
+  return diff;
 }
 
 export interface TreeContentEntry {
@@ -542,7 +576,8 @@ export async function getPullRequest(creds: GithubCredentials, prNumber: number)
 
 // Contents API existence check for the scaffold workflow file — used to
 // decide whether pipeline.job.ts can dispatch directly or must first open a
-// bootstrap PR. A 404 is the expected "not present" case, not an error.
+// optional verification workflow. A 404 is the expected "not present" case,
+// not an error.
 export async function repoFileExists(creds: GithubCredentials, path: string, ref: string): Promise<boolean> {
   const res = await githubFetch(creds, `/repos/${creds.repo}/contents/${path}?ref=${encodeURIComponent(ref)}`);
   if (res.status === 404) return false;
@@ -568,7 +603,7 @@ export async function getRepoFileContent(creds: GithubCredentials, path: string,
 
 // workflow_dispatch only works for a workflow file that already exists on
 // the repo's default branch (a GitHub limitation, not a Bankai choice) — see
-// the migration comment on projects.ci_bootstrap_status. GitHub also
+// historical project CI setup status. GitHub also
 // validates the workflow_dispatch trigger against the *ref* being
 // dispatched, not just the default branch — dispatching against a branch
 // whose own history predates the file 422s with "Workflow does not have

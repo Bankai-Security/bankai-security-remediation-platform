@@ -57,13 +57,70 @@ export class RemediationRepository {
   async attempts(id: string) {
     const { data, error } = await this.db.from("remediation_attempts").select("*").eq("remediation_id", z.uuid().parse(id)).order("attempt_number");
     if (error) throw new Error(`Attempt read failed: ${error.message}`);
-    return data ?? [];
+    const attempts = data ?? [];
+    if (attempts.length === 0) return attempts;
+    const { data: artifacts, error: artifactError } = await this.db.from("remediation_patch_artifacts")
+      .select("attempt_id, finding_id, base_sha, candidate_sha, patch_digest, diff_ref, created_at")
+      .in("attempt_id", attempts.map((attempt) => attempt.id));
+    if (artifactError) throw new Error(`Patch artifact read failed: ${artifactError.message}`);
+    const byAttempt = new Map((artifacts ?? []).map((artifact) => [artifact.attempt_id, artifact]));
+    return attempts.map((attempt) => ({ ...attempt, patch_artifact: byAttempt.get(attempt.id) ?? null }));
   }
 
-  /** Read-only recovery: resume using persisted attempt/execution IDs and revision.
-   * A stale delivery cannot transition state; infrastructure timeouts are explicitly
-   * recorded by the orchestrator as VERIFICATION_INCOMPLETE, never as success.
+  /** Store an immutable reference to the generated diff for an attempt. */
+  async recordPatchArtifact(input: { attemptId: string; findingId: string; baseSha: string; candidateSha: string; patchDigest: string; diffRef: string }): Promise<void> {
+    const artifact = z.object({
+      attemptId: z.uuid(), findingId: z.uuid(), baseSha: sha, candidateSha: sha,
+      patchDigest: z.string().regex(/^sha256-[0-9a-f]{64}$/), diffRef: z.url(),
+    }).parse(input);
+    const existing = await this.db.from("remediation_patch_artifacts").select("finding_id, base_sha, candidate_sha, patch_digest, diff_ref")
+      .eq("attempt_id", artifact.attemptId).maybeSingle();
+    if (existing.error) throw new Error(`Patch artifact read failed: ${existing.error.message}`);
+    const matchesArtifact = (row: { finding_id: string; base_sha: string; candidate_sha: string; patch_digest: string; diff_ref: string } | null) =>
+      row !== null && row.finding_id === artifact.findingId && row.base_sha === artifact.baseSha
+      && row.candidate_sha === artifact.candidateSha && row.patch_digest === artifact.patchDigest && row.diff_ref === artifact.diffRef;
+    if (existing.data) {
+      if (!matchesArtifact(existing.data)) {
+        throw new Error("Patch artifact conflicts with the existing immutable attempt evidence.");
+      }
+      return;
+    }
+    const { error } = await this.db.from("remediation_patch_artifacts").insert({
+      attempt_id: artifact.attemptId, finding_id: artifact.findingId, base_sha: artifact.baseSha,
+      candidate_sha: artifact.candidateSha, patch_digest: artifact.patchDigest, diff_ref: artifact.diffRef,
+    });
+    if (error) {
+      // A concurrent idempotent delivery may have inserted the same artifact.
+      const concurrent = await this.db.from("remediation_patch_artifacts").select("finding_id, base_sha, candidate_sha, patch_digest, diff_ref")
+        .eq("attempt_id", artifact.attemptId).maybeSingle();
+      if (concurrent.error || !matchesArtifact(concurrent.data)) {
+        throw new Error(`Patch artifact persistence failed: ${error.message}`);
+      }
+    }
+  }
+
+  /** Persist the exact validated manifest against its attempt. The database unique
+   * key and immutable trigger make duplicate identical delivery idempotent and
+   * conflicting delivery fail closed.
    */
+  async recordVerificationManifest(input: { attemptId: string; manifestId: string; executionId: string; digest: string; manifest: unknown }): Promise<void> {
+    const value = z.object({ attemptId: z.uuid(), manifestId: z.string().min(1).max(128), executionId: z.string().min(1).max(128), digest: z.string().regex(/^sha256-[0-9a-f]{64}$/) }).parse(input);
+    const row = { attempt_id: value.attemptId, manifest_id: value.manifestId, execution_id: value.executionId, manifest_digest: value.digest, manifest: input.manifest };
+    const existing = await this.db.from("remediation_verification_manifests").select("manifest_id, execution_id, manifest_digest, manifest").eq("attempt_id", value.attemptId).maybeSingle();
+    if (existing.error) throw new Error(`Verification manifest read failed: ${existing.error.message}`);
+    const same = (candidate: typeof existing.data) => !!candidate && candidate.manifest_id === row.manifest_id && candidate.execution_id === row.execution_id && candidate.manifest_digest === row.manifest_digest;
+    if (existing.data) {
+      if (!same(existing.data)) throw new Error("Verification manifest conflicts with immutable attempt evidence.");
+      return;
+    }
+    const { error } = await this.db.from("remediation_verification_manifests").insert(row);
+    if (error) {
+      const concurrent = await this.db.from("remediation_verification_manifests").select("manifest_id, execution_id, manifest_digest, manifest").eq("attempt_id", value.attemptId).maybeSingle();
+      if (concurrent.error || !same(concurrent.data)) throw new Error(`Verification manifest persistence failed: ${error.message}`);
+    }
+  }
+
+  /** Read-only recovery: resume verification by persisted attempt and Quincy job ID. */
   async recover(limit = 100): Promise<RemediationRecord[]> {
     const pageSize = z.number().int().min(1).max(1000).parse(limit);
     const { data, error } = await this.db.from("remediations").select("*")
@@ -71,5 +128,12 @@ export class RemediationRepository {
       .order("updated_at").limit(pageSize);
     if (error) throw new Error(`Recovery read failed: ${error.message}`);
     return z.array(RemediationRecord).parse(data ?? []);
+  }
+
+  async verificationManifest(attemptId: string): Promise<{ manifest_id: string; execution_id: string; manifest_digest: string; manifest: unknown } | null> {
+    const { data, error } = await this.db.from("remediation_verification_manifests")
+      .select("manifest_id, execution_id, manifest_digest, manifest").eq("attempt_id", z.uuid().parse(attemptId)).maybeSingle();
+    if (error) throw new Error(`Verification manifest read failed: ${error.message}`);
+    return data;
   }
 }

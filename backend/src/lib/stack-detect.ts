@@ -1,6 +1,14 @@
 import { getBlob, getTree, type GitTreeEntry, type GithubCredentials } from "./github.js";
-import { PLACEHOLDER_MARKER, type DetectedStack } from "./ci-template.js";
+import { PLACEHOLDER_MARKER } from "./ci-template.js";
 import { logger } from "./logger.js";
+
+interface DetectedStack {
+  language: "node" | "python" | "java" | "go" | "rust" | "csharp" | "ruby" | "php" | "cpp" | "unknown";
+  installCmd: string;
+  buildCmd: string;
+  functionalTestCmd: string;
+  integrationTestCmd: string;
+}
 
 const PLACEHOLDER = {
   build: `echo "${PLACEHOLDER_MARKER} build steps here"`,

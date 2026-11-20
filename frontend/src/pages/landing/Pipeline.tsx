@@ -63,7 +63,7 @@ const STAGES: Stage[] = [
     key: 'verify',
     label: 'VERIFY',
     heading: 'No fix trusted blindly',
-    body: 'Every remediation branch is dispatched through a CI workflow Bankai bootstraps into your repo. The webhook drives live status, job by job.',
+    body: 'When configured, your repository’s own GitHub Actions workflow reports build and test status to Bankai. Existing workflows remain under your control.',
     log: [
       'workflow: bankai-verify.yml',
       'build ✓   image ✓   deploy-dev ✓',
