@@ -49,11 +49,18 @@ function stableFingerprint(scanner: string, identity: string): string {
 }
 
 function finding(input: {
-  scanner: string; id?: string | null; title?: string | null; severity?: unknown; path?: string | null;
+  scanner: string; id?: string | null; title?: string | null; severity?: unknown; path?: string | null; repoRoot: string;
   line?: number | null; component?: string | null; description?: string | null; url?: string | null;
   cves?: string[]; fixed?: string | null; guidance?: string | null; commitSha: string; __repo?: string;
 }): NormalizedFinding {
-  const path = input.path?.replaceAll("\\", "/").replace(/^\.?\//, "") ?? null;
+  const rawPath = input.path?.replaceAll("\\", "/") ?? null;
+  const repoRoot = input.repoRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  // Some scanners (notably Bandit) emit absolute paths from the temporary
+  // checkout. Convert only paths proven to be under this exact checkout;
+  // leave every other absolute path intact so remediation rejects it.
+  const path = rawPath
+    ? (rawPath.startsWith(`${repoRoot}/`) ? rawPath.slice(repoRoot.length + 1) : rawPath).replace(/^\.?\//, "")
+    : null;
   const id = input.id ?? null;
   const title = input.title || id || `${input.scanner} finding`;
   const identity = input.cves?.length
@@ -73,9 +80,9 @@ function finding(input: {
   } as NormalizedFinding;
 }
 
-function normalize(scanner: string, data: unknown, repo: string, sha: string): NormalizedFinding[] {
+function normalize(scanner: string, data: unknown, repo: string, sha: string, repoRoot: string): NormalizedFinding[] {
   const root = object(data); const out: NormalizedFinding[] = [];
-  const add = (value: Omit<Parameters<typeof finding>[0], "scanner" | "commitSha" | "__repo">) => out.push(finding({ ...value, scanner, commitSha: sha, __repo: repo }));
+  const add = (value: Omit<Parameters<typeof finding>[0], "scanner" | "commitSha" | "__repo" | "repoRoot">) => out.push(finding({ ...value, scanner, commitSha: sha, __repo: repo, repoRoot }));
   if (scanner === "trivy") for (const result of arr(root.Results).map(object)) {
     const target = str(result.Target);
     for (const v of arr(result.Vulnerabilities).map(object)) {
@@ -142,7 +149,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
   const invoke = async (name: string, command: string, args: string[], allowFindings = false) => {
     try {
       const result = await scanner(name, command, args, root, JSON.parse, allowFindings);
-      const rows = normalize(name, result.value, repo, sha); result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
+      const rows = normalize(name, result.value, repo, sha, root); result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Scanner failed.";
       logger.warn({ scanner: name, reason }, "Repository scanner failed");
@@ -160,7 +167,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
   if (names.some(n => ["package-lock.json", "npm-shrinkwrap.json"].includes(n.split(/[\\/]/).at(-1) ?? ""))) {
     try {
       const out = await run("npm", ["audit", "--package-lock-only", "--json", "--userconfig", "/dev/null", "--registry", "https://registry.npmjs.org"], root, true);
-      const rows = normalize("npm-audit", JSON.parse(out.stdout), repo, sha); findings.push(...rows); runs.push({ scanner: "npm-audit", version: await version("npm", ["--version"]), findings: rows.length, status: "complete" });
+      const rows = normalize("npm-audit", JSON.parse(out.stdout), repo, sha, root); findings.push(...rows); runs.push({ scanner: "npm-audit", version: await version("npm", ["--version"]), findings: rows.length, status: "complete" });
     } catch (error) {
       runs.push({ scanner: "npm-audit", version: await version("npm", ["--version"]).catch(() => "unknown"), findings: 0, status: "failed", reason: error instanceof Error ? error.message : "Scanner failed." });
     }

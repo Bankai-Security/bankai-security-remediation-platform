@@ -40,6 +40,12 @@ export function isSafePatchPath(path: string): boolean {
     path.split("/").every((part) => part !== "" && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
 }
 
+/** Strip only Bankai's known temporary checkout prefix from older findings. */
+export function normalizeRepositoryFilePath(path: string): string {
+  const match = path.replaceAll("\\", "/").match(/^\/tmp\/bankai-scan-[^/]+\/repo\/(.+)$/);
+  return match?.[1] ?? path;
+}
+
 /** Extra files may only be changed when their exact source was supplied to the model. */
 export function generatedFixPathsAreInScope(
   fix: GeneratedFix,

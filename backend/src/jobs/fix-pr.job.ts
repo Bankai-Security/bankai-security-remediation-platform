@@ -1,7 +1,7 @@
 import type { Job } from "bullmq";
 import { recordActivity } from "../lib/activity.js";
 import { tryApplyDependencyVersionFix } from "../lib/dependency-fix.js";
-import { generateFix, generatedFixPathsAreInScope, isSafePatchPath, type FixFindingInput } from "../lib/gemini-fix.js";
+import { generateFix, generatedFixPathsAreInScope, isSafePatchPath, normalizeRepositoryFilePath, type FixFindingInput } from "../lib/gemini-fix.js";
 import { gatherRepoContext } from "../lib/repo-context.js";
 import {
   commitFileToBranch,
@@ -202,7 +202,8 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     );
     return;
   }
-  if (!isSafePatchPath(finding.file_path)) {
+  const targetFilePath = normalizeRepositoryFilePath(finding.file_path);
+  if (!isSafePatchPath(targetFilePath)) {
     await setTicketError(ticketId, "The finding target is not a safe repository-relative path; no remediation was attempted.");
     return;
   }
@@ -241,7 +242,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       ticket.jira_issue_key ?? null,
       finding.fingerprint,
       finding.cwe,
-      finding.file_path,
+      targetFilePath,
       ticket.id,
       projectId,
       ticket.key,
@@ -271,7 +272,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
   const findingInput: FixFindingInput = {
     title: finding.title,
     cwe: finding.cwe,
-    filePath: finding.file_path,
+    filePath: targetFilePath,
     lineStart: finding.line_start,
     lineEnd: finding.line_end,
     evidence: buildFindingEvidence(finding),
@@ -310,9 +311,9 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       // observed before generation; the mutable branch name is not a baseline.
       const baseSha = headSha;
       const tree = await getTree(github.creds, baseSha);
-      const entry = tree.find((e) => e.path === finding.file_path);
+      const entry = tree.find((e) => e.path === targetFilePath);
       if (!entry) {
-        await setTicketError(ticketId, `"${finding.file_path}" no longer exists on this branch.`);
+        await setTicketError(ticketId, `"${targetFilePath}" no longer exists on this branch.`);
         return;
       }
       const fileContent = await getBlob(github.creds, entry.sha);
@@ -320,12 +321,12 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       const repoContext = await gatherRepoContext({
         creds: github.creds,
         ref: baseSha,
-        targetFilePath: finding.file_path,
+        targetFilePath,
         vulnerableFileContent: fileContent,
       });
 
       const deterministicFix = tryApplyDependencyVersionFix({
-        filePath: finding.file_path,
+        filePath: targetFilePath,
         fileContent,
         title: finding.title,
         affectedPackages: finding.affected_packages,
@@ -342,7 +343,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
         ...repoContext.importedFiles.map((file) => file.path),
         ...repoContext.testFiles.map((file) => file.path),
       ]);
-      if (!generatedFixPathsAreInScope(fix, finding.file_path, suppliedContextPaths)) {
+      if (!generatedFixPathsAreInScope(fix, targetFilePath, suppliedContextPaths)) {
         await setTicketError(ticketId, "The generated patch included an invalid or out-of-scope repository path; no changes were committed.");
         return;
       }
@@ -354,8 +355,8 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
 
       // filesToUpdate is model-provided and not guaranteed disjoint from the
       // main file — the main file's fixedContent always wins on a collision.
-      const extraFiles = (fix.filesToUpdate ?? []).filter((f) => f.filePath !== finding.file_path);
-      const filesToCommit = [{ path: finding.file_path, content: fix.fixedContent }, ...extraFiles.map((f) => ({ path: f.filePath, content: f.fixedContent }))];
+      const extraFiles = (fix.filesToUpdate ?? []).filter((f) => f.filePath !== targetFilePath);
+      const filesToCommit = [{ path: targetFilePath, content: fix.fixedContent }, ...extraFiles.map((f) => ({ path: f.filePath, content: f.fixedContent }))];
 
       const { commitSha } = await commitFileToBranch(github.creds, {
         branch,
@@ -391,7 +392,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       head: branch,
       base: github.defaultBranch,
       title: `${lowConfidence ? "Fix (low confidence)" : "Fix"}: ${finding.title}`,
-      body: `Automatically generated fix for a Bankai finding (${finding.cwe ?? "no CWE"}) in \`${finding.file_path}\`.\n\nA human must review and merge this pull request — Bankai never merges automatically.${lowConfidenceWarning}\n\n${evidenceBody}`,
+      body: `Automatically generated fix for a Bankai finding (${finding.cwe ?? "no CWE"}) in \`${targetFilePath}\`.\n\nA human must review and merge this pull request — Bankai never merges automatically.${lowConfidenceWarning}\n\n${evidenceBody}`,
     });
 
     await supabase
