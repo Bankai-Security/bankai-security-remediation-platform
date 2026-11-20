@@ -18,9 +18,9 @@
     "productName": "Bankai",
     "protocols": [{ "name": "Bankai Desktop", "schemes": ["bankai"] }],
     "directories": { "output": "../../release/bankai-desktop" },
-    "files": ["main.cjs", "preload.cjs", "package.json"],
-    "win": { "target": "nsis" },
-    "mac": { "target": "dmg" },
-    "linux": { "target": "AppImage" }
+    "files": ["main.cjs", "preload.cjs", "package.json", "build/**/*"],
+    "win": { "target": "nsis", "icon": "build/icon.ico" },
+    "mac": { "target": "dmg", "icon": "build/icon.icns" },
+    "linux": { "target": "AppImage", "icon": "build/icon.png" }
   }
 }

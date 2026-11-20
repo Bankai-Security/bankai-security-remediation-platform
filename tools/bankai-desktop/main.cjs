@@ -158,6 +158,7 @@ function hardenBankaiWindow(window) {
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 940, minWidth: 960, minHeight: 680, title: 'Bankai',
+    icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   hardenBankaiWindow(mainWindow);
@@ -174,6 +175,7 @@ function openJenkinsBrowser(rawUrl) {
   if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
   browserWindow = new BrowserWindow({
     width: 1280, height: 860, minWidth: 800, minHeight: 600, title: 'Jenkins · Bankai', parent: mainWindow,
+    icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, partition: 'persist:bankai-jenkins' },
   });
   const origin = target.origin;

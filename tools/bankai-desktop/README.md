@@ -11,9 +11,9 @@ To work against a local frontend, start Vite and run `npm run start:local`. Loca
 
 ## Packaging
 
-Install dependencies, then use `npm run package:win`, `npm run package:mac`, or `npm run package:linux` on the matching operating system. electron-builder writes installers under `release/bankai-desktop`.
+The Bankai mark is maintained in `build/icon.svg`, with PNG/ICO/ICNS platform assets in the same folder. Install dependencies, then use `npm run package:win`, `npm run package:mac`, or `npm run package:linux` on the matching operating system. electron-builder writes installers under `release/bankai-desktop`.
 
-Set `BANKAI_WEB_URL` at launch to select another Bankai frontend origin. Railway currently has the frontend and backend deployed in staging; its production environment has no services configured. The staging frontend routes `/api` to the backend over Railway's private network, so the desktop shell does not need Railway secrets or API keys. A production release also needs the correct branded app icon, code signing/notarization, installer update strategy, and a published download URL; those release operations are not performed by this scaffold.
+Set `BANKAI_WEB_URL` at launch to select another Bankai frontend origin. Railway currently has the frontend and backend deployed in staging; its production environment has no services configured. The staging frontend routes `/api` to the backend over Railway's private network, so the desktop shell does not need Railway secrets or API keys. A production release still needs code signing/notarization, installer update strategy, and a published download URL; those release operations are not performed by this scaffold.
 
 ## Desktop behavior
 
