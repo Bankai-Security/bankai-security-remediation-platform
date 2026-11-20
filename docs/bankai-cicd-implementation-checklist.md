@@ -37,17 +37,17 @@ This checklist turns the agreed CI/CD workflow into buildable implementation ste
 
 ## Phase 3: Jenkins connection and job selection
 
-- [ ] Create a guided setup form for Jenkins URL, username, and required credential/token.
-- [ ] Validate inputs and test the connection immediately; provide actionable errors for unreachable server, invalid credentials, and insufficient permissions.
-- [ ] Store credentials in the operating system's secure credential store; never persist them in plain text, source files, logs, or PR evidence.
-- [ ] Support credential update, disconnect, and reconnect.
-- [ ] Discover and list available Jenkins jobs/pipelines after connection.
-- [ ] Let the user choose the build job for each repository and save that association.
-- [ ] Add a connection status indicator and explain what happens while the desktop app or Jenkins is offline.
-- [ ] Trigger a safe test/build run and display queued, running, passed, and failed states.
-- [ ] Capture build ID, commit SHA, timing, result, and Jenkins URL for later evidence.
+- [x] Create a guided setup form for Jenkins URL, username, and required credential/token.
+- [x] Validate inputs and test the connection immediately; provide actionable errors for unreachable server, invalid credentials, and insufficient permissions.
+- [x] Store credentials encrypted with Electron's OS-backed `safeStorage`; never persist them in plain text, source files, logs, or PR evidence.
+- [x] Support credential update, disconnect, and reconnect.
+- [x] Discover and list available Jenkins jobs/pipelines after connection, including jobs nested in folders.
+- [x] Let the user choose the build job for each repository and save that association locally.
+- [x] Add a connection status indicator and actionable errors when Jenkins is unavailable.
+- [x] Trigger a build and display queued, running, passed, failed, and aborted states.
+- [x] Capture build ID, commit SHA when Jenkins reports one, timing, result, and Jenkins URL in the completed build status.
 
-**Done when:** a user can enter credentials, connect, choose a job, run a build, and see the result without manually configuring Bankai internals.
+**Done when:** a user can enter credentials, connect, choose a job, run a build, and see the result without manually configuring Bankai internals. Attaching the captured record to a PR remains for the later pipeline integration phase.
 
 ## Phase 4: Jenkinsfile detection and proposal
 
