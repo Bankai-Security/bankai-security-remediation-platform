@@ -108,13 +108,22 @@ function normalize(scanner: string, data: unknown, repo: string, sha: string): N
 async function run(command: string, args: string[], cwd: string, allowFindings = false): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolvePromise, reject) => {
     const home = process.env.HOME ?? tmpdir();
-    const child = spawn(command, args, { cwd, env: { PATH: process.env.PATH ?? "", HOME: home, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? join(home, ".cache"), TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "C.UTF-8", SSL_CERT_FILE: process.env.SSL_CERT_FILE ?? "", TRIVY_CACHE_DIR: process.env.TRIVY_CACHE_DIR ?? join(tmpdir(), "bankai-trivy-cache"), PIP_DISABLE_PIP_VERSION_CHECK: "1", GIT_TERMINAL_PROMPT: "0", NPM_CONFIG_USERCONFIG: "/dev/null" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, env: { PATH: process.env.PATH ?? "", HOME: home, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? join(home, ".cache"), TMPDIR: process.env.TMPDIR ?? tmpdir(), LANG: "C.UTF-8", ...(process.env.SSL_CERT_FILE ? { SSL_CERT_FILE: process.env.SSL_CERT_FILE } : {}), TRIVY_CACHE_DIR: process.env.TRIVY_CACHE_DIR ?? join(tmpdir(), "bankai-trivy-cache"), PIP_DISABLE_PIP_VERSION_CHECK: "1", GIT_TERMINAL_PROMPT: "0", NPM_CONFIG_USERCONFIG: "/dev/null" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = ""; let stderr = ""; let bytes = 0;
     const timer = setTimeout(() => child.kill("SIGKILL"), SCANNER_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > MAX_OUTPUT_BYTES) child.kill("SIGKILL"); else stdout += chunk.toString(); });
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); if (stderr.length > 1_000_000) stderr = stderr.slice(-1_000_000); });
     child.on("error", (err) => { clearTimeout(timer); reject(err); });
-    child.on("close", (code) => { clearTimeout(timer); if (code !== 0 && !(allowFindings && code === 1)) reject(new Error(`${command} exited ${code}: ${stderr.slice(-1200)}`)); else resolvePromise({ stdout, stderr, code: code ?? -1 }); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && !(allowFindings && code === 1)) {
+        const diagnostic = stderr.trim();
+        const context = diagnostic.length > 1600 ? `${diagnostic.slice(0, 1100)}\n…\n${diagnostic.slice(-450)}` : diagnostic;
+        reject(new Error(`${command} exited ${code}${context ? `: ${context}` : ""}`));
+      } else {
+        resolvePromise({ stdout, stderr, code: code ?? -1 });
+      }
+    });
   });
 }
 
@@ -160,7 +169,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
   if (reqFiles.length) for (const req of reqFiles) await invoke("pip-audit", "pip-audit", ["--format", "json", "-r", resolve(root, req)], true);
   else addSkipped("pip-audit", "No supported requirements file was found.");
   const hasManifest = names.some(n => /(^|[\\/])(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|requirements[^/\\]*\.txt|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$/.test(n));
-  if (hasManifest) await invoke("osv", "osv-scanner", ["scan", "source", "-r", root, "--format", "json"]);
+  if (hasManifest) await invoke("osv", "osv-scanner", ["scan", "source", "-r", root, "--format", "json"], true);
   else addSkipped("osv", "No supported dependency manifest or lockfile was found.");
   return { findings, scanners: runs, complete: runs.every(run => run.status !== "failed"), filesScanned: names.length };
 }
