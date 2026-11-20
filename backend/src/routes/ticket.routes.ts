@@ -4,7 +4,6 @@ import {
   listTickets,
   reopenTicketHandler,
   retryTicketFix,
-  retryTicketPipeline,
   syncTickets,
   updateTicket,
 } from "../controllers/ticket.controller.js";
@@ -19,4 +18,3 @@ ticketRouter.post("/sync", syncTickets);
 ticketRouter.patch("/:ticketId", validateBody(updateTicketSchema), updateTicket);
 ticketRouter.post("/:ticketId/reopen", reopenTicketHandler);
 ticketRouter.post("/:ticketId/retry-fix", retryTicketFix);
-ticketRouter.post("/:ticketId/retry-pipeline", retryTicketPipeline);

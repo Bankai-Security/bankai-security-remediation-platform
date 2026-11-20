@@ -1,11 +1,9 @@
-import type { TicketStatus } from "./pipeline-types.js";
+export type TicketStatus = "To Do" | "In Progress" | "In Review" | "Done";
 
 export interface TicketCompletionEvidence {
   githubBranchName?: string | null;
   githubPrNumber?: number | null;
   githubPrState?: string | null;
-  ciStatus?: string | null;
-  collateralResolutionEventId?: string | null;
 }
 
 export function statusAllowedByCompletionGate(
@@ -13,8 +11,7 @@ export function statusAllowedByCompletionGate(
   evidence: TicketCompletionEvidence,
 ): TicketStatus {
   if (current !== "Done") return current;
-  if (evidence.githubPrState === "merged" && evidence.ciStatus === "passed") return "Done";
-  if (evidence.collateralResolutionEventId) return "Done";
+  if (evidence.githubPrState === "merged") return "Done";
   return evidence.githubPrNumber != null ? "In Review" : "In Progress";
 }
 

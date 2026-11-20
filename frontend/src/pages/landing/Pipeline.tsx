@@ -15,12 +15,12 @@ const STAGES: Stage[] = [
     key: 'ingest',
     label: 'INGEST',
     heading: 'Any scanner, one shape',
-    body: 'CSV exports from any vendor, AI repo scans through Gemini, Jira imports, and push-triggered rescans all normalize into one canonical finding.',
+    body: 'CSV exports from any vendor, Bankai scans with Trivy, Semgrep, Gitleaks, OSV, and ecosystem tools, plus push-triggered rescans all normalize into one canonical finding.',
     log: [
       'source: csv upload (snyk-export.csv)',
       'aliasing columns: severity, cvss, cwe, component',
       'normalized 38 rows into findings',
-      'webhook registered: rescan on push to main',
+      'scanners: trivy, semgrep, gitleaks, osv, bandit, npm audit, pip-audit',
     ],
   },
   {
@@ -60,27 +60,15 @@ const STAGES: Stage[] = [
     ],
   },
   {
-    key: 'verify',
-    label: 'VERIFY',
-    heading: 'No fix trusted blindly',
-    body: 'When configured, your repository’s own GitHub Actions workflow reports build and test status to Bankai. Existing workflows remain under your control.',
+    key: 'review',
+    label: 'REVIEW',
+    heading: 'Your team owns the merge',
+    body: 'Bankai opens a pull request with the remediation branch. Review the patch and merge it manually in GitHub.',
     log: [
-      'workflow: bankai-verify.yml',
-      'build ✓   image ✓   deploy-dev ✓',
-      'functional-test ✓   integration-test ✓',
-      'workflow_run: success, evidence recorded',
-    ],
-  },
-  {
-    key: 'merge',
-    label: 'MERGED',
-    heading: 'Or it retries itself',
-    body: 'On CI failure, Bankai parses the build logs, regenerates the fix, and retries within a bounded number of attempts before a human ever looks.',
-    log: [
-      'ci failed on attempt 1: functional-test',
-      'parsed log: assertion in payments.spec.ts',
-      'attempt 2 dispatched with corrected patch',
-      'ci green. ready for human review.',
+      'branch: bankai/fix-bnk-114',
+      'PR #87 opened',
+      'review: waiting for your team',
+      'merge: performed manually in GitHub',
     ],
   },
 ];
@@ -102,7 +90,7 @@ export default function Pipeline() {
         <p className="ldg-kicker">the loop</p>
         <h2 className="ldg-h2">Everything after the scan</h2>
         <p className="ldg-section-sub">
-          Six stages between a spreadsheet of CVEs and a merged fix. Walk through each one.
+          Five stages from findings to a pull request your team reviews and merges.
         </p>
       </motion.div>
 

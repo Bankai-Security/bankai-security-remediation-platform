@@ -1,6 +1,5 @@
 export const requiredSmokeChecks = [
   'Bankai API reaches Redis and exposes queue health',
-  'Quincy health and token rejection',
   'CloudFront serves the frontend configured for Bankai',
   'Cleanup isolated E2E resources',
 ];

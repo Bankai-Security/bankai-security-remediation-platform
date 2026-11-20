@@ -49,14 +49,14 @@ vi.mock("./supabase.js", () => ({
   },
 }));
 
-const { reconcileJiraTickets, reopenTicket, attemptBranchCreation, closeTicketsForResolvedFindings, markTicketPrMerged, repairPrematureDoneTickets } = await import("./ticketing.js");
+const { reconcileJiraTickets, reopenTicket, attemptBranchCreation, closeTicketsForResolvedFindings, repairPrematureDoneTickets } = await import("./ticketing.js");
 
 it("repairs premature Done rows according to their remediation progress", async () => {
   const finalRead = vi.fn().mockResolvedValue({
     data: [
-      { id: "branch-only", github_branch_name: "bankai/TT2-70", github_pr_number: null, github_pr_state: null, ci_status: null },
-      { id: "open-pr", github_branch_name: "bankai/TT2-71", github_pr_number: 31, github_pr_state: "open", ci_status: "passed" },
-      { id: "complete", github_branch_name: "bankai/TT2-72", github_pr_number: 32, github_pr_state: "merged", ci_status: "passed" },
+      { id: "branch-only", github_branch_name: "bankai/TT2-70", github_pr_number: null, github_pr_state: null },
+      { id: "open-pr", github_branch_name: "bankai/TT2-71", github_pr_number: 31, github_pr_state: "open" },
+      { id: "complete", github_branch_name: "bankai/TT2-72", github_pr_number: 32, github_pr_state: "merged" },
     ],
     error: null,
   });
@@ -78,17 +78,6 @@ it("repairs premature Done rows according to their remediation progress", async 
   expect(updates).toEqual([{ status: "In Progress" }, { status: "In Review" }]);
 });
 
-it.each(["failed", null, "passed"])("requires passing verification when a PR is merged (CI: %s)", async (ci) => {
-  const write = { eq: vi.fn().mockReturnThis(), neq: vi.fn().mockReturnThis(), or: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: "ticket" }, error: null }) };
-  const updateStatus = vi.fn().mockReturnValue(write);
-  const merged = { eq: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data: { id: "ticket", key: "TT2-67", title: "CVE", jira_issue_key: null, ci_status: ci }, error: null }) };
-  const db = { from: vi.fn().mockReturnValueOnce({ update: vi.fn().mockReturnValue(merged) }).mockReturnValue({ update: updateStatus }) };
-  await markTicketPrMerged(db as unknown as SupabaseClient, { projectId: "project", prNumber: 28 });
-  expect(updateStatus).toHaveBeenCalledWith({ status: ci === "passed" ? "Done" : "In Review" });
-  if (ci === "passed") expect(write.eq).toHaveBeenCalledWith("ci_status", "passed");
-  else expect(write.or).toHaveBeenCalledWith("ci_status.is.null,ci_status.neq.passed");
-});
-
 describe("scan resolution cannot bypass remediation", () => {
   it("closes only merged PR tickets, leaving no-PR, failed and open-PR tickets actionable", async () => {
     const update = vi.fn();
@@ -106,8 +95,7 @@ describe("scan resolution cannot bypass remediation", () => {
         { id: "no-pr", github_pr_state: null },
         { id: "open", github_pr_state: "open" },
         { id: "closed-unmerged", github_pr_state: "closed" },
-        { id: "merged-failed", github_pr_state: "merged", ci_status: "failed" },
-        { id: "merged", github_pr_state: "merged", ci_status: "passed" },
+                { id: "merged", github_pr_state: "merged" },
       ], error: null }),
     };
     const db = { from: vi.fn().mockReturnValueOnce(read).mockReturnValue({ update }) };

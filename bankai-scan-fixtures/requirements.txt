@@ -1,0 +1,4 @@
+# Intentionally outdated direct dependencies for SCA scanner fixtures.
+Flask==0.12.2
+PyYAML==5.1
+requests==2.19.1

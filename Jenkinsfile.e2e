@@ -43,7 +43,6 @@ pipeline {
           set -euo pipefail
           export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
           export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
-          export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
           node e2e/run.mjs --mode smoke
         '''
       }
@@ -60,7 +59,6 @@ pipeline {
             rm -rf reports/e2e
             export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
             export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
-            export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
             export E2E_GITHUB_REPOSITORY="$(node -p "require('./infrastructure/config/nonprod.json').githubOrganization")/bankai-e2e-vulnerable"
             node e2e/run.mjs --mode full
           '''

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { toPublicActivityEvent } from "../lib/activity.js";
 import { HttpError } from "../lib/http-error.js";
-import type { Severity } from "../lib/pipeline-types.js";
+import type { Severity } from "../lib/finding-types.js";
 import { computeSlaStatus } from "../lib/sla.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import { repairPrematureDoneTickets } from "../lib/ticketing.js";

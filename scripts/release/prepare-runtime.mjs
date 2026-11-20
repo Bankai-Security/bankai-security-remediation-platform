@@ -17,7 +17,6 @@ const values = {
   STACK_NAME: stack.StackName,
   IMAGE_ARCHITECTURE: 'arm64',
   BACKEND_REPOSITORY: stackOutput(stack, 'BackendRepositoryUri'),
-  QUINCY_REPOSITORY_URI: stackOutput(stack, 'QuincyRepositoryUri'),
   PUBLISHING_ROLE_ARN: stackOutput(stack, 'EcrPublishingRoleArn'),
   DEPLOYMENT_ROLE_ARN: stackOutput(stack, 'NonprodDeploymentRoleArn'),
   CLOUDFORMATION_ROLE_ARN: stackOutput(stack, 'CloudFormationDeploymentRoleArn'),
@@ -30,9 +29,8 @@ for (const [key, role] of Object.entries({
   if (values[key] !== `arn:aws:iam::${config.account}:role/${role}`) throw new Error(`Unexpected ${key}`);
 }
 const registry = `${config.account}.dkr.ecr.${config.region}.amazonaws.com`;
-if (values.BACKEND_REPOSITORY !== `${registry}/bankai/nonprod/backend` ||
-    values.QUINCY_REPOSITORY_URI !== `${registry}/bankai/nonprod/quincy`) throw new Error('Unexpected ECR release repositories');
-for (const key of ['EcsClusterName', 'ApiServiceName', 'WorkerServiceName', 'QuincyServiceName', 'FrontendBucketName', 'FrontendDistributionId']) {
+if (values.BACKEND_REPOSITORY !== `${registry}/bankai/nonprod/backend`) throw new Error('Unexpected ECR release repository');
+for (const key of ['EcsClusterName', 'ApiServiceName', 'WorkerServiceName', 'FrontendBucketName', 'FrontendDistributionId']) {
   stackOutput(stack, key);
 }
 for (const [key, value] of Object.entries(values)) {
@@ -41,4 +39,4 @@ for (const [key, value] of Object.entries(values)) {
 // Validate the whole contract before writing anything; shell printf previously
 // masked failed output lookups and allowed empty role ARNs through preflight.
 appendFileSync(outputPath, Object.entries(values).map(([key, value]) => `${key}=${value}\n`).join(''), { mode: 0o600 });
-console.log('Validated release outputs, role ARNs, repositories');
+console.log('Validated release outputs, role ARNs, repository');

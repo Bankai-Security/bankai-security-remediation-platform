@@ -14,7 +14,6 @@ import { overviewRouter } from "./overview.routes.js";
 import { scanRouter } from "./scan.routes.js";
 import { slaRouter } from "./sla.routes.js";
 import { ticketRouter } from "./ticket.routes.js";
-import { localVerificationRouter } from "./local-verification.routes.js";
 
 export const projectRouter = Router();
 
@@ -34,7 +33,6 @@ projectScoped.patch("/", validateBody(updateProjectSettingsSchema), updateProjec
 projectScoped.use("/scans", scanRouter);
 projectScoped.use("/findings", findingRouter);
 projectScoped.use("/tickets", ticketRouter);
-projectScoped.use("/local-verification", localVerificationRouter);
 projectScoped.use("/jira", jiraRouter);
 projectScoped.use("/github", githubRouter);
 projectScoped.use("/sla", slaRouter);

@@ -17,14 +17,15 @@ export interface ScanRow {
   source: "csv" | "github_ai";
   trigger_type: "manual" | "webhook" | null;
   commit_sha: string | null;
-  base_commit_sha: string | null;
   branch: string | null;
   finding_count: number | null;
+  scanner_runs?: unknown[] | null;
+  scan_complete?: boolean;
   created_at: string;
 }
 
 export const SCAN_SELECT =
-  "id, filename, file_size_bytes, row_count, service_count, new_delta_count, changed_count, in_progress_count, resolved_count, status, error_message, source, trigger_type, commit_sha, base_commit_sha, branch, finding_count, created_at";
+  "id, filename, file_size_bytes, row_count, service_count, new_delta_count, changed_count, in_progress_count, resolved_count, status, error_message, source, trigger_type, commit_sha, branch, finding_count, scanner_runs, scan_complete, created_at";
 
 export function toPublicScan(row: ScanRow) {
   return {
@@ -42,9 +43,10 @@ export function toPublicScan(row: ScanRow) {
     source: row.source,
     triggerType: row.trigger_type,
     commitSha: row.commit_sha,
-    baseCommitSha: row.base_commit_sha,
     branch: row.branch,
     findingCount: row.finding_count,
+    scannerRuns: row.scanner_runs ?? [],
+    scanComplete: row.scan_complete ?? false,
     createdAt: row.created_at,
   };
 }

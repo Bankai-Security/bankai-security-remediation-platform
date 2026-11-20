@@ -8,7 +8,7 @@ export default function LandingFooter() {
         <div className="ldg-footer-brand">
           <img src={wordmark} alt="Bankai" className="ldg-footer-wordmark" />
           <p className="ldg-footer-tag">
-            Vulnerability remediation, closed-loop: from scan output to CI-verified pull requests.
+            Vulnerability remediation, reviewed by your team: from scan output to pull request.
           </p>
         </div>
 

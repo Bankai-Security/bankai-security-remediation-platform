@@ -2,16 +2,14 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
-import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
-import * as efs from 'aws-cdk-lib/aws-efs';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
@@ -54,7 +52,6 @@ export class BankaiFoundationStack extends cdk.Stack {
     const { config } = props;
     const { stage } = config;
     const bankaiVersion = this.node.tryGetContext('bankaiGitSha') ?? config.backendImageDigest;
-    const quincyVersion = this.node.tryGetContext('quincyGitSha') ?? config.quincyImageDigest;
     const deploymentId = this.node.tryGetContext('deploymentId') ?? 'manual-synth';
     const jenkinsBuild = this.node.tryGetContext('jenkinsBuild') ?? 'manual-synth';
     const releaseArchitecture = this.node.tryGetContext('releaseArchitecture');
@@ -72,7 +69,6 @@ export class BankaiFoundationStack extends cdk.Stack {
     }
     const apiDesiredCount = initialProvisioning ? 0 : config.apiDesiredCount;
     const workerDesiredCount = initialProvisioning ? 0 : config.workerDesiredCount;
-    const quincyDesiredCount = initialProvisioning ? 0 : config.quincyDesiredCount;
     const logRetention = retentionFor(config.logRetentionDays);
 
     // This remains one stack to preserve the logical identity of resources
@@ -110,10 +106,6 @@ export class BankaiFoundationStack extends cdk.Stack {
     const backendRepository = new ecr.Repository(this, 'BackendRepository', {
       ...repositoryProps,
       repositoryName: `bankai/${stage}/backend`,
-    });
-    const quincyRepository = new ecr.Repository(this, 'QuincyRepository', {
-      ...repositoryProps,
-      repositoryName: `bankai/${stage}/quincy`,
     });
 
     const frontendKey = new kms.Key(this, 'FrontendKey', {
@@ -175,11 +167,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       this,
       'BackendSecret',
       `bankai/${stage}/backend`,
-    );
-    const quincyApiToken = secretsmanager.Secret.fromSecretNameV2(
-      this,
-      'QuincyApiToken',
-      `bankai/${stage}/quincy-api-token`,
     );
     const appSecurityGroup = new ec2.SecurityGroup(this, 'AppSecurityGroup', {
       vpc,
@@ -266,220 +253,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       redisUrl = `redis://redis.${stage}.bankai.local:6379`;
     }
 
-    const jobKey = new kms.Key(this, 'QuincyJobKey', {
-      enableKeyRotation: true,
-      removalPolicy: production ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
-      description: `Bankai ${stage} Quincy job artifact encryption`,
-    });
-    const jobBucket = new s3.Bucket(this, 'QuincyJobBucket', {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      encryption: s3.BucketEncryption.KMS,
-      encryptionKey: jobKey,
-      enforceSSL: true,
-      versioned: true,
-      lifecycleRules: [{ expiration: cdk.Duration.days(production ? 7 : 1) }],
-      autoDeleteObjects: !production,
-      removalPolicy: production ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
-    });
-    const codeBuildSecurityGroup = new ec2.SecurityGroup(this, 'CodeBuildSecurityGroup', {
-      vpc,
-      description: 'Outbound-only Quincy remediation builds',
-      allowAllOutbound: true,
-    });
-    const quincyImageUri = `${quincyRepository.repositoryUri}@${config.quincyImageDigest}`;
-    const codeBuildProject = new codebuild.Project(this, 'QuincyRemediationProject', {
-      projectName: `bankai-${stage}-quincy-remediation`,
-      timeout: cdk.Duration.hours(1),
-      vpc,
-      subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      securityGroups: [codeBuildSecurityGroup],
-      environment: {
-        buildImage: releaseArchitecture === 'arm64'
-          ? codebuild.LinuxArmBuildImage.AMAZON_LINUX_2023_STANDARD_3_0
-          : codebuild.LinuxBuildImage.STANDARD_7_0,
-        privileged: true,
-        computeType: releaseArchitecture === 'arm64' ? codebuild.ComputeType.LARGE : codebuild.ComputeType.MEDIUM,
-        environmentVariables: {
-          QUINCY_IMAGE_URI: { value: quincyImageUri },
-          DD_ENV: { value: stage },
-          DD_SERVICE: { value: 'quincy-codebuild' },
-          DD_VERSION: { value: quincyVersion },
-          GIT_SHA: { value: quincyVersion },
-          DEPLOYMENT_ID: { value: deploymentId },
-          JENKINS_BUILD: { value: jenkinsBuild },
-          MODEL_PROVIDER: { value: 'openrouter' },
-          OPENROUTER_API_KEY: {
-            value: `${backendSecret.secretName}:OPENROUTER_API_KEY`,
-            type: codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
-          },
-          GEMINI_API_KEY: {
-            value: `${backendSecret.secretName}:GEMINI_API_KEY`,
-            type: codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
-          },
-        },
-      },
-      buildSpec: codebuild.BuildSpec.fromObject({
-        version: '0.2',
-        phases: {
-          pre_build: { commands: [
-            'mkdir -p "$CODEBUILD_SRC_DIR/job" "$CODEBUILD_SRC_DIR/tmp"',
-            'aws s3 cp "s3://$QUINCY_JOB_BUCKET/$QUINCY_JOB_PREFIX/job.json" "$CODEBUILD_SRC_DIR/job/job.json"',
-            `aws ecr get-login-password --region ${this.region} | docker login --username AWS --password-stdin ${this.account}.dkr.ecr.${this.region}.${this.urlSuffix}`,
-            'docker pull "$QUINCY_IMAGE_URI"',
-          ] },
-          build: { commands: [
-            'docker run --rm --user root -v /var/run/docker.sock:/var/run/docker.sock -v "$CODEBUILD_SRC_DIR:$CODEBUILD_SRC_DIR" -e TMPDIR="$CODEBUILD_SRC_DIR/tmp" -e MODEL_PROVIDER -e OPENROUTER_API_KEY -e GEMINI_API_KEY -e DD_ENV -e DD_SERVICE -e DD_VERSION -e GIT_SHA -e DEPLOYMENT_ID -e JENKINS_BUILD -e SANDBOX_BACKEND=docker -e JOB_EXECUTION_BACKEND=local "$QUINCY_IMAGE_URI" python -m quincy.api.codebuild_job_worker --input "$CODEBUILD_SRC_DIR/job/job.json" --result "$CODEBUILD_SRC_DIR/job/result.json"',
-          ] },
-          post_build: { commands: [
-            'if [ -f "$CODEBUILD_SRC_DIR/job/result.json" ]; then aws s3 cp "$CODEBUILD_SRC_DIR/job/result.json" "s3://$QUINCY_JOB_BUCKET/$QUINCY_JOB_PREFIX/result.json"; fi',
-          ] },
-        },
-      }),
-    });
-    codeBuildProject.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['s3:GetObject', 's3:PutObject'],
-      resources: [jobBucket.arnForObjects('jobs/*')],
-    }));
-    jobKey.grantEncryptDecrypt(codeBuildProject);
-    quincyRepository.grantPull(codeBuildProject);
-    backendSecret.grantRead(codeBuildProject);
-
-    const quincySecurityGroup = new ec2.SecurityGroup(this, 'QuincySecurityGroup', {
-      vpc,
-      description: 'Internal Quincy API service',
-      allowAllOutbound: true,
-    });
-    quincySecurityGroup.addIngressRule(appSecurityGroup, ec2.Port.tcp(8000), 'Bankai tasks to Quincy');
-    const fileSystemSecurityGroup = new ec2.SecurityGroup(this, 'QuincyFileSystemSecurityGroup', {
-      vpc,
-      description: 'Quincy EFS mount targets',
-      allowAllOutbound: false,
-    });
-    fileSystemSecurityGroup.addIngressRule(quincySecurityGroup, ec2.Port.tcp(2049), 'Quincy task to EFS');
-    const fileSystem = new efs.FileSystem(this, 'QuincyFileSystem', {
-      vpc,
-      encrypted: true,
-      allowAnonymousAccess: true,
-      enableAutomaticBackups: true,
-      securityGroup: fileSystemSecurityGroup,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-    const accessPoint = fileSystem.addAccessPoint('QuincyDataAccessPoint', {
-      path: '/quincy-data',
-      // Preserve the deployed nonprod access point and its existing data
-      // ownership. Moving it to the hardened runtime UID needs a separate
-      // data migration because these fields replace the access point.
-      createAcl: {
-        ownerGid: production ? '10001' : '1000',
-        ownerUid: production ? '10001' : '1000',
-        permissions: '750',
-      },
-      posixUser: {
-        gid: production ? '10001' : '1000',
-        uid: production ? '10001' : '1000',
-      },
-    });
-    const quincyTask = new ecs.FargateTaskDefinition(this, 'QuincyTask', {
-      runtimePlatform,
-      cpu: config.quincyCpu,
-      memoryLimitMiB: config.quincyMemoryMiB,
-    });
-    quincyTask.addVolume({
-      name: 'quincy-data',
-      efsVolumeConfiguration: {
-        fileSystemId: fileSystem.fileSystemId,
-        transitEncryption: 'ENABLED',
-        authorizationConfig: { accessPointId: accessPoint.accessPointId, iam: 'ENABLED' },
-      },
-    });
-    const quincyContainer = quincyTask.addContainer('Quincy', {
-      image: ecs.ContainerImage.fromEcrRepository(quincyRepository, config.quincyImageDigest),
-      environment: {
-        DD_ENV: stage,
-        DD_SERVICE: 'quincy',
-        DD_VERSION: quincyVersion,
-        GIT_SHA: quincyVersion,
-        DEPLOYMENT_ID: deploymentId,
-        JENKINS_BUILD: jenkinsBuild,
-
-
-
-
-
-
-
-        LOG_FORMAT: 'json',
-        MODEL_PROVIDER: 'openrouter',
-        JOB_EXECUTION_BACKEND: 'codebuild',
-        SANDBOX_BACKEND: 'docker',
-        CODEBUILD_PROJECT_NAME: codeBuildProject.projectName,
-        CODEBUILD_REQUEST_BUCKET: jobBucket.bucketName,
-        AWS_REGION: this.region,
-      },
-      secrets: {
-        SERVICE_API_TOKEN: ecs.Secret.fromSecretsManager(quincyApiToken),
-        OPENROUTER_API_KEY: ecs.Secret.fromSecretsManager(backendSecret, 'OPENROUTER_API_KEY'),
-        GEMINI_API_KEY: ecs.Secret.fromSecretsManager(backendSecret, 'GEMINI_API_KEY'),
-      },
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'quincy', logRetention }),
-      healthCheck: {
-        command: ['CMD-SHELL', 'python -c "import urllib.request; urllib.request.urlopen(\'http://127.0.0.1:8000/health\', timeout=3).read()"'],
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(5),
-        retries: 3,
-        startPeriod: cdk.Duration.seconds(30),
-      },
-      stopTimeout: cdk.Duration.seconds(120),
-    });
-    quincyContainer.addPortMappings({ containerPort: 8000 });
-    quincyContainer.addMountPoints({ containerPath: '/app/data', sourceVolume: 'quincy-data', readOnly: false });
-    quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
-      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
-      resources: [jobBucket.arnForObjects('jobs/*')],
-    }));
-    jobKey.grantEncryptDecrypt(quincyTask.taskRole);
-    const fileSystemActions = ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'];
-    quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
-      actions: fileSystemActions,
-      resources: [fileSystem.fileSystemArn],
-      conditions: { StringEquals: { 'elasticfilesystem:AccessPointArn': accessPoint.accessPointArn } },
-    }));
-    fileSystem.addToResourcePolicy(new iam.PolicyStatement({
-      actions: fileSystemActions,
-      resources: ['*'],
-      principals: [quincyTask.taskRole],
-      conditions: { Bool: { 'elasticfilesystem:AccessedViaMountTarget': 'true' } },
-    }));
-    fileSystem.addToResourcePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.DENY,
-      actions: ['elasticfilesystem:Client*'],
-      resources: ['*'],
-      principals: [new iam.AnyPrincipal()],
-      conditions: { Bool: { 'aws:SecureTransport': 'false' } },
-    }));
-    quincyTask.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
-      actions: ['codebuild:StartBuild', 'codebuild:BatchGetBuilds', 'codebuild:StopBuild'],
-      resources: [codeBuildProject.projectArn],
-    }));
-    const quincyService = new ecs.FargateService(this, 'QuincyService', {
-      cluster,
-      serviceName: `bankai-${stage}-quincy`,
-      taskDefinition: quincyTask,
-      desiredCount: quincyDesiredCount,
-      circuitBreaker: { rollback: true },
-      minHealthyPercent: 100,
-      assignPublicIp: false,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      securityGroups: [quincySecurityGroup],
-      cloudMapOptions: { name: 'quincy' },
-    });
-    quincyService.node.addDependency(fileSystem.mountTargetsAvailable);
-    const quincyScaling = quincyService.autoScaleTaskCount({ minCapacity: quincyDesiredCount, maxCapacity: production ? 6 : 2 });
-    quincyScaling.scaleOnCpuUtilization('QuincyCpuScaling', { targetUtilizationPercent: 65 });
-    quincyScaling.scaleOnMemoryUtilization('QuincyMemoryScaling', { targetUtilizationPercent: 75 });
-    const quincyApiUrl = `http://quincy.${stage}.bankai.local:8000`;
-
     const environment = {
       DD_ENV: stage,
       DD_VERSION: bankaiVersion,
@@ -497,7 +270,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       COOKIE_SAMESITE: 'lax',
       REDIS_URL: redisUrl,
       AI_PROVIDER: 'openrouter',
-      QUINCY_API_URL: quincyApiUrl,
     };
     const secrets = Object.fromEntries([
       'SUPABASE_URL',
@@ -510,7 +282,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       'GITHUB_OAUTH_CLIENT_SECRET',
       'OPENROUTER_API_KEY',
     ].map((key) => [key, ecs.Secret.fromSecretsManager(backendSecret, key)]));
-    secrets.QUINCY_API_TOKEN = ecs.Secret.fromSecretsManager(quincyApiToken);
     const backendImage = ecs.ContainerImage.fromEcrRepository(backendRepository, config.backendImageDigest);
     const apiCertificate = acm.Certificate.fromCertificateArn(this, 'ApiCertificate', config.apiCertificateArn);
     const api = new ecsPatterns.ApplicationLoadBalancedFargateService(this, 'ApiService', {
@@ -565,7 +336,6 @@ export class BankaiFoundationStack extends cdk.Stack {
     apiTaskResource.addPropertyOverride('ContainerDefinitions.0.StopTimeout', 60);
     api.targetGroup.configureHealthCheck({ path: '/healthz', healthyHttpCodes: '200' });
     if (redisService) api.service.node.addDependency(redisService);
-    api.service.node.addDependency(quincyService);
     const apiScaling = api.service.autoScaleTaskCount({ minCapacity: apiDesiredCount, maxCapacity: production ? 10 : 3 });
     apiScaling.scaleOnCpuUtilization('ApiCpuScaling', { targetUtilizationPercent: 60 });
     apiScaling.scaleOnMemoryUtilization('ApiMemoryScaling', { targetUtilizationPercent: 75 });
@@ -594,10 +364,8 @@ export class BankaiFoundationStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [appSecurityGroup],
     });
-    api.service.node.addDependency(quincyService);
     workerService.node.addDependency(api.service);
     if (redisService) workerService.node.addDependency(redisService);
-    workerService.node.addDependency(quincyService);
     const workerScaling = workerService.autoScaleTaskCount({ minCapacity: workerDesiredCount, maxCapacity: 2 });
     workerScaling.scaleOnCpuUtilization('WorkerCpuScaling', { targetUtilizationPercent: 70 });
     workerScaling.scaleOnMemoryUtilization('WorkerMemoryScaling', { targetUtilizationPercent: 75 });
@@ -624,21 +392,8 @@ export class BankaiFoundationStack extends cdk.Stack {
         evaluationPeriods: 1,
         treatMissingData: cloudwatch.TreatMissingData.BREACHING,
       });
-    runningTaskAlarm('QuincyRunningTaskAlarm', 'quincy', quincyService, config.quincyDesiredCount);
     runningTaskAlarm('WorkerRunningTaskAlarm', 'worker', workerService, config.workerDesiredCount);
     if (redisService) runningTaskAlarm('RedisRunningTaskAlarm', 'redis', redisService, 1);
-    new cloudwatch.Alarm(this, 'CodeBuildFailureAlarm', {
-      alarmName: `bankai-${stage}-quincy-codebuild-failures`,
-      metric: new cloudwatch.Metric({
-        namespace: 'AWS/CodeBuild', metricName: 'Builds',
-        dimensionsMap: { ProjectName: codeBuildProject.projectName, BuildStatus: 'FAILED' },
-        statistic: 'Sum', period: cdk.Duration.minutes(5),
-      }),
-      threshold: 1,
-      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-    });
     new cloudwatch.Alarm(this, 'ApiUnhealthyTargetAlarm', {
       alarmName: `bankai-${stage}-api-unhealthy-targets`,
       metric: new cloudwatch.Metric({
@@ -666,7 +421,7 @@ export class BankaiFoundationStack extends cdk.Stack {
 
     // Keep retired sidecar log-group construct paths so removing paid agents
     // cannot delete historical logs or silently change their ownership.
-    for (const task of [api.taskDefinition, workerTask, quincyTask]) {
+    for (const task of [api.taskDefinition, workerTask]) {
       const retiredAgent = new Construct(task, 'DatadogAgent');
       new logs.LogGroup(retiredAgent, 'LogGroup', {
         retention: logRetention, removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -675,11 +430,10 @@ export class BankaiFoundationStack extends cdk.Stack {
 
     new NativeObservability(this, 'NativeObservability', {
       stage, cluster: cluster.clusterName,
-      services: [api.service.serviceName, workerService.serviceName, quincyService.serviceName, ...(redisService ? [redisService.serviceName] : [])],
+      services: [api.service.serviceName, workerService.serviceName, ...(redisService ? [redisService.serviceName] : [])],
       apiLogGroup: api.taskDefinition.defaultContainer!.logDriverConfig!.options!['awslogs-group'],
       workerLogGroup: workerContainer.logDriverConfig!.options!['awslogs-group'],
       loadBalancer: api.loadBalancer.loadBalancerFullName, targetGroup: api.targetGroup.targetGroupFullName,
-      fileSystem: fileSystem.fileSystemId, project: codeBuildProject.projectName,
       distribution: distribution.distributionId, webAcl: cdk.Fn.select(1, cdk.Fn.split('/', config.frontendWebAclArn)),
     });
 
@@ -688,8 +442,6 @@ export class BankaiFoundationStack extends cdk.Stack {
       vpc,
       hostedZone,
       backendRepository,
-      quincyRepository,
-      quincySecurityGroup,
       frontendBucket,
     });
 
@@ -708,17 +460,12 @@ export class BankaiFoundationStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
     new cdk.CfnOutput(this, 'EcsClusterName', { value: cluster.clusterName });
     new cdk.CfnOutput(this, 'BackendRepositoryUri', { value: backendRepository.repositoryUri });
-    new cdk.CfnOutput(this, 'QuincyRepositoryUri', { value: quincyRepository.repositoryUri });
     new cdk.CfnOutput(this, 'FrontendBucketName', { value: frontendBucket.bucketName });
     new cdk.CfnOutput(this, 'FrontendDistributionDomainName', { value: distribution.distributionDomainName });
     new cdk.CfnOutput(this, 'FrontendDistributionId', { value: distribution.distributionId });
     new cdk.CfnOutput(this, 'ApiLoadBalancerDnsName', { value: api.loadBalancer.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'ApiServiceName', { value: api.service.serviceName });
     new cdk.CfnOutput(this, 'WorkerServiceName', { value: workerService.serviceName });
-    new cdk.CfnOutput(this, 'QuincyServiceName', { value: quincyService.serviceName });
-    new cdk.CfnOutput(this, 'QuincyCodeBuildProjectName', { value: codeBuildProject.projectName });
-    new cdk.CfnOutput(this, 'QuincyJobBucketName', { value: jobBucket.bucketName });
     new cdk.CfnOutput(this, 'BackendImageDigest', { value: config.backendImageDigest });
-    new cdk.CfnOutput(this, 'QuincyImageDigest', { value: config.quincyImageDigest });
   }
 }

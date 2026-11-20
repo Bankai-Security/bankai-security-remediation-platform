@@ -9,8 +9,6 @@ app.listen(env.PORT, () => {
     {
       port: env.PORT,
       env: env.NODE_ENV,
-      quincyConfigured: Boolean(env.QUINCY_API_URL),
-      quincyApiUrl: env.QUINCY_API_URL ?? null,
     },
     `Bankai backend listening on port ${env.PORT} (${env.NODE_ENV})`,
   );

@@ -5,8 +5,8 @@
 <h3 align="center">Vulnerability Remediation Platform</h3>
 
 <p align="center">
-  Ingest. Triage. Ticket. Fix. Verify. — an end-to-end pipeline that turns raw vulnerability<br/>
-  scan output into merged, CI-verified pull requests.
+  Scan. Triage. Ticket. Fix. Review. — a security workflow that turns findings into pull requests<br/>
+  your team reviews and merges.
 </p>
 
 <p align="center">
@@ -42,19 +42,17 @@
 
 ## Overview
 
-**Bankai** is a security remediation platform that closes the loop between vulnerability
-discovery and verified fixes. Most organizations already have scanners producing findings
-(SAST, SCA, container, DAST) — the gap Bankai targets is everything *after* that: turning
-a spreadsheet of CVEs into deduplicated, SLA-tracked tickets, generating an AI-authored
-code fix, opening a pull request against the affected repository, and automatically
-verifying that fix through a CI pipeline before it ever reaches a human reviewer.
+**Bankai** is a security remediation platform that scans connected repositories and ingests
+scanner reports, then normalizes findings, supports triage and SLA tracking, and can generate
+a code fix and open a pull request. A developer reviews and merges every remediation pull
+request manually.
 
 The platform is organized around **projects** (one per repository/application under
 management), each with its own connected GitHub repository, optional Jira project, SLA
 policy, and role-based team membership.
 
 ```
-Scan / Report  →  Findings  →  Triage  →  Tickets  →  Jira sync  →  AI Fix PR  →  CI Verification
+Scan / Report  →  Findings  →  Triage  →  Tickets  →  Jira sync  →  Fix branch + PR  →  Manual review + merge
 ```
 
 ---
@@ -65,14 +63,13 @@ Scan / Report  →  Findings  →  Triage  →  Tickets  →  Jira sync  →  AI
 - **CSV ingestion** from arbitrary scanner exports — column-name aliasing normalizes
   differing vendor schemas (severity, CVSS, CWE, component, CVEs, affected/fixed
   versions, etc.) into one canonical finding shape.
-- **AI-driven repository scanning** — given a connected GitHub repo, Bankai walks the
-  tree (bounded by configurable file-count/size caps), sends relevant source to DeepSeek,
-  and produces findings with `remediation_guidance` and precise `line_start`/`line_end`
-  locations attached.
+- **Bankai-owned repository scanning** — pinned repository revisions are analyzed with
+  Trivy, Semgrep, Gitleaks, OSV Scanner, and applicable Bandit, `npm audit`, and `pip-audit` runs.
+  Scanner output is normalized into Bankai findings with provenance.
 - **Jira import** — existing Jira issues can be pulled in as findings, keeping legacy
   backlogs inside the same triage and remediation flow.
 - **Push-triggered rescans** — an auto-registered GitHub webhook re-scans a repo on every
-  push to the default branch, diffing against the prior commit.
+  push to the default branch, scanning the complete repository at that commit.
 
 ### 2. Triage & Deduplication
 Every finding is fingerprinted so repeat scans classify into **New Delta / In Progress /
@@ -84,7 +81,7 @@ and every finding/ticket carries a computed **Missed / Approaching / On track** 
 Findings are promoted into tickets with a project-scoped, sequential key
 (`<prefix>-<n>`). Tickets can be pushed to a connected Jira project as real issues and
 kept in sync bidirectionally — status transitions (`To Do → In Progress → In Review →
-Done`) mirror pipeline progress, and Bankai posts fix/CI evidence back as Jira comments.
+Done`) mirror ticket and pull request state, and Bankai posts remediation updates as Jira comments.
 
 ### 4. AI-Assisted Automated Remediation
 For a ticket with a connected GitHub repo, Bankai:
@@ -93,14 +90,12 @@ For a ticket with a connected GitHub repo, Bankai:
 2. Calls **DeepSeek** to generate a concrete code fix for the finding.
 3. Commits the fix to the branch and opens a **pull request**, transitioning the linked
    Jira issue and recording the action in the project activity feed.
-4. On CI failure, automatically **parses build/test logs**, generates a corrected fix, and
-   retries — up to a bounded number of attempts — before handing off to a human.
+4. Hands the pull request to the user for review; Bankai records whether it is open, closed,
+   or merged, and never merges it automatically.
 
-### 5. CI/CD Verification Pipeline
-Bankai can dispatch a repository owner's existing `.github/workflows/bankai-verify.yml`
-workflow and records its `workflow_run` evidence. Bankai does not create a bootstrap
-branch or write workflow files into customer repositories. Local Jenkins companion
-verification is optional and under development; it is not currently dispatched.
+### 5. Manual pull request review
+Bankai leaves build, test, and merge decisions to the repository's normal review process.
+Ticket completion is recorded after the remediation pull request is merged.
 
 ### 6. Collaboration & Access Control
 Projects support multi-user membership with four roles — **Owner, Admin, Editor,
@@ -110,7 +105,7 @@ silent no-op). Teammates are added via email invite with accept/decline flows.
 
 ### 7. Activity & Audit Trail
 Every meaningful state change — scan completed, finding triaged, ticket created, PR
-opened, CI passed/failed, member added — is recorded as a structured, project-scoped
+opened or merged, member added — is recorded as a structured, project-scoped
 activity event for full auditability.
 
 ---
@@ -130,14 +125,12 @@ flowchart LR
     subgraph API["Backend API (Express)"]
         AUTH["Auth / Session"]
         PROJ["Projects / Findings / Tickets"]
-        WEBHOOK["Webhooks<br/>(GitHub push, workflow_run, PR)"]
+        WEBHOOK["Webhooks<br/>(GitHub push and pull request)"]
     end
 
     subgraph Async["Background Workers (BullMQ)"]
         SCAN["repo-scan"]
         FIXPR["fix-pr"]
-        PIPE["ci-pipeline"]
-        RETRY["fix-retry"]
     end
 
     REDIS[("Redis")]
@@ -167,9 +160,8 @@ flowchart LR
   Tickets, Activity, and Settings.
 - **Backend API** — stateless Express process; every state-changing route is
   project-scoped, role-checked, and Arcjet-protected.
-- **Worker** — a separate Node process (required for horizontal scaling and crash
-  isolation from the API) consuming four BullMQ queues backed by Redis: repository
-  scanning, AI fix generation + PR creation, CI pipeline dispatch, and fix-retry-on-failure.
+- **Worker** — a separate Node process consuming the repository-scan and remediation-PR
+  queues backed by Redis.
 - **Supabase** — Postgres (with RLS as the primary authorization boundary) and Auth
   (email/password + Google/GitHub OAuth).
 - **External integrations** — GitHub (repo scanning, branch/commit/PR, webhooks),
@@ -186,7 +178,7 @@ flowchart LR
 | Backend API | Node.js 22, Express 5, TypeScript, Zod |
 | Background jobs | BullMQ (Redis-backed) |
 | Database & Auth | Supabase (Postgres + Row-Level Security, Supabase Auth) |
-| AI | DeepSeek via OpenRouter; Quincy scanner and remediation engine |
+| AI | Configured OpenRouter/Gemini provider for triage and patch generation |
 | Security | Arcjet (WAF, bot detection, rate limiting, email validation), helmet, httpOnly cookie sessions |
 | Integrations | GitHub REST API, Jira Cloud REST API |
 | Observability | Pino (structured logging), pino-http |
@@ -204,7 +196,7 @@ flowchart LR
 │   └── src/
 │       ├── pages/                Auth pages, Projects, workspace shell
 │       │   └── workspace-pages/  Overview, Report Intake, AI Triage, Tickets, Activity, Settings
-│       ├── components/           Sidebar, RepoPicker, InviteBell, CI status indicators
+│       ├── components/           Sidebar, RepoPicker, InviteBell
 │       └── lib/                  API client, auth context, project context, roles
 │
 ├── backend/                     Express + TypeScript API and worker
@@ -213,8 +205,8 @@ flowchart LR
 │       ├── routes/               Route definitions, project-scoped nesting
 │       ├── middleware/           requireAuth, loadProject, origin-check, Arcjet baseline
 │       ├── schemas/               Zod request validation
-│       ├── jobs/                  BullMQ processors (repo-scan, fix-pr, fix-retry, ci-pipeline)
-│       ├── lib/                   GitHub/Jira/DeepSeek clients, crypto, CI template generation,
+│       ├── jobs/                  BullMQ processors (repo-scan, fix-pr)
+│       ├── lib/                   GitHub/Jira/AI clients, crypto, scanner and repo context,
 │       │                          stack detection, log parsing, SLA logic, repo context assembly
 │       ├── server.ts              API entrypoint
 │       └── worker.ts              Background worker entrypoint
@@ -319,10 +311,9 @@ npm run build
 | `FRONTEND_ORIGIN` | yes | Exact frontend origin — used for CORS, CSRF origin checks, and email redirect links |
 | `COOKIE_DOMAIN` | no | Shared registrable domain for session cookies in production |
 | `COOKIE_SAMESITE` | no | `lax` (default) \| `strict` \| `none` |
-| `OPENROUTER_API_KEY` | yes | OpenRouter key, shared with Quincy |
-| `OPENROUTER_MODEL_NAME` | no | Defaults to `deepseek/deepseek-v4-flash-0731`, matching Quincy |
+| `OPENROUTER_API_KEY` | yes | OpenRouter key for Bankai triage and patch generation |
+| `OPENROUTER_MODEL_NAME` | no | OpenRouter model used by Bankai |
 | `AI_PROVIDER` | no | `openrouter` (default), or `gemini` for legacy compatibility |
-| `QUINCY_API_URL` / `QUINCY_API_TOKEN` | no | Quincy service URL and optional bearer token |
 | `REDIS_URL` | no | Defaults to `redis://localhost:6379` |
 | `BACKEND_PUBLIC_URL` | no | Publicly reachable backend URL, used to auto-register GitHub push webhooks |
 | `MAX_SCAN_FILES` / `MAX_SCAN_FILE_BYTES` / `MAX_SCAN_TOTAL_BYTES` | no | Bound repo-scan volume/latency |
@@ -357,7 +348,7 @@ Schema evolves through ordered migrations in `supabase/migrations/`. Principal t
 | `scans` | A single ingestion run (CSV upload or AI repo scan), with status, commit range, and trigger type |
 | `findings` | Normalized vulnerability records — severity, CVSS, CWE, CVEs, affected/fixed versions, remediation guidance, source (csv / github_ai / jira_import) |
 | `tickets` | Promoted, trackable units of work — Jira linkage, GitHub branch/PR tracking, CI status/run URL, fix-attempt counter |
-| `pipeline_runs` | CI dispatch history per ticket |
+| `pipeline_runs` | Retained historical CI dispatch records |
 | `activity_events` | Append-only, project-scoped audit log |
 
 All tables enforce **row-level security** scoped to project ownership/membership;
@@ -380,7 +371,7 @@ per request before any nested route runs.
 | `/api/projects/:id` | Update project settings |
 | `/api/projects/:id/scans` | List scans, upload CSV, trigger/inspect scans |
 | `/api/projects/:id/findings` | List/update findings |
-| `/api/projects/:id/tickets` | List/create tickets, sync to Jira, retry CI pipeline |
+| `/api/projects/:id/tickets` | List/create tickets and sync to Jira |
 | `/api/projects/:id/jira` | Connect/disconnect Jira |
 | `/api/projects/:id/github` | Connect/disconnect repo, trigger AI scan |
 | `/api/projects/:id/sla` | Update SLA policy |
@@ -388,7 +379,7 @@ per request before any nested route runs.
 | `/api/projects/:id/overview` | Aggregate project stats |
 | `/api/projects/:id/activity` | Project audit log |
 | `/api/invites` | Accept/decline invites by token |
-| `/api/webhooks/github/:projectId` | GitHub push / `workflow_run` / pull_request webhooks (HMAC-verified) |
+| `/api/webhooks/github/:projectId` | GitHub push and pull request webhooks (HMAC-verified) |
 
 ---
 
@@ -420,15 +411,11 @@ per request before any nested route runs.
 
 ---
 
-## CI/CD
+## Build and deployment checks
 
-Two distinct CI/CD surfaces exist in this repository:
-
-1. **This repository's own pipeline** — [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-   builds the frontend and type-checks + builds the backend on every push/PR to `main`.
-2. **Repository-configured verification** — when a connected repository already has a
-   compatible `bankai-verify.yml`, Bankai can dispatch it and record the result. The
-   repository owner controls workflow content and branch-protection policy.
+This repository's own workflow at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+checks Bankai source changes. Bankai does not dispatch or track CI for connected customer
+repositories; developers review and merge remediation pull requests themselves.
 
 ---
 
@@ -461,10 +448,10 @@ alongside the API server — it is not started automatically by `npm start`.
 
 ## Project Status
 
-Actively developed. Implemented end-to-end: authentication (including SSO and
-forgot/reset password), project and team management, CSV and AI-driven scan ingestion,
-finding triage with SLA tracking, Jira ticket sync, AI-generated remediation PRs, and the
-repository-configured CI dispatch/retry-on-failure verification loop.
+Actively developed. Implemented: authentication (including SSO and forgot/reset password),
+project and team management, CSV and Bankai-owned repository scanning, finding triage with
+SLA tracking, Jira ticket sync, AI-generated remediation branches and pull requests, and
+manual review and merge tracking.
 
 Known limitation: Arcjet's local fingerprint generator (`@arcjet/node@1.9.1`) currently
 prevents rate-limiting `/login` by submitted email in addition to IP — see

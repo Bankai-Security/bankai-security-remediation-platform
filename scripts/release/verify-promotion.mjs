@@ -12,9 +12,7 @@ export function verifyPromotion(manifest, readArtifact) {
   if (!/^[a-zA-Z0-9-]+$/.test(manifest.releaseId ?? '')) throw new Error('Missing or invalid release ID');
   if (manifest.account !== '926827998551' || manifest.region !== 'ap-south-1') throw new Error('Unexpected source account/region');
   if (manifest.frontend?.configuration !== 'runtime-v1') throw new Error('Frontend must support separately deployed runtime configuration');
-  for (const service of ['bankai', 'quincy']) {
-    if (!sha.test(manifest[service]?.gitSha) || !digest.test(manifest[service]?.imageDigest)) throw new Error(`Invalid ${service} identity`);
-  }
+  if (!sha.test(manifest.bankai?.gitSha) || !digest.test(manifest.bankai?.imageDigest)) throw new Error('Invalid Bankai identity');
   if (!sha.test(manifest.cdkGitSha) || manifest.cdkGitSha !== manifest.bankai.gitSha) throw new Error('Infrastructure source differs from release');
   for (const key of ['frontend', 'infrastructure', 'smoke']) {
     const item = manifest[key];
@@ -22,24 +20,23 @@ export function verifyPromotion(manifest, readArtifact) {
   }
   const template = JSON.parse(readArtifact(manifest.infrastructure.artifact));
   const tasks = Object.entries(template.Resources ?? {}).filter(([, r]) => r.Type === 'AWS::ECS::TaskDefinition');
-  for (const [logicalPrefix, containerName, service, repository] of [
-    ['ApiServiceTaskDef', 'web', 'bankai', 'backend'],
-    ['WorkerTask', 'Worker', 'bankai', 'backend'],
-    ['QuincyTask', 'Quincy', 'quincy', 'quincy'],
+  for (const [logicalPrefix, containerName] of [
+    ['ApiServiceTaskDef', 'web'],
+    ['WorkerTask', 'Worker'],
   ]) {
     const matching = tasks.filter(([id]) => new RegExp(`^${logicalPrefix}[A-F0-9]{8}$`).test(id));
     const containers = matching.flatMap(([, task]) => task.Properties?.ContainerDefinitions ?? [])
       .filter(container => container.Name === containerName);
-    const expected = `${manifest.account}.dkr.ecr.${manifest.region}.amazonaws.com/bankai/nonprod/${repository}@${manifest[service].imageDigest}`;
+    const expected = `${manifest.account}.dkr.ecr.${manifest.region}.amazonaws.com/bankai/nonprod/backend@${manifest.bankai.imageDigest}`;
     if (matching.length !== 1 || containers.length !== 1 || containers[0].Image !== expected) {
-      throw new Error(`${logicalPrefix} does not use the exact verified ${service} image`);
+      throw new Error(`${logicalPrefix} does not use the exact verified Bankai image`);
     }
   }
   const smoke = JSON.parse(readArtifact(manifest.smoke.artifact));
   verifySmokeEvidence(smoke, { deploymentId: manifest.releaseId, gitSha: manifest.bankai.gitSha,
-    quincyGitSha: manifest.quincy.gitSha, jenkinsBuild: manifest.jenkinsBuild });
+    jenkinsBuild: manifest.jenkinsBuild });
   return { schemaVersion: 1, releaseId: manifest.releaseId, manifestChecksum: hash(Buffer.from(JSON.stringify(manifest))),
-    bankai: manifest.bankai, quincy: manifest.quincy, frontend: manifest.frontend,
+    bankai: manifest.bankai, frontend: manifest.frontend,
     infrastructure: manifest.infrastructure, status: 'VERIFIED_SOURCE_ONLY',
     productionApplyAuthorized: false,
     outstanding: ['Verify Jenkins build SUCCESS and immutable artifact provenance independently',

@@ -57,18 +57,9 @@ export function generatedFixPathsAreInScope(
   return true;
 }
 
-// Confidence is advisory metadata, not a validation verdict. A changed retry
-// patch still has to pass Bankai's scanner, CI-parity, and repository tests, so
-// discarding it here prevents those deterministic gates from doing their job.
+// Confidence is advisory metadata. A human reviews every proposed pull request.
 export function isActionableFixCandidate(fix: GeneratedFix, currentContent: string): boolean {
   return fix.fixedContent !== currentContent;
-}
-
-export interface FixRetryContext {
-  attempt: number; // this attempt's number (2 or 3 — 1 is the original, non-retry call)
-  maxAttempts: number;
-  failedStage: string;
-  failureLog: string | null;
 }
 
 // Mirrors GeminiFixResultSchema above
@@ -116,22 +107,9 @@ Always return your best-effort fix in fixedContent. If you are not highly confid
 
 Respond with JSON matching the provided schema.`;
 
-const RETRY_SYSTEM_PROMPT_ADDENDUM = `
-
-This is a retry: a previous attempt of yours already fixed this vulnerability and was committed, but automated CI verification failed. The file content given to you below is that previous attempt's code, not the original vulnerable file, and a CI failure log is included showing what went wrong.
-
-For dependency fixes, check the supplied Dockerfile and CI runtime versions against registry requires_python constraints. Keep patched dependency versions compatible with the runtime, or update the runtime consistently in Docker and CI through filesToUpdate. Never reintroduce the CVE to fix installation. Preserve every existing verification step.
-
-Before changing anything, decide which of these two cases applies:
-1. Your previous fix has a genuine bug or is incomplete — the failure is something you can and should fix. Produce a revised fixedContent (and filesToUpdate if relevant).
-2. The failing test is itself asserting or requiring the vulnerable behavior — your fix is correct and the test itself is the obstacle. No revised code can make both the test and the security fix pass.
-
-If case 2 applies, set confident:false and use summary to explain, in plain language, why the failing test requires the vulnerable behavior to remain.`;
-
 function buildUserPrompt(
   finding: FixFindingInput,
   fileContent: string,
-  retryContext?: FixRetryContext,
   repoContextPrompt?: string,
 ): string {
   const numbered = fileContent
@@ -158,11 +136,7 @@ Remediation guidance:
 ${finding.remediationGuidance}
 
 === TARGET FILE: ${finding.filePath} ===
-${numbered}${
-    retryContext
-      ? `\n\n=== CI FAILURE (attempt ${retryContext.attempt} of ${retryContext.maxAttempts}, stage: ${retryContext.failedStage}) ===\n${retryContext.failureLog ?? "(log unavailable — no further detail than the stage name)"}`
-      : ""
-  }`;
+${numbered}`;
 }
 
 // Best-effort, same contract as gemini.ts's analyzeChunk: 2 attempts, never
@@ -170,7 +144,6 @@ ${numbered}${
 export async function generateFix(
   finding: FixFindingInput,
   fileContent: string,
-  retryContext?: FixRetryContext,
   repoContextPrompt?: string,
 ): Promise<GeneratedFix | null> {
   if (fileContent.length > env.MAX_SCAN_FILE_BYTES) {
@@ -181,8 +154,8 @@ export async function generateFix(
     return null;
   }
 
-  const contents = buildUserPrompt(finding, fileContent, retryContext, repoContextPrompt);
-  const systemInstruction = retryContext ? SYSTEM_PROMPT + RETRY_SYSTEM_PROMPT_ADDENDUM : SYSTEM_PROMPT;
+  const contents = buildUserPrompt(finding, fileContent, repoContextPrompt);
+  const systemInstruction = SYSTEM_PROMPT;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     let text: string | undefined;

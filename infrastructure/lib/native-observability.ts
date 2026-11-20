@@ -16,8 +16,6 @@ export interface NativeObservabilityProps {
   workerLogGroup: string;
   loadBalancer: string;
   targetGroup: string;
-  fileSystem: string;
-  project: string;
   distribution: string;
   webAcl: string;
 }
@@ -107,7 +105,7 @@ export class NativeObservability extends Construct {
     });
     apiTelemetry.addAlarmAction(new actions.SnsAction(topic)); apiTelemetry.addOkAction(new actions.SnsAction(topic));
     // Queue names are an allowlist, never extracted into unbounded dimensions.
-    for (const queue of ['repo-scan', 'fix-pr', 'ci-pipeline', 'fix-retry']) {
+    for (const queue of ['repo-scan', 'fix-pr']) {
       const pattern = `{ $.event = "queue.depth" && $.queue = "${queue}" }`;
       const depth = filter(`${queue}-depth`, p.workerLogGroup, pattern, '$.waiting', 'Maximum');
       const age = filter(`${queue}-age`, p.workerLogGroup, `{ $.event = "queue.depth" && $.queue = "${queue}" && $.oldestWaitingAgeMs >= 0 }`, '$.oldestWaitingAgeMs', 'Maximum');
@@ -123,12 +121,6 @@ export class NativeObservability extends Construct {
     }
     for (const event of ['failed', 'stalled']) alarm(`jobs-${event}`, filter(`Jobs-${event}`, p.workerLogGroup, `{ $.event = "queue.job.${event}" }`), 1);
     alarm('redis-connectivity', filter('RedisErrors', p.workerLogGroup, '{ $.event = "queue.depth.error" }'), 1);
-    const storage = metric('AWS/EFS', 'StorageBytes', { FileSystemId: p.fileSystem, StorageClass: 'Total' }, 'Maximum', 900);
-    const io = metric('AWS/EFS', 'PercentIOLimit', { FileSystemId: p.fileSystem });
-    graph('EFS storage and IO', storage, io); alarm('efs-storage', storage, 100 * 1024 ** 3); alarm('efs-io', io, 80);
-    const failedBuilds = metric('AWS/CodeBuild', 'FailedBuilds', { ProjectName: p.project }, 'Sum', 300);
-    graph('CodeBuild', failedBuilds, metric('AWS/CodeBuild', 'Duration', { ProjectName: p.project }, 'Average', 300));
-    alarm('codebuild', failedBuilds, 1);
     graph('CloudFront (us-east-1)', new cw.Metric({ namespace: 'AWS/CloudFront', metricName: '5xxErrorRate',
       dimensionsMap: { DistributionId: p.distribution, Region: 'Global' }, region: 'us-east-1', statistic: 'Average' }));
     graph('WAF (us-east-1)', new cw.Metric({ namespace: 'AWS/WAFV2', metricName: 'BlockedRequests',

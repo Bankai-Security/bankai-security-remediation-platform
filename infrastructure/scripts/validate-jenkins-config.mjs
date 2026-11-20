@@ -13,7 +13,7 @@ for (const line of plugins) {
   if (!/^[a-z0-9-]+:[A-Za-z0-9_.-]+$/.test(line)) throw new Error(`plugin is not exactly pinned: ${line}`);
 }
 for (const text of ['numExecutors: 0', "scanCredentialsId('jenkins-github-app')",
-  "multibranchPipelineJob('bankai')", "multibranchPipelineJob('quincy')",
+  "multibranchPipelineJob('bankai')",
   "pipelineJob('bankai-nonprod-release')", "upstream('bankai/main', 'SUCCESS')", "scriptPath('Jenkinsfile.release')",
   "pipelineJob('bankai-nonprod-e2e')", "scriptPath('Jenkinsfile.e2e')",
   "pipelineJob('bankai-nonprod-observability')", "scriptPath('Jenkinsfile.observability')"]) {
@@ -25,4 +25,4 @@ for (const text of ['labelString: "linux pr-validation"', 'labelString: "pr-cont
   if (!casc.includes(text)) throw new Error(`missing agent isolation control: ${text}`);
 }
 if (/(AKIA[0-9A-Z]{16}|ghp_|ddapi[_-]?key\s*:\s*[^$])/i.test(casc)) throw new Error('possible plaintext credential in JCasC');
-console.log(`Jenkins configuration valid: ${plugins.length} pinned plugins, 2 multibranch jobs, release, E2E, and observability jobs, no plaintext secret patterns.`);
+console.log(`Jenkins configuration valid: ${plugins.length} pinned plugins, one multibranch job, release, E2E, and observability jobs, no plaintext secret patterns.`);

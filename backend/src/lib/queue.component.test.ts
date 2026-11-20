@@ -22,8 +22,6 @@ describe("BullMQ queue rules with isolated Redis", () => {
       await Promise.all([
         queues.repoScanQueue.close(),
         queues.fixPrQueue.close(),
-        queues.pipelineQueue.close(),
-        queues.fixRetryQueue.close(),
       ]);
       await queues.redisConnection.quit();
     }
@@ -33,28 +31,10 @@ describe("BullMQ queue rules with isolated Redis", () => {
   it("deduplicates repository webhook deliveries by caller job ID", async () => {
     const suffix = randomUUID();
     const jobId = `webhook-project-${suffix}`;
-    const data = { scanId: suffix, projectId: "project", triggerType: "webhook" as const, baseSha: "a", headSha: "b" };
+    const data = { scanId: suffix, projectId: "project", triggerType: "webhook" as const };
     await queues.enqueueRepoScan(data, jobId);
     await queues.enqueueRepoScan(data, jobId);
     expect((await queues.repoScanQueue.getJobs(["waiting"])).filter((job) => job.id === jobId)).toHaveLength(1);
-  });
-
-  it("creates unique IDs for explicit pipeline retries", async () => {
-    const data = { ticketId: randomUUID(), projectId: "project" };
-    const first = await queues.enqueuePipelineRetry(data);
-    const second = await queues.enqueuePipelineRetry(data);
-    expect(first.id).toBeTruthy();
-    expect(second.id).toBeTruthy();
-    expect(first.id).not.toBe(second.id);
-  });
-
-  it("only clears the Quincy checkpoint that matches the completed job", async () => {
-    const data = { ticketId: randomUUID(), projectId: "project" };
-    await queues.saveQuincyCheckpoint(data, "new-job");
-    await queues.clearQuincyCheckpoint(data, "stale-job");
-    expect(await queues.loadQuincyCheckpoint(data)).toBe("new-job");
-    await queues.clearQuincyCheckpoint(data, "new-job");
-    expect(await queues.loadQuincyCheckpoint(data)).toBeUndefined();
   });
 
   it("round-trips progress and preserves ticket ordering", async () => {

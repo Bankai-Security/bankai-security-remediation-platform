@@ -1,6 +1,6 @@
 import { parse } from "csv-parse/sync";
 import { computeSlaDueDate, type SlaPolicyDays } from "./sla.js";
-import type { Bucket, Severity } from "./pipeline-types.js";
+import type { Bucket, Severity } from "./finding-types.js";
 
 export class CsvIngestError extends Error {}
 

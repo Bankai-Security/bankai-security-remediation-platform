@@ -16,7 +16,6 @@ pipeline {
     AWS_SHARED_CREDENTIALS_FILE = "${WORKSPACE}/.aws/credentials"
     AWS_CONFIG_FILE = "${WORKSPACE}/.aws/config"
     GITHUB_ORGANIZATION = 'bankai-security'
-    QUINCY_REPOSITORY = 'quincy-security-engine'
   }
 
   stages {
@@ -33,19 +32,13 @@ pipeline {
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           mkdir -p release reports/release
         '''
-        dir('quincy') {
-          checkout([$class: 'GitSCM', branches: [[name: '*/master']],
-            userRemoteConfigs: [[url: "https://github.com/${env.GITHUB_ORGANIZATION}/${env.QUINCY_REPOSITORY}.git", credentialsId: 'jenkins-github-app']]])
-        }
         sh '''
           set -euo pipefail
           printf 'BANKAI_SHA=%s\n' "$(git rev-parse HEAD)" > release/runtime.env
-          printf 'QUINCY_SHA=%s\n' "$(git -C quincy rev-parse HEAD)" >> release/runtime.env
           printf 'RELEASE_ID=bankai-%s-build-%s\n' "$(git rev-parse --short=12 HEAD)" "$BUILD_NUMBER" >> release/runtime.env
           printf 'RELEASE_TIMESTAMP=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release/runtime.env
           printf 'SOURCE_DATE_EPOCH=%s\n' "$(git show -s --format=%ct HEAD)" >> release/runtime.env
           test -z "$(git status --porcelain --untracked-files=no)"
-          test -z "$(git -C quincy status --porcelain --untracked-files=no)"
         '''
       }
     }
@@ -56,7 +49,7 @@ pipeline {
           set -euo pipefail
           . release/runtime.env
           account=$(aws sts get-caller-identity --query Account --output text)
-          node scripts/release/validate-nonprod-release.mjs infrastructure/config/nonprod.json "$account" "$BANKAI_SHA" "$QUINCY_SHA"
+          node scripts/release/validate-nonprod-release.mjs infrastructure/config/nonprod.json "$account" "$BANKAI_SHA"
           region=$(node -p "require('./infrastructure/config/nonprod.json').region")
           stack=Bankai-nonprod-Foundation
           aws cloudformation describe-stacks --region "$region" --stack-name "$stack" > release/stack-before.json
@@ -66,9 +59,6 @@ pipeline {
             aarch64|arm64) ;;
             *) echo 'Release requires an ARM64 trusted Docker agent' >&2; exit 1 ;;
           esac
-          test -f quincy/pylock.toml
-          test -f quincy/tests/integration/test_container_startup.py
-          test -x quincy/scripts/container-security-gate.sh
           bash scripts/release/assume-role.sh "$PUBLISHING_ROLE_ARN" publishing "bankai-preflight-publish-$BUILD_NUMBER"
           bash scripts/release/assume-role.sh "$DEPLOYMENT_ROLE_ARN" deployment "bankai-preflight-deploy-$BUILD_NUMBER"
           bash scripts/release/assume-role.sh "$CLOUDFORMATION_ROLE_ARN" cloudformation "bankai-preflight-cfn-$BUILD_NUMBER"
@@ -81,7 +71,6 @@ pipeline {
         sh '''
           set -euo pipefail
           bash scripts/release/scan-sources.sh . reports/security/bankai-source
-          bash scripts/release/scan-sources.sh quincy reports/security/quincy-source
         '''
       }
     }
@@ -112,37 +101,13 @@ pipeline {
       post { always { junit testResults: 'backend/reports/*junit.xml,frontend/reports/*junit.xml', allowEmptyResults: false } }
     }
 
-    stage('Rerun Quincy quality gates') {
-      steps {
-        dir('quincy') {
-          sh '''
-            set -euo pipefail
-            python3.12 -m venv .venv
-            .venv/bin/python -m pip install --no-cache-dir pip==26.2.1
-            .venv/bin/python -m pip install --require-hashes -r pylock.toml
-            .venv/bin/python -m pip install --no-deps -e .
-            .venv/bin/python -m pip check
-            .venv/bin/python -m ruff check src tests scripts
-            .venv/bin/python -m mypy
-            .venv/bin/python scripts/run_tests.py unit --fail-on-skip
-            .venv/bin/python scripts/run_tests.py component --fail-on-skip
-            .venv/bin/python scripts/run_tests.py integration --fail-on-skip
-          '''
-        }
-      }
-      post { always { junit testResults: 'quincy/reports/*-junit.xml', allowEmptyResults: false } }
-    }
-
     stage('Build release assets once') {
       steps {
         sh '''
           set -euo pipefail
           . release/runtime.env
           docker build --platform "linux/$IMAGE_ARCHITECTURE" --progress=plain --pull=false -t "bankai-backend:$BANKAI_SHA" backend
-          docker build --platform "linux/$IMAGE_ARCHITECTURE" --progress=plain --pull=false -t "quincy-service:$QUINCY_SHA" quincy
           (cd backend && BANKAI_TEST_IMAGE="bankai-backend:$BANKAI_SHA" npx vitest run --config vitest.container.config.ts --reporter=default --reporter=junit --outputFile.junit=reports/release-container-junit.xml)
-          (cd quincy && QUINCY_TEST_IMAGE="quincy-service:$QUINCY_SHA" .venv/bin/python -m pytest tests/integration/test_container_startup.py --junitxml=reports/release-health-junit.xml -o cache_dir=reports/release-health-cache)
-          (cd quincy && scripts/container-security-gate.sh "quincy-service:$QUINCY_SHA" reports/security . all)
           mkdir -p reports/security reports/sbom
           TRIVY=aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
           SYFT=anchore/syft@sha256:5999d209a342e55e9edf70bf8930fb5b86d8f2a783fa401178372c50e21b1d36
@@ -154,7 +119,7 @@ pipeline {
           printf 'FRONTEND_ARTIFACT=%s\n' "release/frontend/$RELEASE_ID.tar.gz" >> release/runtime.env
         '''
       }
-      post { always { junit testResults: 'backend/reports/release-container-junit.xml,quincy/reports/release-health-junit.xml', allowEmptyResults: false } }
+      post { always { junit testResults: 'backend/reports/release-container-junit.xml', allowEmptyResults: false } }
     }
 
     stage('Publish immutable images') {
@@ -166,18 +131,12 @@ pipeline {
           registry=${BACKEND_REPOSITORY%%/*}
           aws ecr get-login-password --region "$AWS_REGION" --profile publishing | docker login --username AWS --password-stdin "$registry"
           bankai_tag="$BANKAI_SHA-build-$BUILD_NUMBER"
-          quincy_tag="$QUINCY_SHA-build-$BUILD_NUMBER"
           docker tag "bankai-backend:$BANKAI_SHA" "$BACKEND_REPOSITORY:$bankai_tag"
-          docker tag "quincy-service:$QUINCY_SHA" "$QUINCY_REPOSITORY_URI:$quincy_tag"
           docker push "$BACKEND_REPOSITORY:$bankai_tag"
-          docker push "$QUINCY_REPOSITORY_URI:$quincy_tag"
           backend_name=${BACKEND_REPOSITORY#*/}
-          quincy_name=${QUINCY_REPOSITORY_URI#*/}
           bankai_digest=$(aws ecr batch-get-image --profile publishing --region "$AWS_REGION" --repository-name "$backend_name" --image-ids imageTag="$bankai_tag" --query 'images[0].imageId.imageDigest' --output text)
-          quincy_digest=$(aws ecr batch-get-image --profile publishing --region "$AWS_REGION" --repository-name "$quincy_name" --image-ids imageTag="$quincy_tag" --query 'images[0].imageId.imageDigest' --output text)
           [[ $bankai_digest =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ $quincy_digest =~ ^sha256:[0-9a-f]{64}$ ]]
-          printf 'BANKAI_IMAGE_DIGEST=%s\nQUINCY_IMAGE_DIGEST=%s\n' "$bankai_digest" "$quincy_digest" >> release/runtime.env
+          printf 'BANKAI_IMAGE_DIGEST=%s\n' "$bankai_digest" >> release/runtime.env
         '''
       }
     }
@@ -188,7 +147,7 @@ pipeline {
           set -euo pipefail
           . release/runtime.env
           rm -rf release/cdk.out
-          (cd infrastructure && npx cdk synth "$STACK_NAME" -c stage=nonprod -c releaseArchitecture="$IMAGE_ARCHITECTURE" -c backendImageDigest="$BANKAI_IMAGE_DIGEST" -c quincyImageDigest="$QUINCY_IMAGE_DIGEST" -c bankaiGitSha="$BANKAI_SHA" -c quincyGitSha="$QUINCY_SHA" -c deploymentId="$RELEASE_ID" -c jenkinsBuild="$BUILD_NUMBER" --quiet --output ../release/cdk.out)
+          (cd infrastructure && npx cdk synth "$STACK_NAME" -c stage=nonprod -c releaseArchitecture="$IMAGE_ARCHITECTURE" -c backendImageDigest="$BANKAI_IMAGE_DIGEST" -c bankaiGitSha="$BANKAI_SHA" -c deploymentId="$RELEASE_ID" -c jenkinsBuild="$BUILD_NUMBER" --quiet --output ../release/cdk.out)
           test -f "release/cdk.out/$STACK_NAME.template.json"
           mkdir -p release/security
           docker run --rm -v "$PWD/infrastructure:/workspace:ro" -v "$PWD/release/cdk.out:/cdk:ro" -v "$PWD/release/security:/output" aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 config --severity HIGH,CRITICAL --exit-code 1 --ignorefile /workspace/.trivyignore --format json --output /output/cdk-nonprod.json /cdk
@@ -233,7 +192,7 @@ pipeline {
           bash scripts/release/assume-role.sh "$DEPLOYMENT_ROLE_ARN" deployment "bankai-verify-$BUILD_NUMBER"
           output() { node -e "const s=require('./release/stack-after.json').Stacks[0]; const o=s.Outputs.find(x=>x.OutputKey===process.argv[1]); if(!o) process.exit(2); process.stdout.write(o.OutputValue)" "$1"; }
           cluster=$(output EcsClusterName)
-          for service in "$(output QuincyServiceName)" "$(output ApiServiceName)" "$(output WorkerServiceName)"; do
+          for service in "$(output ApiServiceName)" "$(output WorkerServiceName)"; do
             aws ecs wait services-stable --profile deployment --region "$AWS_REGION" --cluster "$cluster" --services "$service"
           done
         '''
@@ -266,11 +225,10 @@ pipeline {
           set -a
           . release/runtime.env
           set +a
-          export DEPLOYMENT_ID="$RELEASE_ID" GIT_SHA="$BANKAI_SHA" QUINCY_GIT_SHA="$QUINCY_SHA"
+          export DEPLOYMENT_ID="$RELEASE_ID" GIT_SHA="$BANKAI_SHA"
           export JENKINS_BUILD="${BUILD_URL:-$BUILD_TAG}"
           export E2E_API_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').apiDomainName")"
           export E2E_FRONTEND_URL="https://$(node -p "require('./infrastructure/config/nonprod.json').frontendDomainName")"
-          export E2E_QUINCY_URL='http://quincy.nonprod.bankai.local:8000'
           node e2e/run.mjs --mode smoke
         '''
       }
@@ -301,7 +259,7 @@ pipeline {
       sh 'rm -rf .aws || :'
       script {
         if (fileExists('release/runtime.env')) {
-          archiveArtifacts artifacts: 'release/**/*,reports/**/*,quincy/reports/**/*', excludes: '**/*-tmp/**,**/*-cache/**', allowEmptyArchive: false, fingerprint: true
+          archiveArtifacts artifacts: 'release/**/*,reports/**/*', excludes: '**/*-tmp/**,**/*-cache/**', allowEmptyArchive: false, fingerprint: true
         }
       }
     }

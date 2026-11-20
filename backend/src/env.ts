@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 const optionalNonEmptyString = z.preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional());
-const optionalUrl = z.preprocess((value) => (value === "" ? undefined : value), z.url().optional());
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -27,7 +26,7 @@ const envSchema = z.object({
   COOKIE_DOMAIN: z.string().optional(),
   COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
 
-  // Shared AI settings for repository scans, remediation, and CI retries.
+  // AI settings for source analysis and Bankai remediation patch generation.
   AI_PROVIDER: z.enum(["openrouter", "gemini"]).default("openrouter"),
   OPENROUTER_API_KEY: optionalNonEmptyString,
   OPENROUTER_REASONING_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
@@ -36,19 +35,6 @@ const envSchema = z.object({
   AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   GEMINI_API_KEY: optionalNonEmptyString,
   GEMINI_MODEL: z.string().min(1).default("gemini-pro-latest"),
-
-  // Optional Quincy Security Engine integration. When configured, repo scans
-  // prefer Quincy's deterministic scanner/triage API and fall back to the configured AI provider
-  // if the engine is unavailable or cannot access the repo.
-  QUINCY_API_URL: optionalUrl,
-  QUINCY_API_TOKEN: optionalNonEmptyString,
-  QUINCY_ALLOW_FALLBACK: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
-  QUINCY_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
-  QUINCY_REMEDIATION_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
-
-  // Explicit opt-in for local runner enqueue and claims. Keep false until the
-  // operator has configured local Quincy/Jenkins and approved the trust model.
-  LOCAL_RUNNER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
 
   // Backs the repo-scan job queue (backend/src/lib/queue.ts) — required by
   // both the API server (to enqueue) and the worker (backend/src/worker.ts,
@@ -63,11 +49,8 @@ const envSchema = z.object({
   // instead of getting push-triggered rescans automatically.
   BACKEND_PUBLIC_URL: z.url().optional(),
 
-  // File-filtering caps for a repo scan (backend/src/lib/github.ts) — keep
-  // Gemini call volume and latency bounded on large repos.
-  MAX_SCAN_FILES: z.coerce.number().int().positive().default(400),
+  // Keep per-file fix-generation context bounded.
   MAX_SCAN_FILE_BYTES: z.coerce.number().int().positive().default(200_000),
-  MAX_SCAN_TOTAL_BYTES: z.coerce.number().int().positive().default(20_000_000),
 
   // Context-assembly budgets for AI fix generation (backend/src/lib/repo-context.ts)
   MAX_FIX_CONTEXT_FILES: z.coerce.number().int().positive().default(10),
@@ -111,11 +94,4 @@ if (!parsed.success) {
 
 const parsedEnv = parsed.data;
 
-// Local Bankai + Quincy is the default development shape. An empty
-// QUINCY_API_URL in backend/.env used to silently skip every
-// POST /workflows/remediations even when Quincy was healthy on :8000.
-export const env = {
-  ...parsedEnv,
-  QUINCY_API_URL:
-    parsedEnv.QUINCY_API_URL ?? (parsedEnv.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined),
-};
+export const env = parsedEnv;

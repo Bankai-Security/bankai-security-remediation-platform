@@ -14,17 +14,16 @@ describe("DeepSeek through OpenRouter", () => {
   beforeEach(() => { env.AI_PROVIDER = "openrouter"; });
   afterEach(() => { env.AI_PROVIDER = originalProvider; vi.unstubAllGlobals(); });
 
-  it("routes fixes and CI retries through the configured model with structured output", async () => {
+  it("routes remediation fixes through the configured model with structured output", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => completion(fix));
     vi.stubGlobal("fetch", fetchMock);
-    expect(await generateFix(finding, "eval(input)", { attempt: 2, maxAttempts: 3, failedStage: "test", failureLog: "missing safe" })).toEqual(fix);
+    expect(await generateFix(finding, "eval(input)")).toEqual(fix);
     const [url, options] = fetchMock.mock.calls[0]!;
     expect(url).toBe(`${env.OPENROUTER_BASE_URL}/chat/completions`);
     const body = JSON.parse(options.body);
     expect(body.model).toBe(env.OPENROUTER_MODEL_NAME);
     expect(body.response_format.type).toBe("json_schema");
     expect(body.reasoning).toEqual({ enabled: false });
-    expect(body.messages[1].content).toContain("missing safe");
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 

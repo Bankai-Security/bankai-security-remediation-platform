@@ -62,7 +62,7 @@ describe("packaged Bankai API", () => {
     await expect(response.json()).resolves.toMatchObject({
       status: "ok",
       redis: "PONG",
-      queues: { repoScan: { waiting: 0 }, fixPr: { waiting: 0 }, pipeline: { waiting: 0 } },
+      queues: { repoScan: { waiting: 0 }, fixPr: { waiting: 0 } },
     });
   });
 

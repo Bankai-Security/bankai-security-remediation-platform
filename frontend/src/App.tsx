@@ -33,7 +33,6 @@ import {
   IntakeDetail,
   DefectGenerationDetail,
   JiraTicketsDetail,
-  LocalVerification,
 } from './pages/workspace-pages';
 
 export default function App() {
@@ -89,7 +88,6 @@ export default function App() {
         <Route path="intake" element={<ReportIntake />} />
         <Route path="triage" element={<AITriage />} />
         <Route path="tickets" element={<Tickets />} />
-        <Route path="local-verification" element={<LocalVerification />} />
         <Route path="activity" element={<Activity />} />
         <Route path="settings" element={<Settings />} />
       </Route>

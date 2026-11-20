@@ -39,17 +39,12 @@ const SESSION: TermSegment[][] = [
   ],
   [{ text: '  gemini patch  2 files  +18 -6', tone: 'text' }],
   [
-    { text: '▸ ci verify', tone: 'cmd' },
-    { text: '  build ', tone: 'dim' },
-    { text: '✓', tone: 'ok' },
-    { text: ' functional ', tone: 'dim' },
-    { text: '✓', tone: 'ok' },
-    { text: ' integration ', tone: 'dim' },
-    { text: '✓', tone: 'ok' },
+    { text: '▸ review PR #87', tone: 'cmd' },
+    { text: '  waiting for your review', tone: 'dim' },
   ],
   [
-    { text: '✓ verified', tone: 'ok' },
-    { text: '    evidence posted, ready for review.', tone: 'text' },
+    { text: '  merge manually', tone: 'ok' },
+    { text: '    you control the final change.', tone: 'text' },
   ],
 ];
 
@@ -111,8 +106,8 @@ export default function Hero() {
           Bankai fixes.
         </motion.h1>
         <motion.p className="ldg-hero-sub" variants={enter}>
-          Raw vulnerability reports in. Merged, CI-verified pull requests out. Ingest, triage,
-          ticket, fix, verify: one loop.
+          Raw vulnerability reports in. Pull requests ready for manual review. Ingest, triage,
+          ticket, fix, review: one loop.
         </motion.p>
         <motion.div className="ldg-hero-ctas" variants={enter}>
           <motion.span whileTap={reduceMotion ? undefined : tapScale} className="ldg-inline-block">
@@ -132,7 +127,7 @@ export default function Hero() {
         initial="hidden"
         animate="visible"
       >
-        <div className="ldg-terminal" role="img" aria-label="Example remediation session: a scan finds 12 vulnerabilities, Bankai deduplicates them, opens ticket BNK-114, generates a fix pull request, and CI verifies the build, functional, and integration stages.">
+        <div className="ldg-terminal" role="img" aria-label="Example remediation session: a scan finds 12 vulnerabilities, Bankai deduplicates them, opens ticket BNK-114, generates a fix pull request, and a human reviews and merges the pull request.">
           <div className="ldg-terminal-bar" aria-hidden="true">
             <span className="ldg-terminal-dot" />
             <span className="ldg-terminal-dot" />

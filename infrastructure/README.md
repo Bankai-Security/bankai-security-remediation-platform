@@ -1,7 +1,7 @@
 # Bankai AWS CDK foundation
 
-This TypeScript CDK application is the sole infrastructure definition for
-Bankai and Quincy. It synthesizes one environment stack while deliberately
+This TypeScript CDK application is the infrastructure definition for
+Bankai. It synthesizes one environment stack while deliberately
 preserving the original stack and construct paths to avoid accidental resource
 replacement during the migration.
 
@@ -14,7 +14,6 @@ field can be overridden with CDK context, for example:
 npx cdk synth -c stage=nonprod `
   -c account=123456789012 `
   -c backendImageDigest=sha256:<64-hex-characters> `
-  -c quincyImageDigest=sha256:<64-hex-characters> `
   -c apiCertificateArn=arn:aws:acm:ap-south-1:123456789012:certificate/<id> `
   -c frontendCertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/<id> `
   -c frontendWebAclArn=arn:aws:wafv2:us-east-1:123456789012:global/webacl/<name>/<id>

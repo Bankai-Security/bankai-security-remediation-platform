@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Severity } from "./pipeline-types.js";
+import type { Severity } from "./finding-types.js";
 import { computeSlaStatus, type SlaPolicyDays } from "./sla.js";
 import { statusAllowedByCompletionGate } from "./ticket-status-sync.js";
 
@@ -19,7 +19,7 @@ export async function computeProjectStats(supabase: SupabaseClient, projectId: s
       .neq("source", "jira_import"),
     supabase
       .from("tickets")
-      .select("status, github_branch_name, github_pr_number, github_pr_state, ci_status")
+      .select("status, github_branch_name, github_pr_number, github_pr_state")
       .eq("project_id", projectId),
     supabase
       .from("scans")
@@ -46,7 +46,6 @@ export async function computeProjectStats(supabase: SupabaseClient, projectId: s
         githubBranchName: ticket.github_branch_name,
         githubPrNumber: ticket.github_pr_number,
         githubPrState: ticket.github_pr_state,
-        ciStatus: ticket.ci_status,
       }) !== "Done",
   ).length;
 

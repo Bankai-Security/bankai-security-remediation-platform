@@ -101,8 +101,8 @@ const CELLS: Cell[] = [
   {
     key: 'ci',
     className: 'ldg-cell-wide',
-    title: 'CI-verified, job by job',
-    body: 'Use your repository’s existing CI checks alongside Bankai’s remediation evidence. Bankai does not add workflow files to your repository.',
+    title: 'Review every fix',
+    body: 'Bankai opens a pull request for every remediation. Review the code and merge it manually in GitHub.',
     visual: <CiVisual />,
   },
   {
@@ -123,7 +123,7 @@ const CELLS: Cell[] = [
     key: 'jira',
     className: 'ldg-cell-half',
     title: 'Bidirectional Jira sync',
-    body: 'Tickets become real Jira issues. Transitions mirror pipeline progress, and fix evidence posts back as comments.',
+    body: 'Tickets become real Jira issues. Bankai links the remediation pull request so your team can review and merge the fix.',
     visual: <JiraVisual />,
   },
   {

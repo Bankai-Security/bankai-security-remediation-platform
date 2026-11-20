@@ -1,4 +1,5 @@
-import { PIPELINE_STAGE_LABELS, type PipelineStageName, type Severity, type TicketStatus } from "./pipeline-types.js";
+import type { Severity } from "./finding-types.js";
+import type { TicketStatus } from "./ticket-status-sync.js";
 
 export interface JiraCredentials {
   site: string;
@@ -425,230 +426,43 @@ export async function addBranchComment(
   }
 }
 
-// Never throws — same best-effort contract as addBranchComment. Posts the
-// same pass/fail + per-stage verification result that's posted as a GitHub
-// PR comment, but onto the Jira issue's own conversation thread, so evidence
-// is visible from Jira without opening GitHub. ADF has no markdown-table
-// equivalent, so stages render as a bullet list instead of a table.
-export async function addPipelineEvidenceComment(
-  creds: JiraCredentials,
-  issueKey: string,
-  input: {
-    passed: boolean;
-    stages: { name: string; conclusion: string | null }[];
-    runUrl: string | null;
-    prUrl: string | null;
-    retryNote?: string | undefined;
-  },
-): Promise<BranchCommentResult> {
-  const stageItems = input.stages.map((s) => ({
-    type: "listItem",
-    content: [
-      {
-        type: "paragraph",
-        content: [
-          {
-            type: "text",
-            text: `${PIPELINE_STAGE_LABELS[s.name as PipelineStageName] ?? s.name}: ${s.conclusion ?? "unknown"}`,
-          },
-        ],
-      },
-    ],
-  }));
-
-  const verdictText =
-    (input.passed
-      ? "CD Successful — all stages passed. This branch is verified and ready for human review; a human still merges it on GitHub."
-      : "Verification failed — review the failing stage before merging.") + (input.retryNote ? ` ${input.retryNote}` : "");
-
-  const linkParagraphContent: Record<string, unknown>[] = [];
-  if (input.runUrl) {
-    linkParagraphContent.push(
-      { type: "text", text: "View full run: " },
-      { type: "text", text: input.runUrl, marks: [{ type: "link", attrs: { href: input.runUrl } }] },
-    );
-  }
-  if (input.prUrl) {
-    if (linkParagraphContent.length) linkParagraphContent.push({ type: "text", text: "  ·  " });
-    linkParagraphContent.push(
-      { type: "text", text: "Pull request: " },
-      { type: "text", text: input.prUrl, marks: [{ type: "link", attrs: { href: input.prUrl } }] },
-    );
-  }
-
-  const content: Record<string, unknown>[] = [
-    {
-      type: "paragraph",
-      content: [{ type: "text", text: "Bankai Verification Pipeline", marks: [{ type: "strong" }] }],
-    },
-  ];
-  if (stageItems.length) {
-    content.push({ type: "bulletList", content: stageItems });
-  }
-  content.push({ type: "paragraph", content: [{ type: "text", text: verdictText }] });
-  if (linkParagraphContent.length) {
-    content.push({ type: "paragraph", content: linkParagraphContent });
-  }
-
-  try {
-    const res = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`, {
-      method: "POST",
-      body: JSON.stringify({ body: { type: "doc", version: 1, content } }),
-    });
-    if (res.ok) return { ok: true };
-
-    const body = (await res.json().catch(() => ({}))) as { errorMessages?: string[]; errors?: Record<string, unknown> };
-    const reason =
-      body.errorMessages?.[0] ?? (body.errors && typeof body.errors === "object" ? Object.values(body.errors)[0] : undefined);
-    return { ok: false, status: res.status, message: typeof reason === "string" ? reason : undefined };
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-export type FixRetryCommentInput =
-  | { kind: "retrying"; attempt: number; maxAttempts: number; failedStage: string; reason: string; summary: string; commitUrl: string }
-  | { kind: "exhausted"; failedStage: string; reason: string; summary: string | null };
-
-// Never throws — same best-effort contract as addBranchComment/
-// addPipelineEvidenceComment. Posts the self-healing retry loop's progress
-// (or its terminal give-up reasoning) onto the Jira issue's own conversation
-// thread, mirroring the equivalent GitHub PR comment built in fix-retry.job.ts.
-export async function addFixRetryComment(
-  creds: JiraCredentials,
-  issueKey: string,
-  input: FixRetryCommentInput,
-): Promise<BranchCommentResult> {
-  const headerText = input.kind === "retrying" ? `Bankai Verification Pipeline — retrying (attempt ${input.attempt} of ${input.maxAttempts})` : "Bankai Verification Pipeline — needs a human";
-
-  const content: Record<string, unknown>[] = [
-    { type: "paragraph", content: [{ type: "text", text: headerText, marks: [{ type: "strong" }] }] },
-    { type: "paragraph", content: [{ type: "text", text: `${input.failedStage} failed: ${input.reason}` }] },
-  ];
-
-  if (input.kind === "retrying") {
-    content.push({ type: "paragraph", content: [{ type: "text", text: `Regenerated fix: ${input.summary}` }] });
-    content.push({
-      type: "paragraph",
-      content: [
-        { type: "text", text: "Re-running verification against " },
-        { type: "text", text: "this commit", marks: [{ type: "link", attrs: { href: input.commitUrl } }] },
-        { type: "text", text: "..." },
-      ],
-    });
-  } else {
-    content.push({
-      type: "paragraph",
-      content: [
-        {
-          type: "text",
-          text: input.summary
-            ? `Bankai could not produce a further fix: ${input.summary}`
-            : "Bankai could not produce a further fix. A human needs to review and edit the code directly.",
-        },
-      ],
-    });
-  }
-
-  try {
-    const res = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`, {
-      method: "POST",
-      body: JSON.stringify({ body: { type: "doc", version: 1, content } }),
-    });
-    if (res.ok) return { ok: true };
-
-    const body = (await res.json().catch(() => ({}))) as { errorMessages?: string[]; errors?: Record<string, unknown> };
-    const reason =
-      body.errorMessages?.[0] ?? (body.errors && typeof body.errors === "object" ? Object.values(body.errors)[0] : undefined);
-    return { ok: false, status: res.status, message: typeof reason === "string" ? reason : undefined };
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-// Never throws — same best-effort contract as addBranchComment. A 404 counts
-// as success (the issue is already gone either way), so callers cleaning up
-// a batch of issues don't need to special-case ones deleted directly in Jira.
-export async function deleteIssue(creds: JiraCredentials, issueKey: string): Promise<boolean> {
-  try {
-    const res = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}`, { method: "DELETE" });
-    return res.ok || res.status === 404;
-  } catch {
-    return false;
-  }
-}
-
-// Best-effort target-status name candidates per Bankai ticket status —
-// Jira workflows vary, so this matches by name rather than assuming ids.
-const STATUS_TO_JIRA: Record<TicketStatus, string[]> = {
-  "To Do": ["To Do", "Open", "Backlog"],
-  "In Progress": ["In Progress"],
-  "In Review": ["In Review", "Review"],
-  Done: ["Done", "Closed", "Resolved"],
-};
-
-interface JiraTransition {
-  id: string;
-  name: string;
-  to?: { name: string };
-}
-
-// Never throws — a status change in Bankai must not fail because the
-// linked Jira workflow doesn't have a matching transition available.
 export async function transitionIssue(creds: JiraCredentials, issueKey: string, targetStatus: TicketStatus): Promise<boolean> {
   try {
-    const listRes = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`);
-    if (!listRes.ok) return false;
-
-    const { transitions } = (await listRes.json()) as { transitions: JiraTransition[] };
-    const candidates = STATUS_TO_JIRA[targetStatus];
-    const match = transitions.find((t) => candidates.includes(t.to?.name ?? t.name));
-    if (!match) return false;
-
-    const doRes = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`, {
-      method: "POST",
-      body: JSON.stringify({ transition: { id: match.id } }),
-    });
-    return doRes.ok;
-  } catch {
-    return false;
-  }
+    const path = `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`;
+    const available = await jiraFetch(creds, path);
+    if (!available.ok) return false;
+    const body = await available.json() as { transitions?: { id: string; name: string }[] };
+    const aliases: Record<TicketStatus, string[]> = {
+      "To Do": ["To Do", "Open", "Backlog"], "In Progress": ["In Progress", "In Development"],
+      "In Review": ["In Review", "Review"], Done: ["Done", "Closed", "Resolved"],
+    };
+    const transition = body.transitions?.find((item) => aliases[targetStatus].includes(item.name));
+    if (!transition) return false;
+    return (await jiraFetch(creds, path, { method: "POST", body: JSON.stringify({ transition: { id: transition.id } }) })).ok;
+  } catch { return false; }
 }
 
-// Reverse of STATUS_TO_JIRA — maps a Jira status name back to the Bankai
-// status it corresponds to, so a sync run can pull status changes made
-// directly in Jira (not just ones Bankai pushed itself).
-const JIRA_STATUS_TO_BANKAI: Record<string, TicketStatus> = Object.fromEntries(
-  (Object.entries(STATUS_TO_JIRA) as [TicketStatus, string[]][]).flatMap(([bankaiStatus, jiraNames]) =>
-    jiraNames.map((name) => [name.toLowerCase(), bankaiStatus]),
-  ),
-);
-
-export interface IssueSnapshot {
-  exists: boolean;
-  // null if the issue exists but its current Jira status doesn't map to a
-  // known Bankai status (an unrecognized custom workflow state).
-  status: TicketStatus | null;
-}
-
-// Never throws — a stale/unreachable link must not fail the surrounding
-// sync request. Only an explicit 404 counts as "deleted"; any other
-// failure (network blip, auth hiccup) reports the issue as still existing
-// so a sync run never mistakenly recreates a duplicate over a transient
-// error.
-export async function getIssueSnapshot(creds: JiraCredentials, issueKey: string): Promise<IssueSnapshot> {
+export async function getIssueSnapshot(creds: JiraCredentials, issueKey: string): Promise<{ exists: boolean; status: TicketStatus | null }> {
   try {
-    const res = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=status`);
-    if (res.status === 404) return { exists: false, status: null };
-    if (!res.ok) return { exists: true, status: null };
+    const response = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=status`);
+    if (response.status === 404) return { exists: false, status: null };
+    if (!response.ok) return { exists: true, status: null };
+    const body = await response.json() as { fields?: { status?: { name?: string } } };
+    const statuses: Record<string, TicketStatus> = {
+      "to do": "To Do", open: "To Do", backlog: "To Do", "in progress": "In Progress",
+      "in development": "In Progress", "in review": "In Review", review: "In Review",
+      done: "Done", closed: "Done", resolved: "Done",
+    };
+    const name = body.fields?.status?.name?.toLowerCase();
+    return { exists: true, status: name ? statuses[name] ?? null : null };
+  } catch { return { exists: true, status: null }; }
+}
 
-    const body = (await res.json()) as { fields?: { status?: { name?: string } } };
-    const jiraStatusName = body.fields?.status?.name;
-    const status = jiraStatusName ? (JIRA_STATUS_TO_BANKAI[jiraStatusName.toLowerCase()] ?? null) : null;
-    return { exists: true, status };
-  } catch {
-    return { exists: true, status: null };
-  }
+export async function deleteIssue(creds: JiraCredentials, issueKey: string): Promise<boolean> {
+  try {
+    const response = await jiraFetch(creds, `/rest/api/3/issue/${encodeURIComponent(issueKey)}`, { method: "DELETE" });
+    return response.ok || response.status === 404;
+  } catch { return false; }
 }
 
 export interface UpdateIssueInput {

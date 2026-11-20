@@ -1,7 +1,6 @@
 import type { Request, Response } from "express";
 import { recordActivity } from "../lib/activity.js";
-import { getPullRequest, GithubApiError, repoFileExists } from "../lib/github.js";
-import { CI_WORKFLOW_PATH } from "../lib/ci-template.js";
+import { getPullRequest, GithubApiError } from "../lib/github.js";
 import { HttpError } from "../lib/http-error.js";
 import {
   addIssueToSprint,
@@ -14,11 +13,12 @@ import {
 } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { getRemediationProgress } from "../lib/queue.js";
-import { enqueueFixPrResume, enqueuePipelineRetry } from "../lib/queue.js";
+import { enqueueFixPrResume } from "../lib/queue.js";
 import { requireRole } from "../lib/roles.js";
 import { computeSlaStatus, ttrStatusLabel } from "../lib/sla.js";
-import { createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
-import type { Severity, TicketStatus } from "../lib/pipeline-types.js";
+import { createUserScopedSupabaseClient } from "../lib/supabase.js";
+import type { Severity } from "../lib/finding-types.js";
+import type { TicketStatus } from "../lib/ticket-status-sync.js";
 import { reconciledTicketStatus } from "../lib/ticket-status-sync.js";
 import {
   closeTicketsForResolvedFindings,
@@ -46,52 +46,6 @@ function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
 }
 
-async function recoverPendingCiSetup(projectId: string, tickets: TicketRow[]): Promise<void> {
-  const needsBranchResume = tickets.some(
-    (ticket) =>
-      ticket.ci_status === "pending_setup" ||
-      (!ticket.github_branch_name &&
-        !ticket.github_pr_number &&
-        ticket.github_pr_error === "Waiting for the Bankai CI bootstrap pull request to merge before creating a remediation branch."),
-  );
-  if (!needsBranchResume) return;
-
-  try {
-    const github = await loadGithubCreds(supabaseAdmin, projectId);
-    if (!github || !(await repoFileExists(github.creds, CI_WORKFLOW_PATH, github.defaultBranch))) return;
-
-    const { data: pending, error: pendingError } = await supabaseAdmin
-      .from("tickets")
-      .select("id, github_branch_name, github_pr_number, ci_status, github_pr_error")
-      .eq("project_id", projectId);
-    if (pendingError) {
-      logger.error({ err: pendingError, projectId }, "Could not load pending CI tickets for recovery");
-      return;
-    }
-
-    const resumable = (pending ?? []).filter(
-      (ticket) =>
-        ticket.ci_status === "pending_setup" ||
-        (!ticket.github_branch_name &&
-          !ticket.github_pr_number &&
-          ticket.github_pr_error === "Waiting for the Bankai CI bootstrap pull request to merge before creating a remediation branch."),
-    );
-
-    for (const ticket of resumable) {
-      if (ticket.github_branch_name && ticket.github_pr_number != null) {
-        // Legacy pending checks are retried only when the user asks through
-        // the existing recovery surface; the pipeline itself no longer
-        // creates or waits on a bootstrap PR.
-        await enqueuePipelineRetry({ ticketId: ticket.id as string, projectId });
-      } else {
-        await enqueueFixPrResume({ ticketId: ticket.id as string, projectId });
-      }
-    }
-  } catch (err) {
-    logger.error({ err, projectId }, "Could not recover pending CI verification tickets");
-  }
-}
-
 export async function listTickets(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
   await repairPrematureDoneTickets(supabase, req.project!.id);
@@ -108,7 +62,6 @@ export async function listTickets(req: Request, res: Response): Promise<void> {
   }
 
   const tickets = data as TicketRow[];
-  void recoverPendingCiSetup(req.project!.id, tickets);
 
   const progress = await getRemediationProgress(req.project!.id, tickets.map(t => t.id)).catch(() => []);
   res.status(200).json({ tickets: tickets.map((ticket, index) => ({
@@ -128,7 +81,7 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
   const { data: findings, error: findingsError } = await supabase
     .from("findings")
     .select(
-      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source, tickets ( id, status, github_pr_number, github_pr_state, ci_status )",
+      "id, fingerprint, title, service, severity, sla_due_date, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source, tickets ( id, status, github_pr_number, github_pr_state )",
     )
     .eq("project_id", project.id)
     .in("id", findingIds);
@@ -180,31 +133,8 @@ export async function createTickets(req: Request, res: Response): Promise<void> 
       skipped.push(finding.id);
       for (const ticket of tickets) {
         if (!ticket) continue;
-        if (ticket.github_pr_state === "merged" && ticket.ci_status === "passed") {
-          logger.info(
-            {
-              projectId: project.id,
-              findingId: finding.id,
-              ticketId: ticket.id,
-              status: ticket.status,
-              githubPrNumber: ticket.github_pr_number,
-            },
-            "createTickets skipped remediation: ticket already has a merged PR and passing CI",
-          );
-          continue;
-        }
-        if (ticket.github_pr_number != null && ticket.github_pr_state === "open") {
-          try {
-            await enqueuePipelineRetry({ ticketId: ticket.id, projectId: project.id, requestId: String(req.id) });
-            await supabase.from("tickets").update({ status: "In Review", ci_status: "queued", ci_error: null }).eq("id", ticket.id);
-            queued.push(finding.id);
-          } catch (err) {
-            logger.error({ err, ticketId: ticket.id, projectId: project.id }, "Could not enqueue pipeline verification for assigned ticket");
-            await supabase.from("tickets").update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." }).eq("id", ticket.id);
-            failed.push(finding.id);
-          }
-          continue;
-        }
+        if (ticket.github_pr_state === "merged") continue;
+        if (ticket.github_pr_number != null && ticket.github_pr_state === "open") { skipped.push(finding.id); continue; }
         if (ticket.github_pr_number != null) {
           await supabase.from("tickets").update({ github_pr_error: "The previous pull request is closed. Reopen it or create a fresh ticket before retrying remediation." }).eq("id", ticket.id);
           failed.push(finding.id);
@@ -334,7 +264,7 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
   const { data: rows, error } = await supabase
     .from("tickets")
     .select(
-      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, github_pr_number, github_pr_state, ci_status, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source )",
+      "id, key, title, service, severity, status, due_date, jira_issue_key, github_branch_name, github_pr_number, github_pr_state, finding_id, findings ( fingerprint, external_id, rationale, cvss_score, cwe, component, file_path, finding_type, source_status, date_found, description, fix_available, source_url, environment, cves, affected_packages, current_versions, fixed_versions, recommendations, remediation_guidance, commit_sha, line_start, line_end, source )",
     )
     .eq("project_id", project.id);
 
@@ -363,7 +293,6 @@ export async function syncTickets(req: Request, res: Response): Promise<void> {
           githubBranchName: row.github_branch_name,
           githubPrNumber: row.github_pr_number,
           githubPrState: row.github_pr_state,
-          ciStatus: row.ci_status,
         });
         const statusColumns = nextStatus !== row.status ? { status: nextStatus } : null;
         if (openPrTickets.has(row.id) && snapshot.status !== nextStatus) {
@@ -512,7 +441,7 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   const { data: current, error: loadError } = await supabase
     .from("tickets")
     .select(
-      "id, key, github_pr_number, github_pr_state, github_branch_name, ci_status, jira_issue_key, findings ( fingerprint, cwe, file_path, bucket, source )",
+      "id, key, github_pr_number, github_pr_state, github_branch_name, jira_issue_key, findings ( fingerprint, cwe, file_path, bucket, source )",
     )
     .eq("id", req.params.ticketId)
     .eq("project_id", req.project!.id)
@@ -539,11 +468,11 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   // Manual PATCH must not close a ticket that still has open
   // work — use reopenTicket to go the other direction.
   if (status === "Done") {
-    const resolvedSignal = current.github_pr_state === "merged" && current.ci_status === "passed";
+    const resolvedSignal = current.github_pr_state === "merged";
     if (!resolvedSignal) {
       throw new HttpError(
         422,
-        "An automated ticket can only be marked Done after its fix pull request has merged and verification has passed.",
+        "An automated ticket can only be marked Done after its fix pull request has merged.",
       );
     }
   }
@@ -567,19 +496,6 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   }
 
   const ticketRow = data as TicketRow;
-
-  if (status === "In Progress" && ticketRow.github_pr_number != null && ticketRow.github_pr_state === "open") {
-    try {
-      await enqueuePipelineRetry({ ticketId: ticketRow.id, projectId: req.project!.id });
-      await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketRow.id);
-    } catch (err) {
-      logger.error({ err, ticketId: ticketRow.id, projectId: req.project!.id }, "Could not enqueue CI after ticket assignment");
-      await supabase
-        .from("tickets")
-        .update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." })
-        .eq("id", ticketRow.id);
-    }
-  }
 
   if (status === "In Progress" && ticketRow.github_pr_number == null) {
     await maybeEnqueueFixPrJob(ticketRow.id, req.project!.id, finding?.source ?? null);
@@ -608,45 +524,6 @@ export async function reopenTicketHandler(req: Request, res: Response): Promise<
   res.status(200).json({ ticket: toPublicTicket(ticketRow) });
 }
 
-// Manual escape hatch for a ticket whose CI verification is stuck — e.g. it
-// failed before the repo's GitHub token had the right permissions. The ticket
-// list also best-effort recovers legacy pending_setup tickets when a workflow
-// is present, but this keeps a user-controlled retry available.
-export async function retryTicketPipeline(req: Request, res: Response): Promise<void> {
-  requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
-  const supabase = userScopedClient(req);
-
-  const { data, error } = await supabase
-    .from("tickets")
-    .update({ ci_status: null, ci_error: null, ci_run_url: null })
-    .eq("id", req.params.ticketId)
-    .eq("project_id", req.project!.id)
-    .select("id, github_branch_name, github_pr_number")
-    .maybeSingle();
-
-  if (error) {
-    throw new HttpError(500, "Could not retry this ticket's verification pipeline.");
-  }
-  if (!data) {
-    throw new HttpError(404, "Ticket not found");
-  }
-  if (data.github_branch_name && data.github_pr_number != null) {
-    const job = await enqueuePipelineRetry({ ticketId: data.id, projectId: req.project!.id, requestId: String(req.id) });
-    logger.info(
-      { ticketId: data.id, projectId: req.project!.id, jobId: job.id ?? null },
-      "Enqueued manual CI pipeline retry",
-    );
-  } else {
-    const job = await enqueueFixPrResume({ ticketId: data.id, projectId: req.project!.id, requestId: String(req.id) });
-    logger.info(
-      { ticketId: data.id, projectId: req.project!.id, jobId: job.id ?? null },
-      "Enqueued remediation resume from manual CI retry",
-    );
-  }
-
-  res.status(202).json({ queued: true });
-}
-
 // Manual escape hatch for tickets where Bankai created the remediation branch
 // but Gemini/fix generation failed before a pull request existed.
 export async function retryTicketFix(req: Request, res: Response): Promise<void> {
@@ -670,7 +547,7 @@ export async function retryTicketFix(req: Request, res: Response): Promise<void>
     throw new HttpError(422, "This ticket does not have a remediation branch yet.");
   }
   if (data.github_pr_number != null) {
-    throw new HttpError(422, "This ticket already has a pull request. Retry the CI pipeline instead.");
+    throw new HttpError(422, "This ticket already has a pull request. Review it in GitHub.");
   }
 
   const { error: updateError } = await supabase
@@ -678,9 +555,6 @@ export async function retryTicketFix(req: Request, res: Response): Promise<void>
     .update({
       status: "In Progress",
       github_pr_error: null,
-      ci_status: null,
-      ci_error: null,
-      ci_run_url: null,
     })
     .eq("id", data.id);
   if (updateError) {

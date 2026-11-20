@@ -748,7 +748,7 @@ export default function Settings() {
               <div className="settings-jira-error" style={{ marginTop: 12, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
                 Auto-rescan on push and PR-merge ticket updates aren't set up — this token couldn't create a webhook
                 automatically. Add one manually in the repo's Settings → Webhooks: payload URL <code>{github.webhookUrl}</code>,
-                content type <code>application/json</code>, events <code>push</code>, <code>pull_request</code>, and <code>workflow_run</code>
+                content type <code>application/json</code>, events <code>push</code> and <code>pull_request</code>
                 {justConnectedWebhookSecret ? (
                   <>
                     , and secret <code>{justConnectedWebhookSecret}</code> (shown once — reconnect GitHub to generate a
@@ -786,9 +786,13 @@ export default function Settings() {
             {scan && (
               <div className="ws-card-hint" style={{ marginTop: 12 }}>
                 {scan.status === 'Queued' && 'Scan queued — waiting for the next available worker…'}
-                {scan.status === 'Processing' && 'Scanning the repository with AI — this can take a few minutes for larger repos…'}
+                {scan.status === 'Processing' && 'Scanning the repository with Bankai scanners — this can take a few minutes for larger repos…'}
                 {scan.status === 'Done' &&
                   `Scan complete: ${scan.findingCount ?? 0} finding(s) · ${scan.newDeltaCount} new · ${scan.changedCount} changed · ${scan.resolvedCount} resolved.`}
+                {scan.scannerRuns.length > 0 && (
+                  <div style={{ marginTop: 8 }}>Scanners: {scan.scannerRuns.map((run) => `${run.scanner} ${run.version} (${run.status}${run.status === 'complete' ? `, ${run.findings}` : run.reason ? `, ${run.reason}` : ''})`).join(' · ')}</div>
+                )}
+
                 {scan.status === 'Failed' && `Scan failed: ${scan.errorMessage ?? 'Unknown error.'}`}
               </div>
             )}
@@ -829,15 +833,13 @@ export default function Settings() {
           <form onSubmit={handleConnectGithub}>
             {githubError && <div className="settings-jira-error" role="alert">{githubError}</div>}
             <div className="ws-card-hint" style={{ marginBottom: 16 }}>
-              Connect a repository so Bankai can scan it with AI, populate AI Triage with findings and detailed
-              remediation guidance, and open a remediation branch for each one, verified by a CI pipeline before
-              you review it. If a webhook can be set up, new pushes are scanned automatically and pipeline results
-              come back in real time. Generate a{' '}
+              Connect a repository so Bankai can scan it with Trivy, Semgrep, Bandit, Gitleaks, OSV Scanner, npm audit,
+              and pip-audit, populate AI Triage with findings, and open remediation branches and pull requests.
+              Your team reviews and merges each pull request manually. Push webhooks can trigger scans automatically.
+              Generate a{' '}
               <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer">personal access token</a>{' '}
-              with: Contents (read/write), Pull requests (read/write), Actions (read/write — to run the verification
-              pipeline), Workflows (read/write — to add the pipeline file itself; this is separate from Contents),
-              and Webhooks (read/write, to enable auto-rescans and pipeline results). Classic tokens: use the
-              "repo" and "workflow" scopes together.
+              with: Contents (read/write), Pull requests (read/write), and Webhooks (read/write). Classic tokens need
+              the "repo" scope.
             </div>
             {!githubAccount?.connected && (
               <div className="ws-card-hint" style={{ marginBottom: 16 }}>

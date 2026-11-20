@@ -7,9 +7,9 @@ for (const required of ["label 'trusted-docker'", "cron('H H * * *')", "choices:
   'bankai-e2e-github-token', 'junit ', 'archiveArtifacts']) {
   if (!pipeline.includes(required)) throw new Error(`missing E2E pipeline control: ${required}`);
 }
-for (const required of ['Bankai API reaches Redis', 'Quincy health and token rejection',
+for (const required of ['Bankai API reaches Redis',
   'CloudFront serves the frontend', 'Supabase-backed login', 'GitHub webhook rejects',
-  'worker completes it', 'Seeded vulnerability', 'Quincy remediation',
+  'worker completes it', 'Seeded vulnerability', 'Bankai opens a remediation PR',
   'Cleanup isolated E2E resources']) {
   if (!runner.includes(required)) throw new Error(`missing E2E contract: ${required}`);
 }

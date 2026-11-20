@@ -292,7 +292,7 @@ export async function scanGithubRepo(req: Request, res: Response): Promise<void>
   }
 
   await enqueueRepoScan(
-    { scanId: scan.id, projectId: project.id, triggerType: "manual", baseSha: null, headSha: null },
+    { scanId: scan.id, projectId: project.id, triggerType: "manual" },
     `manual-${scan.id}`,
   );
 

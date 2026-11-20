@@ -24,7 +24,7 @@ interface ScanProjectRow {
 // why every query below is manually scoped to project_id: there's no RLS
 // safety net doing that for us the way there is in every HTTP controller.
 export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<void> {
-  const { scanId, projectId, baseSha, headSha } = job.data;
+  const { scanId, projectId, headSha } = job.data;
   const supabase = supabaseAdmin;
 
   // Guards against BullMQ's stalled-job redelivery (e.g. the worker process
@@ -86,8 +86,7 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
       github,
       slaPolicyDays,
       defaultService,
-      baseSha,
-      headSha,
+      ...(headSha ? { headSha } : {}),
     });
 
     const { error: updateError } = await supabase
@@ -95,13 +94,14 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
       .update({
         status: "Done",
         commit_sha: result.commitSha,
-        base_commit_sha: baseSha,
         row_count: result.filesScanned,
         finding_count: result.findingCount,
         new_delta_count: result.counts.newDelta,
         changed_count: result.counts.changed,
         in_progress_count: result.counts.inProgress,
         resolved_count: result.counts.resolved,
+        scanner_runs: result.scanners,
+        scan_complete: true,
       })
       .eq("id", scanId);
     if (updateError) {

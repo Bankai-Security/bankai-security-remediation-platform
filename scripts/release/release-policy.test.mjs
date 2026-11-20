@@ -19,12 +19,11 @@ function releaseFixture() {
   const config = { account, region: 'ap-south-1', datadogSite: 'datadoghq.com' };
   const values = {
     BackendRepositoryUri: `${account}.dkr.ecr.ap-south-1.amazonaws.com/bankai/nonprod/backend`,
-    QuincyRepositoryUri: `${account}.dkr.ecr.ap-south-1.amazonaws.com/bankai/nonprod/quincy`,
     JenkinsEcrPublishingRoleArnDD79E21B: `arn:aws:iam::${account}:role/bankai-nonprod-ecr-publishing`,
     JenkinsNonprodDeploymentRoleArn96BF7C8A: `arn:aws:iam::${account}:role/bankai-nonprod-deployment`,
     JenkinsCloudFormationDeploymentRoleArn8FB4218E: `arn:aws:iam::${account}:role/bankai-nonprod-cloudformation-deployment`,
     EcsClusterName: 'bankai-nonprod', ApiServiceName: 'bankai-nonprod-api',
-    WorkerServiceName: 'bankai-nonprod-worker', QuincyServiceName: 'bankai-nonprod-quincy',
+    WorkerServiceName: 'bankai-nonprod-worker',
     FrontendBucketName: 'bankai-nonprod-frontend', FrontendDistributionId: 'DISTRIBUTION',
   };
   const stack = { StackName: 'Bankai-nonprod-Foundation', StackStatus: 'UPDATE_COMPLETE',
@@ -92,78 +91,6 @@ test('permits ECS task-definition revisions but still rejects service and storag
   }
 });
 
-test('reviews only explicit mutable CodeBuild and CDK metadata properties', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bankai-conditional-'));
-  const project = {
-    Action: 'Modify', LogicalResourceId: 'QuincyRemediationProject6B5259BA',
-    PhysicalResourceId: 'bankai-nonprod-quincy-remediation',
-    ResourceType: 'AWS::CodeBuild::Project', Replacement: 'Conditional', Scope: ['Properties'],
-    Details: ['Image', 'Type', 'ComputeType', 'EnvironmentVariables/1/Value'].map(path => ({
-      Evaluation: 'Static', ChangeSource: 'DirectModification', Target: {
-        Attribute: 'Properties', Name: 'Environment', RequiresRecreation: 'Conditionally',
-        Path: `/Properties/Environment/${path}`, AttributeChangeType: 'Modify',
-      },
-    })),
-  };
-  const metadata = { ...project, ResourceType: 'AWS::CDK::Metadata', LogicalResourceId: 'CDKMetadata',
-    Details: [{ ...project.Details[0], Target: { ...project.Details[0].Target, Name: 'Analytics', Path: '/Properties/Analytics' } }] };
-  const cases = [
-    ['environment update', project, true], ['analytics update', metadata, true],
-    ['actual replacement', { ...project, Replacement: 'True' }, false],
-    ['replacement policy', { ...project, PolicyAction: 'ReplaceAndDelete' }, false],
-    ['missing details', { ...project, Details: [] }, false],
-    ['missing scope', { ...project, Scope: [] }, false],
-    ['other project', { ...project, PhysicalResourceId: 'another-project' }, false],
-    ['removal', { ...project, Action: 'Remove' }, false],
-    ['dynamic reference', { ...project, Details: [{ ...project.Details[0], Evaluation: 'Dynamic' }] }, false],
-    ...['Name', 'ServiceRole', 'Environment/PrivilegedMode'].map(path => [path, { ...project,
-      Details: [{ ...project.Details[0], Target: { ...project.Details[0].Target, Path: `/Properties/${path}` } }] }, false]),
-    ['mixed unsafe update', { ...project, Details: [...project.Details, { ...project.Details[0],
-      Target: { ...project.Details[0].Target, Path: '/Properties/Name' } }] }, false],
-    ['recreation required', { ...metadata, Details: [{ ...metadata.Details[0],
-      Target: { ...metadata.Details[0].Target, RequiresRecreation: 'Always' } }] }, false],
-  ];
-  for (const [name, change, accepted] of cases) {
-    writeFileSync(join(dir, 'input.json'), JSON.stringify({ Status: 'CREATE_COMPLETE', ExecutionStatus: 'AVAILABLE',
-      Changes: [{ ResourceChange: change }] }));
-    const result = spawnSync(process.execPath, [review, join(dir, 'input.json'), join(dir, 'output.json')]);
-    assert.equal(result.status === 0, accepted, name);
-  }
-});
-
-test('permits only bounded release metadata additions to the Quincy CodeBuild project', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bankai-codebuild-metadata-'));
-  const beforeBuildSpec = 'docker run -e GEMINI_API_KEY -e SANDBOX_BACKEND=docker image';
-  const afterBuildSpec = 'docker run -e GEMINI_API_KEY -e DD_ENV -e DD_SERVICE -e DD_VERSION -e GIT_SHA -e DEPLOYMENT_ID -e JENKINS_BUILD -e SANDBOX_BACKEND=docker image';
-  const detail = (name, value, index) => ({ Evaluation: 'Static', ChangeSource: 'DirectModification', Target: {
-    Attribute: 'Properties', Name: 'Environment', RequiresRecreation: 'Conditionally',
-    Path: `/Properties/Environment/EnvironmentVariables/${index}`, AttributeChangeType: 'Add',
-    AfterValue: JSON.stringify({ Name: name, Type: 'PLAINTEXT', Value: value }),
-  } });
-  const project = details => ({ Action: 'Modify', LogicalResourceId: 'QuincyRemediationProject6B5259BA',
-    PhysicalResourceId: 'bankai-nonprod-quincy-remediation', ResourceType: 'AWS::CodeBuild::Project',
-    Replacement: 'Conditional', Scope: ['Properties'], Details: details });
-  const buildSpec = { Evaluation: 'Static', ChangeSource: 'DirectModification', Target: {
-    Attribute: 'Properties', Name: 'Source', RequiresRecreation: 'Conditionally',
-    Path: '/Properties/Source/BuildSpec', AttributeChangeType: 'Modify', BeforeValue: beforeBuildSpec, AfterValue: afterBuildSpec,
-  } };
-  const safe = [detail('DD_ENV', 'nonprod', 2), detail('DD_SERVICE', 'quincy-codebuild', 3),
-    detail('DD_VERSION', 'a'.repeat(40), 4), detail('GIT_SHA', 'b'.repeat(40), 5),
-    detail('DEPLOYMENT_ID', 'bankai-abcdef123456-build-19', 6), detail('JENKINS_BUILD', 19, 7), buildSpec];
-  const cases = [
-    ['bounded metadata', project(safe), true],
-    ['secret variable', project([detail('API_TOKEN', 'secret', 8)]), false],
-    ['wrong environment', project([detail('DD_ENV', 'production', 2)]), false],
-    ['arbitrary buildspec', project([{ ...buildSpec, Target: { ...buildSpec.Target, AfterValue: `${afterBuildSpec}; curl attacker` } }]), false],
-  ];
-  for (const [name, change, accepted] of cases) {
-    writeFileSync(join(dir, 'input.json'), JSON.stringify({ Status: 'CREATE_COMPLETE', ExecutionStatus: 'AVAILABLE',
-      Changes: [{ ResourceChange: change }] }));
-    const result = spawnSync(process.execPath, [review, join(dir, 'input.json'), join(dir, 'output.json')]);
-    assert.equal(result.status === 0, accepted, name);
-  }
-});
-
 test('approves additions and in-place modifications', () => {
   const directory = mkdtempSync(join(tmpdir(), 'bankai-release-'));
   const input = join(directory, 'change-set.json');
@@ -197,10 +124,9 @@ test('writes the required traceability manifest and artifact checksum', () => {
   const template = join(directory, 'template.json');
   const smoke = join(directory, 'smoke.json');
   writeFileSync(template, '{"Resources":{}}');
-  writeFileSync(smoke, JSON.stringify({ mode: 'smoke', release: { deploymentId: 'bankai-test-7', gitSha: 'a'.repeat(40), quincyGitSha: 'b'.repeat(40), jenkinsBuild: 'build-7' }, results: requiredSmokeChecks.map(name => ({ name, error: null })) }));
+  writeFileSync(smoke, JSON.stringify({ mode: 'smoke', release: { deploymentId: 'bankai-test-7', gitSha: 'a'.repeat(40), jenkinsBuild: 'build-7' }, results: requiredSmokeChecks.map(name => ({ name, error: null })) }));
   execFileSync(process.execPath, [manifest, output], { env: { ...process.env,
-    BANKAI_SHA: 'a'.repeat(40), QUINCY_SHA: 'b'.repeat(40), BANKAI_IMAGE_DIGEST: `sha256:${'c'.repeat(64)}`,
-    QUINCY_IMAGE_DIGEST: `sha256:${'d'.repeat(64)}`, FRONTEND_ARTIFACT: artifact, JENKINS_BUILD: 'build-7',
+    BANKAI_SHA: 'a'.repeat(40), BANKAI_IMAGE_DIGEST: `sha256:${'c'.repeat(64)}`,
     CDK_SHA: 'a'.repeat(40), CHANGE_SET_ID: 'cs-7', AWS_ACCOUNT_ID: '123456789012', AWS_REGION: 'ap-south-1',
     RELEASE_TIMESTAMP: '2026-09-21T00:00:00Z', RELEASE_ID: 'bankai-test-7',
     INFRASTRUCTURE_TEMPLATE: template, SMOKE_RESULT: smoke,

@@ -23,8 +23,6 @@ export interface JenkinsFoundationProps {
   readonly vpc: ec2.IVpc;
   readonly hostedZone: route53.IHostedZone;
   readonly backendRepository: ecr.IRepository;
-  readonly quincyRepository: ecr.IRepository;
-  readonly quincySecurityGroup: ec2.ISecurityGroup;
   readonly frontendBucket: s3.IBucket;
 }
 
@@ -199,7 +197,6 @@ export class JenkinsFoundation extends Construct {
 
     const publishingRole = assumptionRole(this, 'EcrPublishingRole', 'bankai-nonprod-ecr-publishing', trustedAgentRole);
     props.backendRepository.grantPullPush(publishingRole);
-    props.quincyRepository.grantPullPush(publishingRole);
     const nonprodDeploymentRole = assumptionRole(this, 'NonprodDeploymentRole', 'bankai-nonprod-deployment', trustedAgentRole);
     nonprodDeploymentRole.addToPolicy(new iam.PolicyStatement({
       actions: ['ecs:DescribeServices', 'ecs:DescribeTaskDefinition', 'ecs:UpdateService'], resources: ['*'],
@@ -265,9 +262,6 @@ export class JenkinsFoundation extends Construct {
     const generalFleet = makeAgentFleet('GeneralAgentFleet', prValidationRole, config.jenkinsGeneralAgentMax, false, 'linux');
     const prContainerFleet = makeAgentFleet('PrContainerAgentFleet', prValidationRole, config.jenkinsPrContainerAgentMax, true, 'pr-container');
     const privilegedFleet = makeAgentFleet('PrivilegedAgentFleet', trustedAgentRole, config.jenkinsPrivilegedAgentMax, true, 'trusted-docker');
-    // Use the trusted fleet's own group, not the shared agent group that also
-    // includes untrusted PR workers.
-    props.quincySecurityGroup.addIngressRule(privilegedFleet.connections.securityGroups[0], ec2.Port.tcp(8000), 'Trusted release agent to Quincy health and authentication checks');
     const agentSecurityGroup = new ec2.SecurityGroup(this, 'AgentSecurityGroup', {
       vpc: props.vpc, allowAllOutbound: true, description: 'Ephemeral Jenkins agents; controller SSH only',
     });
@@ -305,7 +299,7 @@ export class JenkinsFoundation extends Construct {
         `-e JENKINS_URL=https://${config.jenkinsDomainName}/ ` +
         `-e GITHUB_ORGANIZATION=${config.githubOrganization} -e GITHUB_APP_ID=${config.githubAppId} ` +
         `-e BANKAI_REPOSITORY=${config.bankaiRepository} ` +
-        `-e QUINCY_REPOSITORY=${config.quincyRepository} -e GENERAL_AGENT_FLEET=${generalFleet.autoScalingGroupName} ` +
+        `-e GENERAL_AGENT_FLEET=${generalFleet.autoScalingGroupName} ` +
         `-e PR_CONTAINER_AGENT_FLEET=${prContainerFleet.autoScalingGroupName} ` +
         `-e PRIVILEGED_AGENT_FLEET=${privilegedFleet.autoScalingGroupName} -e GENERAL_AGENT_MAX=${config.jenkinsGeneralAgentMax} ` +
         `-e PR_CONTAINER_AGENT_MAX=${config.jenkinsPrContainerAgentMax} ` +

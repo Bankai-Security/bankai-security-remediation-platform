@@ -1,4 +1,4 @@
-import type { Severity, SlaStatus } from "./pipeline-types.js";
+import type { Severity, SlaStatus } from "./finding-types.js";
 
 export type SlaPolicyDays = Record<Severity, number>;
 

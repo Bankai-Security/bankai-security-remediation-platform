@@ -10,8 +10,8 @@ export default function Terms() {
       <p>
         These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of the hosted Bankai
         service (&ldquo;Bankai&rdquo;, &ldquo;the Service&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) — a security remediation platform that
-        turns vulnerability scan output into triaged findings, tickets, and CI-verified pull
-        requests. By creating an account or using the Service, you agree to these Terms and to the{' '}
+        turns vulnerability scan output into triaged findings, tickets, and remediation pull
+        requests for human review. By creating an account or using the Service, you agree to these Terms and to the{' '}
         <Link to="/privacy">Privacy Policy</Link>. If you are using Bankai on behalf of an
         organization, you represent that you have authority to bind that organization to these
         Terms.
@@ -21,8 +21,8 @@ export default function Terms() {
       <p>
         Bankai ingests security findings (from uploaded scan reports or AI-assisted repository
         scans), helps you triage them, creates tickets, and — when you connect GitHub — opens
-        remediation branches and pull requests with AI-generated fix proposals, optionally verified
-        by a CI pipeline. Bankai can also synchronize tickets with a connected Jira project.
+        remediation branches and pull requests with AI-generated fix proposals for review and
+        manual merge by your team. Bankai can also synchronize tickets with a connected Jira project.
       </p>
 
       <h2>3. Your account</h2>

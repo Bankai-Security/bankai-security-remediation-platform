@@ -3,7 +3,8 @@ import { HttpError } from "../lib/http-error.js";
 import { requireRole } from "../lib/roles.js";
 import { computeSlaStatus, type SlaPolicyDays } from "../lib/sla.js";
 import { createUserScopedSupabaseClient } from "../lib/supabase.js";
-import type { Bucket, Severity, TicketStatus } from "../lib/pipeline-types.js";
+import type { Bucket, Severity } from "../lib/finding-types.js";
+import type { TicketStatus } from "../lib/ticket-status-sync.js";
 import { repairPrematureDoneTickets } from "../lib/ticketing.js";
 import type { UpdateFindingInput } from "../schemas/finding.schema.js";
 

@@ -18,16 +18,12 @@ export interface EnvironmentConfig {
   readonly frontendCertificateArn: string;
   readonly frontendWebAclArn: string;
   readonly backendImageDigest: string;
-  readonly quincyImageDigest: string;
   readonly apiDesiredCount: number;
   readonly apiCpu: number;
   readonly apiMemoryMiB: number;
   readonly workerDesiredCount: number;
   readonly workerCpu: number;
   readonly workerMemoryMiB: number;
-  readonly quincyDesiredCount: number;
-  readonly quincyCpu: number;
-  readonly quincyMemoryMiB: number;
   readonly logRetentionDays: number;
   readonly ecrRetainedImageCount: number;
   readonly redisNodeType: string;
@@ -48,7 +44,6 @@ export interface EnvironmentConfig {
   readonly githubAppId: string;
   readonly jenkinsAgentHostPublicKey: string;
   readonly bankaiRepository: string;
-  readonly quincyRepository: string;
   readonly datadogSite: string;
   readonly jenkinsTrustedRoleArn: string;
 }
@@ -85,16 +80,12 @@ export function loadEnvironmentConfig(node: Node): EnvironmentConfig {
     frontendCertificateArn: override<string>('frontendCertificateArn'),
     frontendWebAclArn: override<string>('frontendWebAclArn'),
     backendImageDigest: override<string>('backendImageDigest'),
-    quincyImageDigest: override<string>('quincyImageDigest'),
     apiDesiredCount: override<number>('apiDesiredCount'),
     apiCpu: override<number>('apiCpu'),
     apiMemoryMiB: override<number>('apiMemoryMiB'),
     workerDesiredCount: override<number>('workerDesiredCount'),
     workerCpu: override<number>('workerCpu'),
     workerMemoryMiB: override<number>('workerMemoryMiB'),
-    quincyDesiredCount: override<number>('quincyDesiredCount'),
-    quincyCpu: override<number>('quincyCpu'),
-    quincyMemoryMiB: override<number>('quincyMemoryMiB'),
     logRetentionDays: override<number>('logRetentionDays'),
     ecrRetainedImageCount: override<number>('ecrRetainedImageCount'),
     redisNodeType: override<string>('redisNodeType'),
@@ -115,14 +106,13 @@ export function loadEnvironmentConfig(node: Node): EnvironmentConfig {
     githubAppId: override<string>('githubAppId'),
     jenkinsAgentHostPublicKey: override<string>('jenkinsAgentHostPublicKey'),
     bankaiRepository: override<string>('bankaiRepository'),
-    quincyRepository: override<string>('quincyRepository'),
     datadogSite: override<string>('datadogSite'),
     jenkinsTrustedRoleArn: override<string>('jenkinsTrustedRoleArn'),
   };
 
   if (!accountPattern.test(config.account)) throw new Error('account must be a 12-digit AWS account ID');
-  if (!digestPattern.test(config.backendImageDigest) || !digestPattern.test(config.quincyImageDigest)) {
-    throw new Error('backendImageDigest and quincyImageDigest must be sha256 digests, never tags');
+  if (!digestPattern.test(config.backendImageDigest)) {
+    throw new Error('backendImageDigest must be a sha256 digest, never a tag');
   }
   for (const [name, value] of [
     ['natGateways', config.natGateways],
@@ -132,9 +122,6 @@ export function loadEnvironmentConfig(node: Node): EnvironmentConfig {
     ['workerDesiredCount', config.workerDesiredCount],
     ['workerCpu', config.workerCpu],
     ['workerMemoryMiB', config.workerMemoryMiB],
-    ['quincyDesiredCount', config.quincyDesiredCount],
-    ['quincyCpu', config.quincyCpu],
-    ['quincyMemoryMiB', config.quincyMemoryMiB],
     ['logRetentionDays', config.logRetentionDays],
     ['ecrRetainedImageCount', config.ecrRetainedImageCount],
     ['redisReplicaCount', config.redisReplicaCount],

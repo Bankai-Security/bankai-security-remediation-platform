@@ -7,16 +7,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-test('smoke runner verifies Redis, Quincy rejection, CloudFront, and cleanup', async () => {
+test('smoke runner verifies Bankai health, CloudFront, and cleanup', async () => {
   const server = createServer((request, response) => {
     if (request.url === '/healthz') {
       response.setHeader('access-control-allow-origin', `http://127.0.0.1:${server.address().port}`);
-      return send(response, 200, { status: 'ok', redis: 'PONG', quincyConfigured: true, queues: { repoScan: {}, fixPr: {}, pipeline: {} } });
-    }
-    if (request.url === '/health') return send(response, 200, { status: 'ok' });
-    if (request.url === '/triage/scan') {
-      response.setHeader('x-request-id', request.headers['x-request-id']);
-      return send(response, 401, { detail: 'invalid token' });
+      return send(response, 200, { status: 'ok', redis: 'PONG', queues: { repoScan: {}, fixPr: {} } });
     }
     if (request.url === '/assets/app.js') { response.writeHead(200, { 'content-type': 'application/javascript' }); return response.end('const api="127.0.0.1";'); }
     if (request.url === '/runtime-config.js') {
@@ -29,14 +24,14 @@ test('smoke runner verifies Redis, Quincy rejection, CloudFront, and cleanup', a
   const port = server.address().port;
   const directory = mkdtempSync(join(tmpdir(), 'bankai-e2e-test-'));
   const runner = fileURLToPath(new URL('./run.mjs', import.meta.url));
-  const child = spawn(process.execPath, [runner, '--mode', 'smoke'], { cwd: directory, env: { ...process.env, E2E_ALLOW_LOCAL: '1', E2E_API_URL: `http://127.0.0.1:${port}`, E2E_FRONTEND_URL: `http://127.0.0.1:${port}`, E2E_QUINCY_URL: `http://127.0.0.1:${port}` } });
+  const child = spawn(process.execPath, [runner, '--mode', 'smoke'], { cwd: directory, env: { ...process.env, E2E_ALLOW_LOCAL: '1', E2E_API_URL: `http://127.0.0.1:${port}`, E2E_FRONTEND_URL: `http://127.0.0.1:${port}` } });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   const status = await new Promise((resolveExit) => child.on('exit', resolveExit));
   server.close();
   assert.equal(status, 0, stderr);
   const report = readFileSync(join(directory, 'reports/e2e/junit.xml'), 'utf8');
-  assert.match(report, /tests="4" failures="0"/);
+  assert.match(report, /tests="3" failures="0"/);
   assert.match(report, /Cleanup isolated E2E resources/);
 });
 
@@ -44,7 +39,6 @@ test('runner refuses production-looking targets before making requests', async (
   const runner = fileURLToPath(new URL('./run.mjs', import.meta.url));
   const child = spawn(process.execPath, [runner, '--mode', 'smoke'], { env: { ...process.env,
     E2E_API_URL: 'https://api.bankaisecurity.com', E2E_FRONTEND_URL: 'https://app.bankaisecurity.com',
-    E2E_QUINCY_URL: 'http://quincy.production.bankai.local:8000',
   } });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });

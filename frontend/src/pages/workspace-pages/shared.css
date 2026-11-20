@@ -261,7 +261,7 @@
   color: var(--color-text-muted);
 }
 
-/* Circular icon buttons (Jira/GitHub deep links, CI retry) */
+/* Circular icon buttons (Jira/GitHub deep links, remediation actions) */
 
 .ws-icon-btn {
   display: inline-flex;
@@ -349,17 +349,6 @@
 .ws-icon-btn--github.ws-icon-btn--low-confidence:hover {
   opacity: 0.8;
   color: #C2410C;
-}
-
-/* CI status circle */
-
-.ci-status-circle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  flex-shrink: 0;
-  text-decoration: none;
 }
 
 @keyframes ws-spin {

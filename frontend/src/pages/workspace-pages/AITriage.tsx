@@ -180,7 +180,7 @@ export default function AITriage() {
       const { findings: refreshed } = await listFindings(project.id);
       setFindings(refreshed);
       setSelected({});
-      setActionSuccess(`${result.queued.length} ticket(s) assigned to remediation. Quincy validation, pull request creation, and CI will run automatically.`);
+      setActionSuccess(`${result.queued.length} ticket(s) assigned to remediation. Bankai will generate a remediation branch and pull request for manual review.`);
       if (result.failed.length > 0) {
         setActionError(`${result.failed.length} ticket(s) could not enter the queue. Open Tickets to see the stored error and retry.`);
       }

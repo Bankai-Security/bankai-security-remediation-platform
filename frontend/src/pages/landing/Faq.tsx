@@ -8,16 +8,16 @@ const QUESTIONS = [
     a: 'Any scanner that exports CSV. Column aliasing normalizes differing vendor schemas (severity, CVSS, CWE, CVEs, affected and fixed versions) into one canonical finding shape. You can also run AI repo scans directly against a connected GitHub repository, or import existing Jira issues as findings.',
   },
   {
-    q: 'How are AI fixes verified before anyone reviews them?',
-    a: 'Bankai can dispatch a verification workflow that your repository already configures. It does not create or merge a CI setup branch. Local Jenkins companion verification is being built as an optional execution path; skipping it is never shown as a pass.',
+    q: 'How are AI fixes reviewed?',
+    a: 'Bankai creates a remediation branch and pull request. Your team reviews the diff and merges it manually in GitHub.',
   },
   {
-    q: 'What happens when CI fails on a generated fix?',
-    a: 'Bankai parses the build and test logs, generates a corrected fix with that failure context, and retries, up to a bounded number of attempts. If it still fails, the ticket is handed to a human with the full attempt history attached.',
+    q: 'Can Bankai merge a generated fix?',
+    a: 'No. Bankai prepares the branch and pull request; your team reviews and merges the change manually.',
   },
   {
     q: 'Do I need Jira?',
-    a: 'No. Jira is optional per project. Without it, tickets live entirely in Bankai with the same SLA tracking, CI status, and activity trail. With it, tickets become real Jira issues kept in sync bidirectionally.',
+    a: 'No. Jira is optional per project. Without it, tickets live entirely in Bankai with the same SLA tracking and activity trail. With it, tickets become real Jira issues kept in sync bidirectionally.',
   },
   {
     q: 'What does Bankai do with my code?',

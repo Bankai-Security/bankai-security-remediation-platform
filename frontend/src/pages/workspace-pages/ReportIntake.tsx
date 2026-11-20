@@ -192,7 +192,7 @@ export default function ReportIntake() {
           <div className="intake-card-sub" style={{ marginTop: 10, clear: 'both' }}>
             {intakeMethod === 'scan' ? (
               <>
-                Bankai scans your connected GitHub repository with AI, finds vulnerabilities, and populates AI Triage with detailed findings
+                Bankai scans your connected GitHub repository with multiple security scanners and populates AI Triage with findings
                 <br />
                 and remediation guidance for each one.
               </>
@@ -238,7 +238,7 @@ export default function ReportIntake() {
             {scan && (
               <div className="ws-card-hint" style={{ marginTop: 16 }}>
                 {scan.status === 'Queued' && 'Scan queued — waiting for the next available worker…'}
-                {scan.status === 'Processing' && 'Scanning the repository with AI — this can take a few minutes for larger repos…'}
+                {scan.status === 'Processing' && 'Scanning the repository with Bankai scanners — this can take a few minutes for larger repos…'}
                 {scan.status === 'Done' && (
                   <>
                     Scan complete: {scan.findingCount ?? 0} finding(s) · {scan.newDeltaCount} new · {scan.changedCount} changed ·{' '}
@@ -246,6 +246,9 @@ export default function ReportIntake() {
                   </>
                 )}
                 {scan.status === 'Failed' && `Scan failed: ${scan.errorMessage ?? 'Unknown error.'}`}
+                {scan.scannerRuns.length > 0 && (
+                  <div style={{ marginTop: 8 }}>Scanners: {scan.scannerRuns.map((run) => `${run.scanner} ${run.version} (${run.status}${run.status === 'complete' ? `, ${run.findings}` : run.reason ? `, ${run.reason}` : ''})`).join(' · ')}</div>
+                )}
               </div>
             )}
           </>

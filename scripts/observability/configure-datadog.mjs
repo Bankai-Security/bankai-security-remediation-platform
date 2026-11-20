@@ -116,12 +116,6 @@ const dashboards = [
     metricWidget('Retries', ['sum:bankai.queue.retries{env:$env,service:$service} by {queue}.as_count()']),
     metricWidget('Completion duration p50 p95 p99', ['p50:bankai.queue.completion_duration_ms{env:$env,service:$service} by {queue}', 'p95:bankai.queue.completion_duration_ms{env:$env,service:$service} by {queue}', 'p99:bankai.queue.completion_duration_ms{env:$env,service:$service} by {queue}']),
   ]),
-  dashboard('Bankai nonprod — Quincy', [
-    logWidget('Scan, remediation, and model failures', 'service:quincy @event:(quincy.scan.failed OR quincy.remediation.failed OR quincy.model.failed)'),
-    metricWidget('Quincy service health', ['avg:aws.ecs.service.running{clustername:bankai-nonprod,servicename:bankai-nonprod-quincy}']),
-    metricWidget('EFS capacity', ['max:aws.efs.storage_bytes{*} by {filesystemid}']),
-    note('CodeBuild failure widget pending the first observed aws.codebuild.* metric.'),
-  ]),
   dashboard('Bankai nonprod — Delivery', [
     metricWidget('Jenkins builds', ['sum:jenkins.job.started{*} by {job}.as_count()', 'sum:jenkins.job.completed{*} by {job,result}.as_count()']),
     metricWidget('Jenkins build duration', ['avg:jenkins.job.build_duration{*} by {job}']),
@@ -159,8 +153,8 @@ const monitor = (name, query, severity, condition, recovery, options = {}) => ({
 });
 
 // Thresholds are based on the three-day baseline collected by Jenkins build #10.
-// Deferred: queue depth/age (zero/no series), Quincy and CodeBuild (no bounded signal),
-// and EFS capacity (elastic storage with no approved capacity policy).
+// Deferred: queue depth/age (zero/no series) and EFS capacity (elastic storage
+// with no approved capacity policy).
 const monitors = [
   monitor(
     '[nonprod] Bankai API target 5xx',

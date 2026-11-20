@@ -13,35 +13,19 @@
   'docker stop bankai-redis' when you're done.
 
   -Ngrok exposes the backend (port 4000) publicly, which GitHub needs to
-  reach for push/pull_request/workflow_run webhooks (repo connect,
-  push-triggered rescans, the CI self-healing loop) and for the GitHub
-  OAuth callback. It's opt-in, not default, because it rewrites
-  backend\.env's BACKEND_PUBLIC_URL on every run: on a free ngrok account
-  the public URL is different each time (no reserved domain), so this
-  script updates it for you instead of you hand-pasting a new URL into
-  .env every session. It does NOT re-register webhooks for repos you
-  already connected in an earlier session - those still point at the old
-  ngrok URL until you reconnect the repo (or re-run the manual webhook
-  setup) from the app. It also does not touch your GitHub OAuth App's
-  callback URL on GitHub's side - update that by hand if it points at an
-  ngrok URL from a previous session. Requires ngrok on PATH and already
-  authenticated ('ngrok config add-authtoken ...') - see https://ngrok.com.
+  reach for push and pull_request webhooks and the GitHub OAuth callback.
+  It is opt-in because it rewrites backend\.env's BACKEND_PUBLIC_URL on
+  every run. Requires ngrok on PATH and already authenticated.
 
   Usage:
     .\dev.ps1                     # starts Redis (if needed) + backend API + worker + frontend
-    .\dev.ps1 -NoWorker           # skip the repo-scan worker and the Redis check
-    .\dev.ps1 -Ngrok              # also tunnel the backend and refresh BACKEND_PUBLIC_URL in backend\.env
+    .\dev.ps1 -NoWorker           # skip the repo-scan worker and Redis check
+    .\dev.ps1 -Ngrok              # also tunnel the backend and refresh BACKEND_PUBLIC_URL
     .\dev.ps1 -Ngrok -NoWorker    # combine both
-    .\dev.ps1 -QuincyPath C:\path\to\quincy-security-engine
 #>
-
 param(
   [switch]$NoWorker,
-  [switch]$Ngrok,
-  [string]$QuincyPath,
-  [string]$QuincyServiceApiToken = "",
-  [string]$QuincyDeepSeekModelName = "deepseek/deepseek-v4-flash-0731"
-)
+  [switch]$Ngrok)
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -222,49 +206,3 @@ if ($Ngrok) {
     Set-BackendPublicUrl -EnvPath $backendEnvPath -Url $ngrokUrl
   }
 }
-
-if ($QuincyPath) {
-  $resolvedQuincy = (Resolve-Path -LiteralPath $QuincyPath).Path
-  $quincyUrl = "http://127.0.0.1:8000"
-  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "QUINCY_API_URL" -Value $quincyUrl
-  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "QUINCY_REMEDIATION_TIMEOUT_MS" -Value "900000"
-  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "QUINCY_API_TOKEN" -Value $QuincyServiceApiToken
-  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "OPENROUTER_MODEL_NAME" -Value $QuincyDeepSeekModelName
-  Set-BackendEnvValue -EnvPath $backendEnvPath -Name "AI_PROVIDER" -Value "openrouter"
-
-  $quincyScript = Join-Path $root "scripts\start-quincy-deepseek.ps1"
-  $tokenArg = if ($QuincyServiceApiToken) { "-ServiceApiToken '$QuincyServiceApiToken'" } else { "" }
-  Start-DevWindow -Title "Bankai: Quincy DeepSeek engine (8000)" -WorkingDirectory $root -Command "& '$quincyScript' -QuincyPath '$resolvedQuincy' -DeepSeekModelName '$QuincyDeepSeekModelName' -RestartIfRunning $tokenArg"
-  $quincyReady = $false
-  $quincyDeadline = [DateTime]::UtcNow.AddSeconds(45)
-  while ([DateTime]::UtcNow -lt $quincyDeadline) {
-    try {
-      $health = Invoke-RestMethod -Uri "$quincyUrl/health" -TimeoutSec 2
-      if ($health.status -eq "ok" -and $health.service -eq "quincy-security-engine") {
-        $quincyReady = $true
-        break
-      }
-    } catch { }
-    Start-Sleep -Milliseconds 500
-  }
-  if (-not $quincyReady) { throw "Quincy did not become healthy. Inspect the Quincy terminal before starting remediation workers." }
-}
-
-Write-Host "Starting Bankai dev environment..." -ForegroundColor Cyan
-
-Start-DevWindow -Title "Bankai: backend API (4000)" -WorkingDirectory (Join-Path $root "backend") -Command "npm run dev"
-
-if (-not $NoWorker) {
-  Start-DevWindow -Title "Bankai: repo-scan worker" -WorkingDirectory (Join-Path $root "backend") -Command "npm run worker"
-}
-
-Start-DevWindow -Title "Bankai: frontend (5173)" -WorkingDirectory (Join-Path $root "frontend") -Command "npm run dev"
-
-Write-Host ""
-Write-Host "All set. Frontend: http://localhost:5173  Backend: http://localhost:4000" -ForegroundColor Cyan
-if ($ngrokUrl) {
-  Write-Host "Public tunnel: $ngrokUrl  (GitHub webhook target: $ngrokUrl/api/webhooks/github/<projectId>)" -ForegroundColor Cyan
-  Write-Host "If your GitHub OAuth App's callback URL is still pointed at an older ngrok URL, update it at https://github.com/settings/developers before testing 'Connect your GitHub account'." -ForegroundColor Yellow
-  Write-Host "Repos connected in an earlier session still have their webhook pointed at the OLD ngrok URL - reconnect them from the app if you need push-triggered rescans or the CI self-healing loop working again." -ForegroundColor Yellow
-}
-Write-Host "Each service is running in its own window - close a window (or Ctrl+C inside it) to stop that piece." -ForegroundColor Cyan

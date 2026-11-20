@@ -6,7 +6,7 @@ const [outputPath] = process.argv.slice(2);
 if (!outputPath) throw new Error('usage: write-release-manifest.mjs OUTPUT_JSON');
 const required = [
   'RELEASE_ID', 'INFRASTRUCTURE_TEMPLATE', 'SMOKE_RESULT',
-  'BANKAI_SHA', 'QUINCY_SHA', 'BANKAI_IMAGE_DIGEST', 'QUINCY_IMAGE_DIGEST',
+  'BANKAI_SHA', 'BANKAI_IMAGE_DIGEST',
   'FRONTEND_ARTIFACT', 'JENKINS_BUILD', 'CDK_SHA', 'CHANGE_SET_ID',
   'AWS_ACCOUNT_ID', 'AWS_REGION', 'RELEASE_TIMESTAMP',
 ];
@@ -14,7 +14,7 @@ for (const key of required) if (!process.env[key]) throw new Error(`missing mani
 const artifactBytes = readFileSync(process.env.FRONTEND_ARTIFACT);
 const smoke = JSON.parse(readFileSync(process.env.SMOKE_RESULT, 'utf8'));
 verifySmokeEvidence(smoke, { deploymentId: process.env.RELEASE_ID, gitSha: process.env.BANKAI_SHA,
-  quincyGitSha: process.env.QUINCY_SHA, jenkinsBuild: process.env.JENKINS_BUILD });
+  jenkinsBuild: process.env.JENKINS_BUILD });
 JSON.parse(readFileSync(process.env.INFRASTRUCTURE_TEMPLATE, 'utf8'));
 const manifest = {
   schemaVersion: 2,
@@ -25,7 +25,6 @@ const manifest = {
   region: process.env.AWS_REGION,
   timestamp: process.env.RELEASE_TIMESTAMP,
   bankai: { gitSha: process.env.BANKAI_SHA, imageDigest: process.env.BANKAI_IMAGE_DIGEST },
-  quincy: { gitSha: process.env.QUINCY_SHA, imageDigest: process.env.QUINCY_IMAGE_DIGEST },
   frontend: {
     configuration: 'runtime-v1',
     artifact: process.env.FRONTEND_ARTIFACT,

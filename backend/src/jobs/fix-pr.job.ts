@@ -7,25 +7,17 @@ import {
   commitFileToBranch,
   compareCommits,
   createPullRequest,
-  createPullRequestComment,
   getBranchHeadSha,
   getBlob,
-  getCommit,
-  getCommitDiff,
-  getPullRequest,
   getTree,
   GithubApiError,
 } from "../lib/github.js";
 import { transitionIssue, type JiraCredentials } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
-import { saveRemediationProgress } from "../lib/queue.js";
 import { env } from "../env.js";
-import { describeQuincyFallback, parseGithubPrNumber, runQuincyRemediationWorkflow } from "../lib/quincy.js";
-import { clearQuincyCheckpoint, enqueueFixPrResume, enqueuePipelineVerification, loadQuincyCheckpoint, saveQuincyCheckpoint, type FixPrJobData } from "../lib/queue.js";
+import type { FixPrJobData } from "../lib/queue.js";
 import { attemptBranchCreation, loadGithubCreds, loadJiraCreds } from "../lib/ticketing.js";
 import { supabaseAdmin } from "../lib/supabase.js";
-import { recordInitialPatch } from "../lib/initial-patch.js";
-import { verifyRemediationAttempt } from "../lib/remediation-verification.js";
 
 interface FixPrTicketRow {
   id: string;
@@ -73,13 +65,7 @@ async function maybeTransitionJira(jira: { creds: JiraCredentials } | null, issu
   }
 }
 
-function quincyPriority(severity: string): "low" | "medium" | "high" | "critical" | null {
-  const normalized = severity.toLowerCase();
-  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "critical") return normalized;
-  return null;
-}
-
-function buildFindingEvidence(finding: FixPrFindingRow, quincyFailure: string | null): string {
+function buildFindingEvidence(finding: FixPrFindingRow): string {
   return [
     finding.description ?? finding.rationale ?? "",
     finding.finding_type ? `Finding type: ${finding.finding_type}` : null,
@@ -87,17 +73,15 @@ function buildFindingEvidence(finding: FixPrFindingRow, quincyFailure: string | 
     finding.affected_packages ? `Affected packages: ${finding.affected_packages}` : null,
     finding.current_versions ? `Current versions: ${finding.current_versions}` : null,
     finding.fixed_versions ? `Fixed versions: ${finding.fixed_versions}` : null,
-    quincyFailure ? `Previous Quincy remediation result: ${quincyFailure}` : null,
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join("\n\n");
 }
 
-function buildRemediationGuidance(finding: FixPrFindingRow, quincyFailure: string | null): string {
+function buildRemediationGuidance(finding: FixPrFindingRow): string {
   return [
     finding.remediation_guidance ?? "",
     finding.fixed_versions ? `Use fixed version ${finding.fixed_versions}.` : null,
-    quincyFailure ? `Quincy handoff note: ${quincyFailure}` : null,
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join("\n\n");
@@ -114,15 +98,13 @@ function buildRemediationEvidenceMarkdown(input: {
   ticket: FixPrTicketRow;
   finding: FixPrFindingRow;
   branch: string;
-  engine: "Quincy" | "Bankai DeepSeek" | "Bankai Gemini";
+  engine: "Bankai DeepSeek" | "Bankai Gemini";
   fixSummary: string | null;
-  quincyJobId?: string | null;
-  quincyFailure?: string | null;
   lowConfidence?: boolean;
 }): string {
   const { ticket, finding } = input;
-  const evidence = compactMultiline(buildFindingEvidence(finding, input.quincyFailure ?? null));
-  const guidance = compactMultiline(buildRemediationGuidance(finding, input.quincyFailure ?? null));
+  const evidence = compactMultiline(buildFindingEvidence(finding));
+  const guidance = compactMultiline(buildRemediationGuidance(finding));
   const summary = compactMultiline(input.fixSummary, 900);
 
   return [
@@ -130,7 +112,6 @@ function buildRemediationEvidenceMarkdown(input: {
     "",
     `- Ticket: ${ticket.key}`,
     `- Engine: ${input.engine}`,
-    input.quincyJobId ? `- Quincy job: ${input.quincyJobId}` : null,
     `- Finding: ${finding.title}`,
     finding.external_id ? `- Rule: ${finding.external_id}` : null,
     finding.cwe ? `- CWE: ${finding.cwe}` : null,
@@ -143,7 +124,6 @@ function buildRemediationEvidenceMarkdown(input: {
     summary ? `### Fix Summary\n${summary}` : null,
     evidence ? `### Scanner Evidence\n${evidence}` : null,
     guidance ? `### Remediation Guidance\n${guidance}` : null,
-    input.quincyFailure ? `### Quincy Handoff Notes\n${compactMultiline(input.quincyFailure, 1200)}` : null,
     "",
     "Bankai never merges automatically. Review this pull request and the changed files before merging.",
   ]
@@ -183,7 +163,6 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       ticketId,
       projectId,
       jobId: job.id,
-      quincyConfigured: Boolean(env.QUINCY_API_URL),
     },
     "fix-pr job started",
   );
@@ -218,8 +197,8 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       findingId,
       "missing_finding_or_file_path",
       !finding
-        ? "This ticket has no linked finding, so Quincy remediation cannot start."
-        : "This finding has no file path, so Quincy remediation cannot start.",
+        ? "This ticket has no linked finding, so remediation cannot start."
+        : "This finding has no file path, so remediation cannot start.",
     );
     return;
   }
@@ -242,7 +221,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       projectId,
       findingId,
       "missing_github_creds",
-      "GitHub is not connected for this project, so Quincy remediation cannot start.",
+      "GitHub is not connected for this project, so remediation cannot start.",
     );
     return;
   }
@@ -285,181 +264,18 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     branch = branchColumns.github_branch_name;
     await supabase
       .from("tickets")
-      .update({ ...branchColumns, ci_status: null, ci_error: null, github_pr_error: null })
+      .update({ ...branchColumns, github_pr_error: null })
       .eq("id", ticketId);
   }
 
-  // Quincy accepts a stored finding snapshot when no scanner rule is available.
-  // Keep this stable so AI/CSV findings can enter the same workflow.
-  const quincyRuleId = finding.external_id?.trim() || `bankai:${findingId}`;
-  let quincyFailure: string | null = null;
-  if (!quincyRuleId) {
-    logger.warn(
-      { ticketId, projectId, findingId, source: finding.source },
-      "fix-pr job skipping Quincy: finding has no external_id / rule id; falling back to local fix generation",
-    );
-  } else {
-    logger.info(
-      {
-        ticketId,
-        projectId,
-        findingId,
-        ruleId: quincyRuleId,
-      },
-      "fix-pr job calling Quincy remediation workflow",
-    );
-    try {
-      await saveRemediationProgress(job.data, {
-        summary: "Starting Quincy remediation",
-        activeAttempt: 0,
-        completedAttempts: 0,
-        updatedAt: new Date().toISOString(),
-      }).catch(err => {
-        logger.warn({ err, ticketId }, "Could not cache initial remediation progress");
-      });
-      const quincyResult = await runQuincyRemediationWorkflow({
-        requestId: job.data.requestId,
-        jobId: await loadQuincyCheckpoint(job.data),
-        onStarted: async (jobId) => {
-          await saveQuincyCheckpoint(job.data, jobId);
-          await job.updateData({ ...job.data, quincyJobId: jobId });
-        },
-        pollTimeoutMs: 60_000,
-        onProgress: progress => saveRemediationProgress(job.data, progress).catch(err => {
-          logger.warn({ err, ticketId }, "Could not cache remediation progress");
-        }),
-        repo: github.creds.repo,
-        ref: github.defaultBranch,
-        ruleId: quincyRuleId,
-        ticketId,
-        projectId,
-        severity: quincyPriority(finding.severity),
-        githubToken: github.creds.token,
-        baseBranch: github.defaultBranch,
-        idempotencyKey: `ticket:${ticketId}:quincy-remediation:job:${job.id ?? "manual"}`,
-        finding: {
-          title: finding.title,
-          filePath: finding.file_path,
-          lineStart: finding.line_start,
-          lineEnd: finding.line_end,
-          cwe: finding.cwe,
-          affectedPackages: finding.affected_packages,
-          currentVersions: finding.current_versions,
-          fixedVersions: finding.fixed_versions,
-          description: finding.description ?? finding.rationale,
-          remediationGuidance: finding.remediation_guidance,
-        },
-      });
-      logger.info(
-        {
-          ticketId,
-          projectId,
-          findingId,
-          ruleId: quincyRuleId,
-          quincyStatus: quincyResult?.status ?? null,
-          quincyJobId: quincyResult?.jobId ?? null,
-          quincyPrUrl: quincyResult?.prUrl ?? null,
-        },
-        "fix-pr job Quincy workflow returned",
-      );
-
-      if (quincyResult) {
-        if (quincyResult.status === "running") {
-          await supabase.from("tickets").update({ github_pr_error: quincyResult.error }).eq("id", ticketId);
-          await enqueueFixPrResume({ ...job.data, quincyJobId: quincyResult.jobId }, 30_000);
-          return;
-        }
-        if (quincyResult.status === "succeeded" && quincyResult.prUrl) {
-          const prNumber = parseGithubPrNumber(quincyResult.prUrl, github.creds.repo);
-          if (!prNumber) throw new Error("Quincy returned a PR URL outside the configured repository or an invalid PR URL.");
-          const pr = await getPullRequest(github.creds, prNumber);
-          if (!pr || pr.state !== "open" || !pr.headRef || !pr.headSha) {
-            throw new Error("Quincy's pull request could not be verified as open with a valid head commit.");
-          }
-          const prHead = pr.headRef;
-          if ((await compareCommits(github.creds, github.defaultBranch, pr.headSha)).length === 0) {
-            throw new Error("Quincy returned a pull request with no changes against the default branch.");
-          }
-          await supabase
-            .from("tickets")
-            .update({
-              status: "In Review",
-              github_pr_number: prNumber,
-              github_pr_url: quincyResult.prUrl,
-              github_pr_state: "open",
-              github_branch_name: prHead,
-              github_branch_url: `https://github.com/${github.creds.repo}/tree/${prHead}`,
-              github_pr_low_confidence: false,
-              github_pr_error: null,
-              ci_status: "queued",
-              ci_error: null,
-            })
-            .eq("id", ticketId);
-          await maybeTransitionJira(jira, ticket.jira_issue_key, "In Review");
-          if (prNumber) {
-            const evidenceComment = buildRemediationEvidenceMarkdown({
-              ticket,
-              finding,
-              branch: prHead,
-              engine: "Quincy",
-              fixSummary: quincyResult.summary,
-              quincyJobId: quincyResult.jobId,
-              lowConfidence: false,
-            });
-            const posted = await createPullRequestComment(github.creds, prNumber, evidenceComment);
-            if (!posted.ok) {
-              logger.error(
-                { ticketId, projectId, prNumber, status: posted.status, message: posted.message },
-                "Could not post Bankai evidence comment on Quincy-created PR",
-              );
-            }
-          }
-          try {
-            await enqueuePipelineVerification({ ticketId, projectId, requestId: job.data.requestId });
-          } catch (err) {
-            logger.error({ err, ticketId, projectId }, "Could not enqueue CI verification for Quincy-created PR");
-            await supabase.from("tickets").update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." }).eq("id", ticketId);
-          }
-          await recordActivity(supabase, {
-            projectId,
-            actorId: null,
-            actorLabel: "Quincy",
-            eventType: "ticket",
-            summary: "opened a validated remediation pull request for",
-            linkTo: "tickets",
-            meta: `${finding.title} · ${prNumber ? `PR #${prNumber}` : quincyResult.prUrl}`,
-          });
-          await clearQuincyCheckpoint(job.data, quincyResult.jobId);
-          return;
-        }
-
-        if (quincyResult.status === "failed") await clearQuincyCheckpoint(job.data, quincyResult.jobId);
-        const fallback = describeQuincyFallback(quincyResult);
-        quincyFailure = fallback.note;
-        const fallbackContext = { ticketId, projectId, ruleId: quincyRuleId, quincyFailure, quincyFallbackKind: fallback.kind };
-        if (fallback.logLevel === "info") {
-          logger.info(fallbackContext, fallback.logMessage);
-        } else {
-          logger.warn(fallbackContext, fallback.logMessage);
-        }
-      }
-    } catch (err) {
-      quincyFailure = err instanceof Error ? err.message : "Quincy remediation workflow failed.";
-      logger.warn({ err, ticketId, projectId, ruleId: quincyRuleId }, "Quincy remediation workflow failed; falling back to local fix path");
-    }
-  }
-  if (env.QUINCY_API_URL && !env.QUINCY_ALLOW_FALLBACK) {
-    await setTicketError(ticketId, `Quincy validation did not produce a pull request. ${quincyFailure ?? "The engine was unavailable or returned no validated PR."} Retry remediation after resolving the engine error.`);
-    return;
-  }
   const findingInput: FixFindingInput = {
     title: finding.title,
     cwe: finding.cwe,
     filePath: finding.file_path,
     lineStart: finding.line_start,
     lineEnd: finding.line_end,
-    evidence: buildFindingEvidence(finding, quincyFailure),
-    remediationGuidance: buildRemediationGuidance(finding, quincyFailure),
+    evidence: buildFindingEvidence(finding),
+    remediationGuidance: buildRemediationGuidance(finding),
   };
 
   try {
@@ -469,21 +285,12 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     // before opening the PR — skip straight to PR creation instead of
     // generating (and committing) a second fix.
     const alreadyCommitted = ticket.github_fix_commit_sha != null && ticket.github_fix_commit_sha === headSha;
-    let patchBaseSha: string | null = null;
-    let patchCandidateSha: string | null = null;
 
     // On resume the fix object is gone, so the flag persisted at commit time
     // is the only record of the committed fix's confidence.
     let lowConfidence = ticket.github_pr_low_confidence;
     let lowConfidenceSummary: string | null = null;
     let fixSummary: string | null = null;
-
-    if (alreadyCommitted) {
-      const commit = await getCommit(github.creds, headSha);
-      if (commit.parentShas.length !== 1) throw new Error("Committed fix does not have one pinned base commit.");
-      patchBaseSha = commit.parentShas[0]!;
-      patchCandidateSha = headSha;
-    }
 
     if (!alreadyCommitted) {
       // Safety check: never overwrite work a human already pushed to this
@@ -526,7 +333,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       });
       const fix = deterministicFix
         ? { confident: true, fixedContent: deterministicFix.fixedContent, summary: deterministicFix.summary, filesToUpdate: undefined }
-        : await generateFix(findingInput, fileContent, undefined, repoContext.formattedPromptContext);
+        : await generateFix(findingInput, fileContent, repoContext.formattedPromptContext);
       if (!fix || fix.fixedContent === fileContent) {
         await setTicketError(ticketId, "Could not generate an automatic fix for this finding.");
         return;
@@ -564,23 +371,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       await maybeTransitionJira(jira, ticket.jira_issue_key, "In Progress");
 
       headSha = commitSha;
-      patchBaseSha = baseSha;
-      patchCandidateSha = commitSha;
     }
-
-    if (!patchBaseSha || !patchCandidateSha) throw new Error("Candidate patch base could not be resolved.");
-    const diffContent = await getCommitDiff(github.creds, patchBaseSha, patchCandidateSha);
-    const initialPatch = await recordInitialPatch(supabase, {
-      projectId, findingId, repositoryId: github.creds.repo, baseSha: patchBaseSha,
-      candidateSha: patchCandidateSha,
-      diffRef: `https://github.com/${github.creds.repo}/compare/${patchBaseSha}...${patchCandidateSha}.diff`,
-      diffContent,
-    });
-    if (env.QUINCY_API_URL) await verifyRemediationAttempt(supabase, {
-      remediationId: initialPatch.attempt.id,
-      attemptId: initialPatch.attempt.current_attempt_id!,
-      ...(job.data.requestId ? { requestId: job.data.requestId } : {}),
-    });
 
     const lowConfidenceWarning = lowConfidence
       ? `\n\n⚠️ **Low-confidence fix** — Bankai was not fully certain this change is correct and complete. ${
@@ -593,7 +384,6 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       branch,
       engine: env.AI_PROVIDER === "openrouter" ? "Bankai DeepSeek" : "Bankai Gemini",
       fixSummary: alreadyCommitted ? "A previous Bankai run already committed this fix; this run resumed at pull-request creation." : fixSummary,
-      quincyFailure,
       lowConfidence,
     });
 
@@ -615,13 +405,6 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       })
       .eq("id", ticketId);
     await maybeTransitionJira(jira, ticket.jira_issue_key, "In Review");
-
-    try {
-      await enqueuePipelineVerification({ ticketId, projectId, requestId: job.data.requestId });
-    } catch (err) {
-      logger.error({ err, ticketId, projectId }, "Could not enqueue the CI verification pipeline");
-      await supabase.from("tickets").update({ ci_status: "failed", ci_error: "Could not enqueue CI verification. Check the Bankai worker and Redis." }).eq("id", ticketId);
-    }
 
     await recordActivity(supabase, {
       projectId,

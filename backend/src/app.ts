@@ -6,7 +6,7 @@ import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { env } from "./env.js";
 import { logger } from "./lib/logger.js";
-import { fixPrQueue, pipelineQueue, redisConnection, repoScanQueue } from "./lib/queue.js";
+import { fixPrQueue, redisConnection, repoScanQueue } from "./lib/queue.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { originCheck } from "./middleware/origin-check.js";
 import { authRouter } from "./routes/auth.routes.js";
@@ -16,7 +16,6 @@ import { orgRouter } from "./routes/org.routes.js";
 import { projectRouter } from "./routes/project.routes.js";
 import { teamInviteRouter } from "./routes/team-invite.routes.js";
 import { webhookRouter } from "./routes/webhook.routes.js";
-import { localRunnerPairingRouter, localRunnerRouter } from "./routes/local-runner.routes.js";
 
 export function createApp(): Express {
   const app = express();
@@ -67,18 +66,15 @@ export function createApp(): Express {
 
   app.get("/healthz", async (_req, res) => {
     try {
-      const [redis, repoScan, fixPr, pipeline] = await Promise.all([
+      const [redis, repoScan, fixPr] = await Promise.all([
         redisConnection.ping(),
         repoScanQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         fixPrQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
-        pipelineQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
       ]);
       res.status(200).json({
         status: "ok",
         redis,
-        quincyConfigured: Boolean(env.QUINCY_API_URL),
-        quincyApiUrl: env.QUINCY_API_URL ?? null,
-        queues: { repoScan, fixPr, pipeline },
+        queues: { repoScan, fixPr },
       });
     } catch (err) {
       logger.error({ err }, "Health check could not read queue status");
@@ -87,8 +83,6 @@ export function createApp(): Express {
   });
 
   app.use("/api/auth", authRouter);
-  app.use("/api/local-runner", localRunnerPairingRouter);
-  app.use("/api/local-runner", localRunnerRouter);
   app.use("/api/projects", projectRouter);
   app.use("/api/orgs", orgRouter);
   app.use("/api/invites", inviteRouter);

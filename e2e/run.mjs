@@ -12,7 +12,6 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 }
 const api = required('E2E_API_URL').replace(/\/$/, '');
 const frontend = required('E2E_FRONTEND_URL').replace(/\/$/, '');
-const quincy = required('E2E_QUINCY_URL').replace(/\/$/, '');
 const localTest = process.env.E2E_ALLOW_LOCAL === '1' && process.env.NODE_ENV !== 'production';
 if (!localTest) {
   for (const [name, value] of [['API', api], ['frontend', frontend]]) {
@@ -20,9 +19,6 @@ if (!localTest) {
     if (url.protocol !== 'https:' || !/(nonprod|staging|test)/i.test(url.hostname)) {
       throw new Error(`${name} URL must be HTTPS and explicitly non-production: ${url.hostname}`);
     }
-  }
-  if (!/^https?:\/\/(quincy\.)?(nonprod|staging|test)[.-]/i.test(quincy)) {
-    throw new Error('Quincy URL must use an explicitly non-production private hostname');
   }
 }
 
@@ -84,16 +80,8 @@ async function smoke() {
     const response = await fetch(`${api}/healthz`, { headers: { origin: frontend, 'x-bankai-e2e-run-id': runId }, signal: AbortSignal.timeout(20_000) });
     const health = await json(response, [200]);
     assert(health.status === 'ok' && health.redis === 'PONG', 'Bankai health did not confirm Redis PONG');
-    assert(health.quincyConfigured === true, 'Bankai is not configured for Quincy');
-    assert(['repoScan', 'fixPr', 'pipeline'].every((queue) => health.queues?.[queue]), 'Bankai queue health is incomplete');
+    assert(['repoScan', 'fixPr'].every((queue) => health.queues?.[queue]), 'Bankai queue health is incomplete');
     assert(response.headers.get('access-control-allow-origin') === frontend, 'Bankai does not allow the CloudFront frontend origin');
-  });
-  await check('Quincy health and token rejection', async () => {
-    const health = await json(await fetch(`${quincy}/health`, { signal: AbortSignal.timeout(20_000) }), [200]);
-    assert(health.status === 'ok' || health.status === 'healthy', 'Quincy health response is not healthy');
-    const rejected = await fetch(`${quincy}/triage/scan`, { method: 'POST', headers: { authorization: 'Bearer bankai-e2e-intentionally-invalid', 'content-type': 'application/json', 'x-request-id': requestId }, body: '{}', signal: AbortSignal.timeout(20_000) });
-    assert([401, 403].includes(rejected.status), `Quincy accepted an invalid service token (${rejected.status})`);
-    assert(rejected.headers.get('x-request-id') === requestId, 'Quincy did not return the request correlation ID');
   });
   await check('CloudFront serves the frontend configured for Bankai', async () => {
     const response = await fetch(`${frontend}/`, { signal: AbortSignal.timeout(30_000) });
@@ -165,7 +153,7 @@ async function fullWorkflow() {
     assert(created.tickets.length === 1 && created.queued.includes(finding.id), 'ticket was not created and queued for remediation');
     ticket = created.tickets[0];
   });
-  await check('Quincy remediation, PR, verification, and ticket state converge', async () => {
+  await check('Bankai opens a remediation PR for manual review', async () => {
     let lastState = null;
     try {
       ticket = await poll('remediation workflow', async () => {
@@ -177,14 +165,9 @@ async function fullWorkflow() {
           githubPrNumber: current.githubPrNumber ?? null,
           githubPrState: current.githubPrState ?? null,
           githubPrError: current.githubPrError ?? null,
-          ciStatus: current.ciStatus ?? null,
-          ciError: current.ciError ?? null,
         };
         if (current.githubPrError) throw new Error(`remediation failed: ${current.githubPrError}`);
-        if (current.ciStatus === 'failed' || current.ciStatus === 'pending_setup') {
-          throw new Error(`remediation CI ${current.ciStatus}: ${current.ciError ?? 'no CI error was recorded'}`);
-        }
-        return { done: Boolean(current.githubPrNumber) && current.ciStatus === 'passed', value: current };
+        return { done: Boolean(current.githubPrNumber), value: current };
       }, 45 * 60_000);
     } catch (error) {
       if (String(error).includes('did not finish') && lastState) {
@@ -192,7 +175,7 @@ async function fullWorkflow() {
       }
       throw error;
     }
-    assert(['In Review', 'Done'].includes(ticket.status), `unexpected final ticket status ${ticket.status}`);
+    assert(ticket.status === 'In Review', `expected PR awaiting manual review; got ${ticket.status}`);
     githubCleanup.pullRequest = ticket.githubPrNumber;
   });
 }
@@ -221,7 +204,7 @@ async function writeReport() {
   const failures = results.filter((result) => result.error).length;
   const cases = results.map((result) => `<testcase classname="bankai.${mode}" name="${escapeXml(result.name)}" time="${result.seconds.toFixed(3)}">${result.error ? `<failure>${escapeXml(result.error)}</failure>` : ''}</testcase>`).join('');
   await writeFile('reports/e2e/junit.xml', `<?xml version="1.0" encoding="UTF-8"?><testsuite name="bankai-${mode}-e2e" tests="${results.length}" failures="${failures}">${cases}</testsuite>\n`);
-  await writeFile('reports/e2e/result.json', `${JSON.stringify({ runId, requestId, mode, release: { deploymentId: process.env.DEPLOYMENT_ID ?? null, gitSha: process.env.GIT_SHA ?? null, quincyGitSha: process.env.QUINCY_GIT_SHA ?? null, jenkinsBuild: process.env.JENKINS_BUILD ?? null }, results }, null, 2)}\n`, { mode: 0o600 });
+  await writeFile('reports/e2e/result.json', `${JSON.stringify({ runId, requestId, mode, release: { deploymentId: process.env.DEPLOYMENT_ID ?? null, gitSha: process.env.GIT_SHA ?? null, jenkinsBuild: process.env.JENKINS_BUILD ?? null }, results }, null, 2)}\n`, { mode: 0o600 });
 }
 function escapeXml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 

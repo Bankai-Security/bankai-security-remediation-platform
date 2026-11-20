@@ -127,7 +127,7 @@ credentials:
       - credentials:
           - gitHubApp:
               appID: "${GITHUB_APP_ID}"
-              description: "Bankai and Quincy repository discovery/status App"
+              description: "Bankai repository discovery/status App"
               id: "jenkins-github-app"
               privateKey: "${jenkins-github-app-private-key}"
 
@@ -159,20 +159,6 @@ jobs:
             id('bankai-github')
             repoOwner(System.getenv('GITHUB_ORGANIZATION'))
             repository(System.getenv('BANKAI_REPOSITORY'))
-            scanCredentialsId('jenkins-github-app')
-          }
-        }
-        factory { workflowBranchProjectFactory { scriptPath('Jenkinsfile') } }
-        orphanedItemStrategy { discardOldItems { numToKeep(20); daysToKeep(14) } }
-        triggers { periodicFolderTrigger { interval('1d') } }
-      }
-  - script: >
-      multibranchPipelineJob('quincy') {
-        branchSources {
-          github {
-            id('quincy-github')
-            repoOwner(System.getenv('GITHUB_ORGANIZATION'))
-            repository(System.getenv('QUINCY_REPOSITORY'))
             scanCredentialsId('jenkins-github-app')
           }
         }

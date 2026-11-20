@@ -7,11 +7,11 @@ const hash = x => `sha256:${createHash('sha256').update(x).digest('hex')}`;
 function fixture() {
   const image = `sha256:${'a'.repeat(64)}`;
   const files = { frontend: Buffer.from('immutable frontend'), infrastructure: Buffer.from(JSON.stringify({ Resources: {
-    ...Object.fromEntries([['ApiServiceTaskDef1234ABCD', 'web', 'backend'], ['WorkerTask1234ABCD', 'Worker', 'backend'], ['QuincyTask1234ABCD', 'Quincy', 'quincy']].map(([id, Name, repo]) => [id, { Type: 'AWS::ECS::TaskDefinition', Properties: { ContainerDefinitions: [{ Name, Image: `926827998551.dkr.ecr.ap-south-1.amazonaws.com/bankai/nonprod/${repo}@${image}` }] } }])),
-  } })), smoke: Buffer.from(JSON.stringify({ mode: 'smoke', release: { deploymentId: 'bankai-test', gitSha: 'b'.repeat(40), quincyGitSha: 'c'.repeat(40), jenkinsBuild: 'build-7' }, results: requiredSmokeChecks.map(name => ({ name, error: null })) })) };
+    ...Object.fromEntries([['ApiServiceTaskDef1234ABCD', 'web'], ['WorkerTask1234ABCD', 'Worker']].map(([id, Name]) => [id, { Type: 'AWS::ECS::TaskDefinition', Properties: { ContainerDefinitions: [{ Name, Image: `926827998551.dkr.ecr.ap-south-1.amazonaws.com/bankai/nonprod/backend@${image}` }] } }])),
+  } })), smoke: Buffer.from(JSON.stringify({ mode: 'smoke', release: { deploymentId: 'bankai-test', gitSha: 'b'.repeat(40), jenkinsBuild: 'build-7' }, results: requiredSmokeChecks.map(name => ({ name, error: null })) })) };
   const manifest = { schemaVersion: 2, releaseId: 'bankai-test', status: 'SUCCESS', environment: 'nonprod',
     account: '926827998551', region: 'ap-south-1', cdkGitSha: 'b'.repeat(40), jenkinsBuild: 'build-7',
-    bankai: { gitSha: 'b'.repeat(40), imageDigest: image }, quincy: { gitSha: 'c'.repeat(40), imageDigest: image },
+    bankai: { gitSha: 'b'.repeat(40), imageDigest: image },
     ...Object.fromEntries(Object.entries(files).map(([key, bytes]) => [key, { artifact: key, checksum: hash(bytes) }])) };
   manifest.frontend.configuration = 'runtime-v1';
   return { manifest, files, read: name => files[name] };

@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
 import GithubIcon from '../../components/GithubIcon';
 import JiraIcon from '../../components/JiraIcon';
-import CiStatusCircle from '../../components/CiStatusCircle';
-import RetryCiButton from '../../components/RetryCiButton';
-import { ApiError, listTickets, retryTicketFix, retryTicketPipeline, syncTicketsToJira, updateTicketStatus, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
+import RetryFixButton from '../../components/RetryFixButton';
+import { ApiError, listTickets, retryTicketFix, syncTicketsToJira, updateTicketStatus, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
 import { canEdit } from '../../lib/roles';
 import { useProject } from '../../lib/project-context';
 import './Tickets.css';
@@ -37,12 +36,11 @@ function formatRemediationStage(summary: string): string {
   const stage = summary.replace(/\s*\([^)]*\)\s*$/, '').trim();
   const labels: Record<string, string> = {
     'Running baseline scan and tests': 'Checking code and tests',
-    'Starting Quincy remediation': 'Starting security remediation',
     'Assessing finding': 'Assessing vulnerability',
     'Starting patch attempt': 'Preparing security fix',
     'Generating patch': 'Generating security fix',
     'Validating patch application and safety': 'Validating security fix',
-    'Running patched scan and tests': 'Verifying security fix',
+    'Running patched scan and tests': 'Preparing remediation pull request',
     'Analyzing validation failure': 'Reviewing validation results',
     'Checking attack variants': 'Testing attack variants',
     'Patch rejected; preparing retry': 'Refining security fix',
@@ -77,14 +75,6 @@ function RemediationProgress({ ticket, compact = false }: { ticket: Ticket; comp
   );
 }
 
-// Nothing re-triggers a stuck ticket's pipeline on its own — 'pending_setup'
-// means the repository workflow is missing or incomplete, and 'failed'/a bare ciError both
-// mean the last attempt didn't succeed. 'queued'/'running' are already
-// in-flight, so retrying those would just race the job already running.
-function canRetryCi(t: Ticket): boolean {
-  return t.ciStatus === 'pending_setup' || t.ciStatus === 'failed' || (!t.ciStatus && !!t.ciError);
-}
-
 function canRetryFix(t: Ticket): boolean {
   return !!t.githubBranchName && !t.githubPrNumber && !!t.githubPrError;
 }
@@ -104,7 +94,6 @@ export default function Tickets() {
   const [view, setView] = useState<'kanban' | 'table'>('kanban');
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryingFixId, setRetryingFixId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<TicketStatus | null>(null);
@@ -173,21 +162,6 @@ export default function Tickets() {
     }
   };
 
-  const handleRetryPipeline = async (ticketId: string) => {
-    if (!project) return;
-    setRetryingId(ticketId);
-    try {
-      await retryTicketPipeline(project.id, ticketId);
-      const { tickets: refreshed } = await listTickets(project.id);
-      setTickets(refreshed);
-    } catch {
-      // Best-effort UI action — the ticket's own ciError (refreshed above if
-      // it changed) is the source of truth, not a toast here.
-    } finally {
-      setRetryingId(null);
-    }
-  };
-
   const handleRetryFix = async (ticketId: string) => {
     if (!project) return;
     setRetryingFixId(ticketId);
@@ -249,6 +223,7 @@ export default function Tickets() {
     <main className="ws-page">
       <WorkspaceBreadcrumb current="Tickets" />
       <div className="ws-divider" />
+      <p className="ws-card-hint">Bankai prepares a remediation branch and pull request. Review the changes and merge the pull request manually in GitHub.</p>
 
       <div className="tickets-title-row">
         <div className="ws-header-eyebrow">
@@ -406,24 +381,13 @@ export default function Tickets() {
                           ) : null}
 
                           {canRetryFix(t) && (
-                            <RetryCiButton
+                            <RetryFixButton
                               onClick={() => void handleRetryFix(t.id)}
                               retrying={retryingFixId === t.id}
                               title="Retry Gemini fix generation"
                             />
                           )}
 
-                          {t.githubPrUrl ? (
-                            <CiStatusCircle status={t.ciStatus} runUrl={t.ciRunUrl} error={t.ciError} />
-                          ) : null}
-
-                          {t.githubPrUrl && canRetryCi(t) && (
-                            <RetryCiButton
-                              onClick={() => void handleRetryPipeline(t.id)}
-                              retrying={retryingId === t.id}
-                              title="Retry the CI verification pipeline"
-                            />
-                          )}
                         </div>
                         <div className="tickets-kanban-card-footer">
                           <span className="tickets-kanban-card-due" style={{ color: t.overdue ? '#DC2626' : 'var(--color-text-muted)' }}>
@@ -494,7 +458,7 @@ export default function Tickets() {
                         ) : null}
 
                         {canRetryFix(t) && (
-                          <RetryCiButton
+                          <RetryFixButton
                             onClick={() => void handleRetryFix(t.id)}
                             retrying={retryingFixId === t.id}
                             title="Retry Gemini fix generation"
@@ -502,24 +466,12 @@ export default function Tickets() {
                           />
                         )}
 
-                        {t.githubPrUrl ? (
-                          <CiStatusCircle status={t.ciStatus} runUrl={t.ciRunUrl} error={t.ciError} size={18} />
-                        ) : null}
-
-                        {t.githubPrUrl && canRetryCi(t) && (
-                          <RetryCiButton
-                            onClick={() => void handleRetryPipeline(t.id)}
-                            retrying={retryingId === t.id}
-                            title="Retry the CI verification pipeline"
-                            size={18}
-                          />
-                        )}
                       </span>
                     </span>
                     <span className="tickets-table-service">{t.service}</span>
                     <span><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
                     <span className="ws-mono tickets-table-cvit">{t.findingExternalId ?? '—'}</span>
-                    <span className="ws-dot-status" style={{ color: sc.color }} title={t.collateralResolved ? 'Scanner-verified as mitigated by another merged package remediation' : undefined}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}{t.collateralResolved ? ' · Package upgrade' : ''}</span>
+                    <span className="ws-dot-status" style={{ color: sc.color }}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}</span>
                     <span className="ws-col-right tickets-table-due" style={{ color: t.overdue ? '#DC2626' : 'var(--color-text-muted)' }}>
                       {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
                     </span>
