@@ -32,13 +32,15 @@ export default function JenkinsDownload() {
               Your repository workspace will be ready when you open it there.
             </p>
 
-            <a className="jenkins-download-cta" href={handoffUrl.toString()}>
-          Download Bankai Desktop
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 13.5v2A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-            </a>
-            <a className="jenkins-desktop-existing-link" href={desktopDeepLink}>Already installed? Open Bankai Desktop</a>
+            <div className="jenkins-download-actions">
+              <a className="jenkins-download-cta" href={handoffUrl.toString()}>
+                Download Bankai Desktop
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 13.5v2A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </a>
+              <a className="jenkins-desktop-existing-link" href={desktopDeepLink}>Already installed? Open Bankai Desktop</a>
+            </div>
             <p className="jenkins-download-note">Jenkins runs in the desktop app. Scanning, triage, remediation, and PR review remain available here.</p>
             <div className="jenkins-download-project">
               {project?.name ?? 'Current project'}

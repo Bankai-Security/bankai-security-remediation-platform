@@ -8,8 +8,8 @@
 }
 
 .jenkins-download-card {
-  width: min(100%, 620px);
-  padding: 48px 52px 38px;
+  width: min(100%, 760px);
+  padding: 48px 32px 38px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -26,9 +26,10 @@
 
 .jenkins-download-heading {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .jenkins-download-title {
@@ -63,6 +64,17 @@
   text-decoration: none;
   transition: background .15s ease, transform .15s ease;
 }
+
+.jenkins-download-actions {
+  margin-top: 27px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.jenkins-download-actions .jenkins-download-cta { margin-top: 0; }
 
 .jenkins-download-cta:hover { background: var(--color-blue-dark); color: #fff; transform: translateY(-1px); }
 .jenkins-download-cta:focus-visible { outline: 3px solid rgba(59, 130, 246, .35); outline-offset: 3px; }
@@ -128,7 +140,7 @@
 .jenkins-download-cta:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .jenkins-browser-error { margin: 10px 0 0; color: #b42318; font-size: 12px; }
 .jenkins-browser-status { margin: 10px 0 0; color: #15803d; font-size: 12px; }
-.jenkins-desktop-existing-link { margin-top: 13px; color: var(--color-blue); font-size: 12px; font-weight: 600; text-decoration: none; }
+.jenkins-desktop-existing-link { color: var(--color-blue); font-size: 12px; font-weight: 600; text-decoration: none; }
 .jenkins-desktop-existing-link:hover { text-decoration: underline; }
 
 @media (max-width: 640px) {
@@ -136,4 +148,5 @@
   .jenkins-download-card { padding: 36px 22px 28px; }
   .jenkins-download-project { flex-wrap: wrap; }
   .jenkins-choice-group { grid-template-columns: 1fr; }
+  .jenkins-download-actions { flex-direction: column; gap: 13px; }
 }
