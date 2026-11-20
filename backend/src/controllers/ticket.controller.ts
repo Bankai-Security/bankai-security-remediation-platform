@@ -531,7 +531,7 @@ export async function retryTicketFix(req: Request, res: Response): Promise<void>
 
   const { data, error } = await supabase
     .from("tickets")
-    .select("id, github_branch_name, github_pr_number")
+    .select("id, github_branch_name, github_pr_number, github_pr_error")
     .eq("id", req.params.ticketId)
     .eq("project_id", req.project!.id)
     .maybeSingle();
@@ -542,11 +542,11 @@ export async function retryTicketFix(req: Request, res: Response): Promise<void>
   if (!data) {
     throw new HttpError(404, "Ticket not found");
   }
-  if (!data.github_branch_name) {
-    throw new HttpError(422, "This ticket does not have a remediation branch yet.");
-  }
   if (data.github_pr_number != null) {
     throw new HttpError(422, "This ticket already has a pull request. Review it in GitHub.");
+  }
+  if (!data.github_pr_error) {
+    throw new HttpError(422, "This ticket has no failed remediation to retry.");
   }
 
   const { error: updateError } = await supabase

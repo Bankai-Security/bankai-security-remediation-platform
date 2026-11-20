@@ -48,7 +48,10 @@ function RemediationProgress({ ticket, compact = false }: { ticket: Ticket; comp
 }
 
 function canRetryFix(t: Ticket): boolean {
-  return !!t.githubBranchName && !t.githubPrNumber && !!t.githubPrError;
+  // A failure can happen before Bankai creates the remediation branch (for
+  // example, when validating the original finding path). Retrying that ticket
+  // lets the worker normalize the path and create the branch from scratch.
+  return !t.githubPrNumber && !!t.githubPrError;
 }
 
 function prBadgeTitle(t: Ticket): string {
