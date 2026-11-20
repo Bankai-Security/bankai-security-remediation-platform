@@ -21,7 +21,8 @@ Set `BANKAI_WEB_URL` at launch to select another Bankai frontend origin. Railway
 - Project deep links use `bankai://open?project=<project-id>` and open the Jenkins page for that project.
 - Jenkins opens in a separate Electron window with its own persistent session partition, so Jenkins sign-in cookies remain separate from Bankai's.
 - The renderer receives only a narrow context-isolated bridge. Jenkins addresses must use HTTPS, except localhost during local Jenkins use. Cross-origin navigation inside the Jenkins window is blocked.
-- Jenkins credentials are entered directly into the Jenkins page and are never sent to Bankai APIs by this shell.
+- Jenkins credentials are entered on the desktop Jenkins page, checked against the Jenkins API, and encrypted with Electron's OS-backed `safeStorage` on this computer. Credentials are not sent to Bankai services.
+- Bankai discovers Jenkins jobs, lets each repository select a build job, starts it with Jenkins' CSRF crumb when required, and reports its queued/running/result state with a link to the build in the Bankai browser.
 - The per-project Jenkins preference is stored in the frontend's local storage. Choosing skip does not alter the existing scan, triage, remediation, or PR routes.
 
-The current Jenkins controls open the Jenkins website only. Pairing the local runner, discovering jobs, saving Jenkins credentials in the OS credential vault, and dispatching builds belong to later phases.
+Build-to-PR evidence attachment, automated remediation retries, and deployment orchestration are later phases. The Windows/macOS/Linux package commands above create installers locally; a published desktop release is still required for the web download link to distribute an updated shell.
