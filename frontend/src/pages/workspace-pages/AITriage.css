@@ -186,6 +186,11 @@
   font-weight: 700;
   margin-top: 7px;
   line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .triage-drawer-meta {
@@ -294,7 +299,7 @@
 .triage-scan-notice-text {
   margin: 0;
   color: #1E3A8A;
-  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  font-family: var(--font-sans) !important;
   font-size: 11px;
   line-height: 1.65;
   overflow-wrap: anywhere;

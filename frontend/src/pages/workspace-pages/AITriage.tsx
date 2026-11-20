@@ -41,6 +41,19 @@ function suggestedPriority(sev: Severity): string {
   return 'P4 — routine';
 }
 
+function displayFindingTitle(value: string): string {
+  const plain = value
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (plain.length <= 180) return plain;
+  const firstSentence = plain.match(/^.{1,180}?[.!?](?:\s|$)/)?.[0]?.trim();
+  const concise = firstSentence && firstSentence.length <= 180 ? firstSentence : plain.slice(0, 177).trimEnd();
+  return `${concise}${concise.length < plain.length ? '…' : ''}`;
+}
+
 const SEV_RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1 };
 
 export default function AITriage() {
@@ -325,7 +338,7 @@ export default function AITriage() {
                   </span>
                 </span>
                 <span className="triage-id" title={r.externalId ?? r.id.slice(0, 8)}>{r.externalId ?? r.id.slice(0, 8)}</span>
-                <span className="triage-title">{r.title}</span>
+                <span className="triage-title" title={r.title}>{displayFindingTitle(r.title)}</span>
                 <span className="triage-service">{r.service}</span>
                 <span><span className={sevBadgeClass(r.severity)}>{r.severity}</span></span>
                 <span className="ws-dot-status" style={{ color: sla.color }}><span className="ws-dot" style={{ background: sla.dot }} />{r.sla}</span>
@@ -359,7 +372,7 @@ export default function AITriage() {
                     <span className="ws-dot" style={{ width: 6, height: 6, background: slaColor(openRow.sla).dot }} />{openRow.sla}
                   </span>
                 </div>
-                <div className="triage-drawer-title">{openRow.title}</div>
+                <div className="triage-drawer-title" title={openRow.title}>{displayFindingTitle(openRow.title)}</div>
                 <div className="triage-drawer-meta">
                   {openRow.service} · first seen {new Date(openRow.firstSeen).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                 </div>
