@@ -21,10 +21,10 @@ RUN addgroup -S -g 10001 bankai \
 # never runs a customer's build or package installation as part of a scan.
 ARG TARGETARCH
 RUN apk add --no-cache ca-certificates curl tar python3 libffi libstdc++ \
-    && case "$TARGETARCH" in arm64) BINARCH=ARM64; GOARCH=arm64 ;; *) BINARCH=64bit; GOARCH=amd64 ;; esac \
+    && case "$TARGETARCH" in arm64) BINARCH=ARM64; GOARCH=arm64; GITLEAKS_ARCH=arm64 ;; *) BINARCH=64bit; GOARCH=amd64; GITLEAKS_ARCH=x64 ;; esac \
     && curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-${BINARCH}.tar.gz" -o /tmp/trivy.tgz \
     && tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy \
-    && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${GOARCH}.tar.gz" -o /tmp/gitleaks.tgz \
+    && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${GITLEAKS_ARCH}.tar.gz" -o /tmp/gitleaks.tgz \
     && tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks \
     && curl -fsSL "https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_${GOARCH}" -o /usr/local/bin/osv-scanner \
     && chmod 0755 /usr/local/bin/osv-scanner \
