@@ -150,6 +150,11 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
   const openBuild = async () => {
     if (run?.buildUrl) await api?.openJenkins(run.buildUrl);
   };
+  const openJenkinsDashboard = async () => {
+    if (!connection.url) return;
+    try { await api?.openJenkins(connection.url); setError(null); }
+    catch (reason) { setError(errorMessage(reason)); }
+  };
 
   return (
     <>
@@ -170,7 +175,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
             <p className="jenkins-download-note">Create an API token in Jenkins under your user settings. Bankai encrypts it in your computer’s secure credential store.</p>
             <button className="jenkins-download-cta" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Connect and find jobs'}</button>
           </form> : <>
-            <div className="jenkins-connected-row"><div><strong>Connected to Jenkins</strong><span>{connection.url} · {connection.username}</span></div><button className="jenkins-text-button" type="button" onClick={() => void disconnect()} disabled={busy}>Disconnect</button></div>
+            <div className="jenkins-connected-row"><div><strong>Connected to Jenkins</strong><span>{connection.url} · {connection.username}</span></div><div className="jenkins-connected-actions"><button className="jenkins-text-button" type="button" onClick={() => void openJenkinsDashboard()}>Open Jenkins</button><button className="jenkins-text-button" type="button" onClick={() => void disconnect()} disabled={busy}>Disconnect</button></div></div>
             <label htmlFor="jenkins-job">Build job</label>
             <select id="jenkins-job" value={selectedJob} onChange={(event) => chooseJob(event.target.value)} disabled={!jobs.length || busy}>
               <option value="">{jobs.length ? 'Choose a Jenkins job' : 'No jobs found on this Jenkins server'}</option>
@@ -185,6 +190,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
               {run.number && <span> · #{run.number}</span>}
               {run.commitSha && <span> · commit {run.commitSha.slice(0, 10)}</span>}
               {run.durationMs && <span> · {(run.durationMs / 1000).toFixed(1)}s</span>}
+              {run.timestamp && <span> · {new Date(run.timestamp).toLocaleString()}</span>}
               {run.buildUrl && <button type="button" className="jenkins-text-button" onClick={() => void openBuild()}>Open build in Bankai browser</button>}
             </div>}
           </>}
