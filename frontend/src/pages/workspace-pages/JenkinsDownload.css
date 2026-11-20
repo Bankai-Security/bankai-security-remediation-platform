@@ -21,29 +21,18 @@
   box-shadow: 0 14px 40px rgba(20, 30, 48, .07);
 }
 
-.jenkins-download-icon {
-  width: 76px;
-  height: 76px;
-  display: grid;
-  place-items: center;
-  border: 1px solid #f1d4d2;
-  border-radius: 22px;
-  background: #fff7f6;
-}
-
 .jenkins-download-mark { width: 18px; height: 18px; flex: 0 0 auto; }
-.jenkins-download-mark--large { width: 42px; height: 42px; }
+.jenkins-download-mark--large { width: 52px; height: 52px; }
 
-.jenkins-download-eyebrow {
-  margin-top: 26px;
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .13em;
+.jenkins-download-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
 }
 
 .jenkins-download-title {
-  margin: 9px 0 0;
+  margin: 0;
   color: var(--color-text);
   font-size: clamp(25px, 4vw, 32px);
   line-height: 1.2;
@@ -100,7 +89,6 @@
   font-weight: 600;
 }
 
-.jenkins-download-project-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--color-green); }
 .jenkins-download-project-context { color: var(--color-text-faint); font-weight: 400; }
 
 .jenkins-choice-group {

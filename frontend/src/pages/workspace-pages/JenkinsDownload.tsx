@@ -19,9 +19,10 @@ export default function JenkinsDownload() {
   return (
     <main className="ws-page ws-page--narrow jenkins-download-page">
       <div className="jenkins-download-card">
-        <div className="jenkins-download-icon"><img src={jenkinsLogo} className="jenkins-download-mark jenkins-download-mark--large" alt="Jenkins" /></div>
-        <div className="jenkins-download-eyebrow">BANKAI DESKTOP</div>
-        <h1 className="jenkins-download-title">Run Jenkins from Bankai</h1>
+        <div className="jenkins-download-heading">
+          <img src={jenkinsLogo} className="jenkins-download-mark jenkins-download-mark--large" alt="Jenkins" />
+          <h1 className="jenkins-download-title">Run Jenkins from Bankai</h1>
+        </div>
         {desktopStatus === 'desktop' ? (
           <DesktopJenkinsOptions projectId={project?.id ?? ''} />
         ) : (
@@ -40,7 +41,6 @@ export default function JenkinsDownload() {
             <a className="jenkins-desktop-existing-link" href={desktopDeepLink}>Already installed? Open Bankai Desktop</a>
             <p className="jenkins-download-note">Jenkins runs in the desktop app. Scanning, triage, remediation, and PR review remain available here.</p>
             <div className="jenkins-download-project">
-              <span className="jenkins-download-project-dot" />
               {project?.name ?? 'Current project'}
               <span className="jenkins-download-project-context">will be included when you continue</span>
             </div>
