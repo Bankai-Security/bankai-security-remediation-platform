@@ -9,6 +9,7 @@ import {
   type HostedCiProposal,
   type VerificationSettings,
 } from "../lib/api";
+import { resolveVerificationScope } from "../lib/jenkins-job-matching";
 import { canManageProject } from "../lib/roles";
 
 export default function VerificationSetup({ projectId, role }: { projectId: string; role: string }) {
@@ -18,10 +19,33 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try { setSettings(await getVerificationSettings(projectId)); }
-    catch (reason) { setError(reason instanceof ApiError ? reason.message : "Could not load CI settings."); }
+  const [jenkinsStatus, setJenkinsStatus] = useState("Checking Jenkins…");
+  const checkJenkins = useCallback(async () => {
+    const desktop = window.bankaiDesktop;
+    if (!desktop) { setJenkinsStatus("Jenkins selected"); return; }
+    setJenkinsStatus("Checking Jenkins…");
+    try {
+      const connection = await desktop.getJenkinsConnection();
+      if (!connection.connected) { setJenkinsStatus("Connect Jenkins"); return; }
+      const selected = localStorage.getItem(`bankai-jenkins-job:${projectId}`);
+      if (!selected) { setJenkinsStatus("Choose a multibranch job"); return; }
+      const jobs = await desktop.listJenkinsJobs();
+      const scope = resolveVerificationScope(jobs, selected);
+      setJenkinsStatus(jobs.some(job => job.url === scope && job.supportsPullRequests)
+        ? "Ready" : "Choose a multibranch job");
+    } catch {
+      setJenkinsStatus("Could not check Jenkins");
+    }
   }, [projectId]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const current = await getVerificationSettings(projectId);
+      setSettings(current);
+      if (current.verification_provider === "jenkins") await checkJenkins();
+    }
+    catch (reason) { setError(reason instanceof ApiError ? reason.message : "Could not load CI settings."); }
+  }, [projectId, checkJenkins]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -30,6 +54,10 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
     try {
       const updated = await setVerificationProvider(projectId, provider);
       setSettings(updated);
+      if (provider === "jenkins") {
+        if (window.bankaiDesktop) localStorage.setItem(`bankai-jenkins-choice:${projectId}`, "enabled");
+        await checkJenkins();
+      }
       if (provider === "hosted_ci" && updated.ci_bootstrap_status !== "ready") {
         if (updated.ci_bootstrap_status === "pr_open" && updated.ci_bootstrap_pr_url) setSetupPr(updated.ci_bootstrap_pr_url);
         else setProposal(await generateHostedCiProposal(projectId));
@@ -60,6 +88,7 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
   if (!settings) return <section className="ws-card settings-section"><div className="page-subtitle">Loading CI choices…</div></section>;
   const editable = canManageProject(role as Parameters<typeof canManageProject>[0]);
   const hostedReady = settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status === "ready";
+  const providerReady = hostedReady || (settings.verification_provider === "jenkins" && jenkinsStatus === "Ready");
 
   return (
     <section className="ws-card settings-section" aria-labelledby="verification-setup-title">
@@ -68,21 +97,21 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
           <div className="ws-card-eyebrow">Verification</div>
           <h2 id="verification-setup-title" className="settings-h2">Choose a CI provider</h2>
         </div>
-        <span className="ws-dot-status" style={{ color: hostedReady ? "#15803D" : "#71717A" }}>
-          <span className="ws-dot" style={{ background: hostedReady ? "#22C55E" : "#A1A1AA" }} />
-          {hostedReady ? "Ready" : settings.verification_provider === "none" ? "Not configured" : "Setup pending"}
+        <span className="ws-dot-status" style={{ color: providerReady ? "#15803D" : "#71717A" }}>
+          <span className="ws-dot" style={{ background: providerReady ? "#22C55E" : "#A1A1AA" }} />
+          {settings.verification_provider === "jenkins" ? jenkinsStatus : providerReady ? "Ready" : settings.verification_provider === "none" ? "Not configured" : "Setup pending"}
         </span>
       </div>
       <p className="ws-card-hint">Scanning, triage, ticketing, and remediation stay available when you skip CI. Bankai never merges pull requests.</p>
       <div className="settings-jira-actions" style={{ flexWrap: "wrap", marginTop: 12 }}>
-        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy} onClick={() => void choose("jenkins")}>Use existing Jenkins</button>
-        <Link className="ws-btn ws-btn-secondary" to={`/workspace/${projectId}/jenkins`} onClick={() => void choose("jenkins")}>Set up Jenkins</Link>
+        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy || settings.verification_provider === "jenkins"} onClick={() => void choose("jenkins")}>{settings.verification_provider === "jenkins" ? "Jenkins selected" : "Use existing Jenkins"}</button>
+        <Link className="ws-btn ws-btn-secondary" to={`/workspace/${projectId}/jenkins`}>Set up Jenkins</Link>
         <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy} onClick={() => void choose("hosted_ci")}>Use hosted CI</button>
         <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy} onClick={() => void choose("none")}>Continue without CI</button>
         <button type="button" className="settings-jira-toggle-link" disabled={busy} onClick={() => void refresh()}>Refresh status</button>
       </div>
       {!editable && <div className="ws-card-hint" style={{ marginTop: 10 }}>Only project editors and admins can change the verification provider.</div>}
-      {settings.verification_provider === "jenkins" && <div className="ws-card-hint" style={{ marginTop: 10 }}>Jenkins verification uses the selected multibranch job in Bankai Desktop. Jenkins starts PR builds; Bankai reports results for the exact commit.</div>}
+      {settings.verification_provider === "jenkins" && <div className="ws-card-hint" style={{ marginTop: 10 }}>{providerReady ? "Jenkins PR verification is configured on this desktop. Keep Bankai Desktop open while builds are monitored." : "Jenkins is selected. In Bankai Desktop, connect Jenkins and choose this repository’s multibranch job on the Jenkins page to enable PR verification."}</div>}
       {settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status === "none" && <div className="ws-card-hint" style={{ marginTop: 10 }}>The hosted workflow has not been added yet. Bankai will show the complete draft for review before opening a setup pull request.</div>}
       {settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status === "pr_open" && (
         <div className="ws-card-hint" style={{ marginTop: 10 }}>Hosted CI is awaiting human review and merge of its workflow setup pull request. Results remain pending until setup is ready. {setupPr && <a href={setupPr} target="_blank" rel="noreferrer">Review setup pull request</a>}{!setupPr && settings.ci_bootstrap_pr_url && <a href={settings.ci_bootstrap_pr_url} target="_blank" rel="noreferrer">Review setup pull request</a>}</div>
@@ -110,3 +139,4 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
     </section>
   );
 }
+

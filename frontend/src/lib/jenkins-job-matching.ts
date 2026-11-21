@@ -29,18 +29,21 @@ export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], sel
   const selectedPrJob = jobs.find((job) => isExpectedName(job) && job.supportsPullRequests && sameJobUrl(job.url, selectedUrl));
   if (selectedPrJob) return selectedPrJob;
 
-  // A previously selected PR branch (for example PR-4) can still identify
-  // the repository's multibranch parent when a later ticket belongs to PR-5.
-  // Walk back through matching Jenkins ancestors and search each scope.
-  const selectedJob = jobs.find((job) => sameJobUrl(job.url, selectedUrl));
-  const isPriorPullRequestBranch = selectedJob && /^(pr[-_]\d+|remediation\/)/i.test(selectedJob.name);
-  const parentJobs = (isPriorPullRequestBranch ? jobs : [])
-    .filter((job) => job.supportsPullRequests && !sameJobUrl(job.url, selectedUrl) && isJobNestedUnder(job.url, selectedUrl))
-    .sort((left, right) => right.url.length - left.url.length);
-  const scopes = [selectedUrl, ...parentJobs.map((job) => job.url)];
-  for (const scope of scopes) {
-    const matchingBranch = jobs.find((job) => isExpectedName(job) && isJobNestedUnder(scope, job.url));
-    if (matchingBranch) return matchingBranch;
+  const scope = resolveVerificationScope(jobs, selectedUrl);
+  return jobs.find((job) => isExpectedName(job) && isJobNestedUnder(scope, job.url));
+}
+
+// A saved selection may point to main or to a PR that Jenkins has since pruned.
+// Resolve its immediate job parent, including URLs exposed through Jenkins views.
+export function resolveVerificationScope(jobs: JenkinsJobCandidate[], selectedUrl: string): string {
+  try {
+    const parent = new URL(selectedUrl);
+    const path = parent.pathname.replace(/\/+$/, "");
+    const boundary = path.lastIndexOf("/job/");
+    if (boundary < 0) return selectedUrl;
+    parent.pathname = path.slice(0, boundary).replace(/\/view\/[^/]+$/, "") + "/";
+    return jobs.find((job) => job.supportsPullRequests && sameJobUrl(job.url, parent.href))?.url ?? selectedUrl;
+  } catch {
+    return selectedUrl;
   }
-  return undefined;
 }

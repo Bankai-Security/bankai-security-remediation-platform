@@ -40,7 +40,9 @@ describe("findPullRequestJob", () => {
     expect(findPullRequestJob(jobs, jobs[0].url, expectedNames)).toBe(jobs[1]);
   });
 
-  it("does not accept the wrong selected branch", () => {
-    expect(findPullRequestJob(jobs, jobs[2].url, expectedNames)).toBeUndefined();
+  it("resolves a selected main branch to its sibling PR", () => {
+    expect(findPullRequestJob(jobs, jobs[2].url, expectedNames)).toBe(jobs[1]);
+    expect(findPullRequestJob(jobs, jobs[0].url + "view/change-requests/job/PR-3/", expectedNames)).toBe(jobs[1]);
   });
 });
+

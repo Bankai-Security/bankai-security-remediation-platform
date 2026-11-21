@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, inspectJenkinsfile, recordJenkinsAuditAction, setVerificationProvider, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
+import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, getVerificationSettings, inspectJenkinsfile, recordJenkinsAuditAction, setVerificationProvider, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
@@ -76,6 +76,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const [apiToken, setApiToken] = useState('');
   const [jobs, setJobs] = useState<JenkinsJob[]>([]);
   const [selectedJob, setSelectedJob] = useState('');
+  const [selectedJobSupportsPr, setSelectedJobSupportsPr] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -86,6 +87,22 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       return saved === 'enabled' || saved === 'skipped' ? saved : 'unset';
     } catch { return 'unset'; }
   });
+
+  useEffect(() => {
+    if (!api) return;
+    let active = true;
+    void getVerificationSettings(projectId).then((settings) => {
+      if (!active) return;
+      if (settings.verification_provider === 'jenkins') {
+        setChoice('enabled');
+        try { localStorage.setItem(`bankai-jenkins-choice:${projectId}`, 'enabled'); } catch { /* optional preference */ }
+      } else {
+        setChoice('unset');
+        try { localStorage.removeItem(`bankai-jenkins-choice:${projectId}`); } catch { /* optional preference */ }
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [api, projectId, canManage]);
 
   useEffect(() => {
     if (!api || !canManage) return;
@@ -102,6 +119,11 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
           try {
             const savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || '';
             setSelectedJob(discovered.some((job) => job.url === savedJob) ? savedJob : '');
+            setSelectedJobSupportsPr(Boolean(discovered.find((job) => job.url === savedJob)?.supportsPullRequests));
+            try {
+              if (discovered.find((job) => job.url === savedJob)?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, savedJob);
+              else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
+            } catch { /* optional readiness hint */ }
           } catch { /* optional convenience */ }
         }
       }
@@ -130,7 +152,12 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       setConnection(result); setJobs(result.jobs); setApiToken('');
       let savedJob = '';
       try { savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || ''; } catch { /* optional convenience */ }
-      setSelectedJob(result.jobs.some((job) => job.url === savedJob) ? savedJob : ''); setRun(null);
+      const validSavedJob = result.jobs.find((job) => job.url === savedJob);
+      setSelectedJob(validSavedJob?.url ?? ''); setSelectedJobSupportsPr(Boolean(validSavedJob?.supportsPullRequests)); setRun(null);
+      try {
+        if (validSavedJob?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, validSavedJob.url);
+        else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
+      } catch { /* optional readiness hint */ }
       setMessage(`Connected. Found ${result.jobs.length} Jenkins job${result.jobs.length === 1 ? '' : 's'}.`);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -138,7 +165,17 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const refreshJobs = async () => {
     if (!api) return;
     setBusy(true); setError(null);
-    try { const discovered = await api.listJenkinsJobs(); setJobs(discovered); setMessage(`Found ${discovered.length} Jenkins job${discovered.length === 1 ? '' : 's'}.`); }
+    try {
+      const discovered = await api.listJenkinsJobs();
+      setJobs(discovered);
+      const selected = discovered.find((job) => job.url === selectedJob);
+      setSelectedJobSupportsPr(Boolean(selected?.supportsPullRequests));
+      try {
+        if (selected?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, selected.url);
+        else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
+      } catch { /* optional readiness hint */ }
+      setMessage(`Found ${discovered.length} Jenkins job${discovered.length === 1 ? '' : 's'}.`);
+    }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -148,7 +185,10 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     try {
       await api.disconnectJenkins();
       void recordJenkinsAuditAction(projectId, 'disconnected').catch(() => undefined);
-      setConnection({ connected: false }); setJobs([]); setSelectedJob(''); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
+      setConnection({ connected: false }); setJobs([]); setSelectedJob(''); setSelectedJobSupportsPr(false); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
+      try { localStorage.removeItem(`bankai-jenkins-choice:${projectId}`); } catch { /* optional preference */ }
+      try { localStorage.removeItem(`bankai-jenkins-job:${projectId}`); } catch { /* optional preference */ }
+      try { localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`); } catch { /* optional preference */ }
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -164,7 +204,15 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   };
   const chooseJob = (value: string) => {
     setSelectedJob(value);
+    setSelectedJobSupportsPr(Boolean(jobs.find((job) => job.url === value)?.supportsPullRequests));
     try { localStorage.setItem(`bankai-jenkins-job:${projectId}`, value); } catch { /* optional convenience */ }
+    try {
+      if (jobs.find((job) => job.url === value)?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, value);
+      else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
+    } catch { /* optional readiness hint */ }
+    if (value && choice === 'enabled') {
+      try { localStorage.setItem(`bankai-jenkins-choice:${projectId}`, 'enabled'); } catch { /* optional preference */ }
+    }
     if (value) void recordJenkinsAuditAction(projectId, 'ci_job_selected').catch(() => undefined);
   };
   const openBuild = async () => {
@@ -203,12 +251,13 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
             <label htmlFor="jenkins-job">Build job</label>
             <select id="jenkins-job" value={selectedJob} onChange={(event) => chooseJob(event.target.value)} disabled={!jobs.length || busy}>
               <option value="">{jobs.length ? 'Choose a Jenkins job' : 'No jobs found on this Jenkins server'}</option>
-              {jobs.map((job) => <option key={job.url} value={job.url}>{job.name}{job.supportsPullRequests ? ' · multibranch PR pipeline' : ''}</option>)}
+              {jobs.map((job) => <option key={job.url} value={job.url}>{job.name}{job.supportsPullRequests ? ' · multibranch PR pipeline' : ' · manual builds only'}</option>)}
             </select>
             <div className="jenkins-job-actions">
               <button className="jenkins-download-cta" type="button" onClick={() => void runJob()} disabled={!selectedJob || busy}>{busy ? 'Working…' : 'Run build'}</button>
               <button className="jenkins-text-button" type="button" onClick={() => void refreshJobs()} disabled={busy}>Refresh jobs</button>
             </div>
+            {selectedJob && !selectedJobSupportsPr && <p className="jenkins-download-note" role="status">This job can run manually, but it is not detected as a multibranch PR job. Select a multibranch pipeline with pull request discovery for automatic ticket verification.</p>}
             {run && <div className={`jenkins-run-status jenkins-run-status--${run.state}`} role="status">
               <strong>{run.state === 'success' ? 'Build succeeded' : run.state === 'failure' ? 'Build failed' : run.state === 'aborted' ? 'Build was stopped' : run.state === 'running' ? 'Build is running' : 'Build is queued'}</strong>
               {run.number && <span> · #{run.number}</span>}

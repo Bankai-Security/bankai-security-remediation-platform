@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { claimJenkinsPipeline, finishJenkinsPipeline, reportJenkinsDeployment, reportJenkinsPipelineProgress } from "../lib/api";
-import { findPullRequestJob } from "../lib/jenkins-job-matching";
+import { findPullRequestJob, resolveVerificationScope } from "../lib/jenkins-job-matching";
 
 function desktopId(): string {
   const key = "bankai-pipeline-device-id";
@@ -24,7 +24,7 @@ function recoveryMessage(reason: unknown): string {
 export default function JenkinsPipelineAgent({ projectId }: { projectId: string }) {
   useEffect(() => {
     const desktop = window.bankaiDesktop;
-    if (!desktop || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") return;
+    if (!desktop) return;
     let stopped = false;
     let working = false;
     let timer = 0;
@@ -61,15 +61,16 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
       try {
         const connection = await desktop.getJenkinsConnection();
         if (!connection.connected) return;
-        const run = await claimJenkinsPipeline(projectId, { deviceId: desktopId(), jobUrl: selectedJob });
+        const scope = resolveVerificationScope(await desktop.listJenkinsJobs(), selectedJob);
+        const run = await claimJenkinsPipeline(projectId, { deviceId: desktopId(), jobUrl: scope });
         if (!run) return;
         activeRun = run;
-        const expectedNames = new Set([`pr-${run.pullRequestNumber}`.toLowerCase(), `pr_${run.pullRequestNumber}`.toLowerCase(), run.branch.toLowerCase()]);
+        const expectedNames = new Set([`pr-${run.pullRequestNumber}`.toLowerCase(), `pr_${run.pullRequestNumber}`.toLowerCase(), `pr/${run.pullRequestNumber}`.toLowerCase(), run.branch.toLowerCase()]);
         let job: { name: string; url: string; color: string; supportsPullRequests?: boolean } | undefined;
         for (let attempt = 0; attempt < 18 && !job; attempt += 1) {
           if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") break;
           const jobs = await desktop.listJenkinsJobs();
-          job = findPullRequestJob(jobs, selectedJob, expectedNames);
+          job = findPullRequestJob(jobs, scope, expectedNames);
           if (!job && attempt < 17) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
         }
         if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") {
@@ -167,3 +168,4 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
   }, [projectId]);
   return null;
 }
+
