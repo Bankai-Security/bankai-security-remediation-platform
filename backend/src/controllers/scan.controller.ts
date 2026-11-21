@@ -70,7 +70,7 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
 
   const { data: existingRaw, error: existingError } = await supabase
     .from("findings")
-    .select("fingerprint, severity, cvss_score, bucket")
+    .select("fingerprint, severity, cvss_score, bucket, file_path, external_id, component, finding_type, cves, last_seen_at")
     .eq("project_id", project.id);
 
   if (existingError) {
@@ -82,6 +82,12 @@ export async function uploadScan(req: Request, res: Response): Promise<void> {
     severity: f.severity,
     cvssScore: f.cvss_score,
     bucket: f.bucket,
+    filePath: f.file_path,
+    externalId: f.external_id,
+    component: f.component,
+    findingType: f.finding_type,
+    cves: f.cves,
+    lastSeenAt: f.last_seen_at,
   }));
 
   const { data: projectServices, error: servicesError } = await supabase

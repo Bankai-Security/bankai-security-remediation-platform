@@ -237,6 +237,29 @@ export interface ExistingFinding {
   // undefined/unused by the CSV path, which always submits the complete
   // finding set and so has no need to scope it.
   filePath?: string | null;
+  externalId?: string | null;
+  component?: string | null;
+  findingType?: string | null;
+  cves?: string | null;
+  lastSeenAt?: string | null;
+}
+
+function canonicalPath(path: string | null | undefined): string {
+  return (path ?? "").replaceAll("\\", "/").replace(/^\/?tmp\/bankai-scan-[^/]+\/repo\//i, "").replace(/^\.\//, "").toLowerCase();
+}
+
+function sameFindingIdentity(existing: ExistingFinding, row: NormalizedFinding): boolean {
+  const rowCves = new Set((row.cves ?? "").toLowerCase().match(/cve-\d{4}-\d+/g) ?? []);
+  const existingCves = (existing.cves ?? "").toLowerCase().match(/cve-\d{4}-\d+/g) ?? [];
+  const sameComponent = (existing.component ?? "").trim().toLowerCase() === (row.component ?? "").trim().toLowerCase();
+  // A CVE can affect multiple packages in one repository. Match advisory
+  // identity only when the package/component also matches.
+  if (sameComponent && rowCves.size && existingCves.some((cve) => rowCves.has(cve))) return true;
+  if (existing.findingType && row.findingType && existing.externalId && row.externalId
+    && existing.findingType.toLowerCase() === row.findingType.toLowerCase()
+    && existing.externalId.toLowerCase() === row.externalId.toLowerCase()
+    && canonicalPath(existing.filePath) === canonicalPath(row.filePath)) return true;
+  return false;
 }
 
 export interface FindingUpsertRow {
@@ -329,13 +352,28 @@ export function planIngest(
     if (seenFingerprints.has(row.fingerprint)) continue;
     seenFingerprints.add(row.fingerprint);
 
-    const prev = existingByFingerprint.get(row.fingerprint);
+    const prev = existingByFingerprint.get(row.fingerprint)
+      ?? existing
+        .filter((finding) => sameFindingIdentity(finding, row))
+        // If historical scans already created duplicates, retain the active
+        // and most recently observed record as canonical so its remediation
+        // state survives. Older duplicated records may be resolved separately.
+        .sort((a, b) => {
+          const activeFirst = Number(a.bucket === "Resolved") - Number(b.bucket === "Resolved");
+          if (activeFirst !== 0) return activeFirst;
+          return Date.parse(b.lastSeenAt ?? "") - Date.parse(a.lastSeenAt ?? "");
+        })[0];
+    if (prev && prev.fingerprint !== row.fingerprint && seenFingerprints.has(prev.fingerprint)) continue;
     let bucket: Bucket;
     let rationale: string;
 
     if (!prev) {
       bucket = "New Delta";
       rationale = "No match found in this project's existing findings — first appearance in this intake.";
+      counts.newDelta++;
+    } else if (prev.bucket === "Resolved") {
+      bucket = "New Delta";
+      rationale = "This previously resolved finding has appeared again and requires review.";
       counts.newDelta++;
     } else if (prev.severity !== row.severity || prev.cvssScore !== row.cvssScore) {
       bucket = "Changed";
@@ -347,12 +385,18 @@ export function planIngest(
       counts.inProgress++;
     }
 
+    // A legacy fingerprint may encode a temporary checkout path. Reuse the
+    // matched row's stable key and mark it seen, instead of inserting a second
+    // finding (and consequently a second ticket) for the same vulnerability.
+    const fingerprint = prev?.fingerprint ?? row.fingerprint;
+    seenFingerprints.add(fingerprint);
+
     const dueFrom = row.dateFound ? new Date(`${row.dateFound}T00:00:00Z`) : now;
 
     upsertRows.push({
       project_id: projectId,
       scan_id: scanId,
-      fingerprint: row.fingerprint,
+      fingerprint,
       external_id: row.externalId,
       title: row.title,
       severity: row.severity,

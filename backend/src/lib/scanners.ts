@@ -48,27 +48,38 @@ function stableFingerprint(scanner: string, identity: string): string {
   return `${scanner}:${createHash("sha256").update(identity.toLowerCase()).digest("hex")}`;
 }
 
+function repositoryRelativePath(path: string | null, repoRoot: string): string | null {
+  if (!path) return null;
+  const normalized = path.replaceAll("\\", "/");
+  const root = repoRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (normalized.startsWith(`${root}/`)) return normalized.slice(root.length + 1);
+  const marker = normalized.match(/(?:^|\/)tmp\/bankai-scan-[^/]+\/repo\/(.+)$/i);
+  return marker?.[1] ?? normalized.replace(/^\.\//, "");
+}
+
+function advisoryAliases(primary: string | null, aliases: string[]): string[] {
+  const ids = [primary, ...aliases].filter((value): value is string => Boolean(value));
+  const cves = ids.filter((value) => /^CVE-\d{4}-\d+$/i.test(value));
+  return cves.length ? [...new Set(cves.map((value) => value.toUpperCase()))] : ids.map((value) => value.toUpperCase());
+}
+
 function finding(input: {
   scanner: string; id?: string | null; title?: string | null; severity?: unknown; path?: string | null; repoRoot: string;
   line?: number | null; component?: string | null; description?: string | null; url?: string | null;
   cves?: string[]; fixed?: string | null; guidance?: string | null; commitSha: string; __repo?: string;
 }): NormalizedFinding {
-  const rawPath = input.path?.replaceAll("\\", "/") ?? null;
-  const repoRoot = input.repoRoot.replaceAll("\\", "/").replace(/\/+$/, "");
-  // Some scanners (notably Bandit) emit absolute paths from the temporary
-  // checkout. Convert only paths proven to be under this exact checkout;
-  // leave every other absolute path intact so remediation rejects it.
-  const path = rawPath
-    ? (rawPath.startsWith(`${repoRoot}/`) ? rawPath.slice(repoRoot.length + 1) : rawPath).replace(/^\.\//, "")
-    : null;
+  const path = repositoryRelativePath(input.path ?? null, input.repoRoot);
   const id = input.id ?? null;
   const title = input.title || id || `${input.scanner} finding`;
-  const identity = input.cves?.length
-    ? `${input.cves.map(cve => cve.toLowerCase()).sort().join(",")}|${input.component ?? ""}`
-    : id ? `${id}|${input.component ?? ""}|${path ?? ""}` : `${path ?? "repo"}|${input.component ?? ""}|${title}`;
+  const component = input.component?.trim().toLowerCase() ?? null;
+  const stableId = id?.trim().toLowerCase() ?? null;
+  const advisoryIds = input.cves?.length ? advisoryAliases(id, input.cves) : [];
+  const identity = advisoryIds.length
+    ? `${advisoryIds.sort().join(",")}|${component ?? ""}`
+    : stableId ? `${stableId}|${component ?? ""}|${path ?? ""}` : `${path ?? "repo"}|${component ?? ""}|${title.toLowerCase()}`;
   const anchor = input.line ? `#L${input.line}` : "";
   return {
-    fingerprint: stableFingerprint(input.cves?.length ? "advisory" : input.scanner, identity), externalId: id, title, severity: severity(input.severity),
+    fingerprint: stableFingerprint(advisoryIds.length ? "advisory" : input.scanner, identity), externalId: id, title, severity: severity(input.severity),
     cvssScore: null, cwe: null, component: input.component ?? null, filePath: path,
     findingType: input.scanner, sourceStatus: null, dateFound: null, description: input.description ?? title,
     fixAvailable: input.fixed ?? null, sourceUrl: input.url ?? (path ? `https://github.com/${input.__repo ?? ""}/blob/${input.commitSha}/${path}${anchor}` : null),
@@ -80,15 +91,14 @@ function finding(input: {
   } as NormalizedFinding;
 }
 
-function normalize(scanner: string, data: unknown, repo: string, sha: string, repoRoot: string): NormalizedFinding[] {
+export function normalizeScannerFindings(scanner: string, data: unknown, repo: string, sha: string, repoRoot: string): NormalizedFinding[] {
   const root = object(data); const out: NormalizedFinding[] = [];
   const add = (value: Omit<Parameters<typeof finding>[0], "scanner" | "commitSha" | "__repo" | "repoRoot">) => out.push(finding({ ...value, scanner, commitSha: sha, __repo: repo, repoRoot }));
   if (scanner === "trivy") for (const result of arr(root.Results).map(object)) {
     const target = str(result.Target);
     for (const v of arr(result.Vulnerabilities).map(object)) {
       const vulnerabilityId = str(v.VulnerabilityID);
-      const cves = arr(v.CVEIDs).map(String);
-      if (vulnerabilityId?.startsWith("CVE-") && !cves.includes(vulnerabilityId)) cves.push(vulnerabilityId);
+      const cves = advisoryAliases(vulnerabilityId, arr(v.CVEIDs).map(String));
       add({ id: vulnerabilityId, title: str(v.Title), severity: v.Severity, path: target, component: str(v.PkgName), description: str(v.Description), url: str(v.PrimaryURL), cves, fixed: str(v.FixedVersion), guidance: str(arr(v.References).map(String).join("; ")) });
     }
     for (const m of arr(result.Misconfigurations).map(object)) { const cause = object(m.CauseMetadata); add({ id: str(m.ID), title: str(m.Title), severity: m.Severity, path: target, line: typeof cause.StartLine === "number" ? cause.StartLine : null, description: str(m.Message), url: str(m.PrimaryURL), guidance: str(m.Resolution) }); }
@@ -105,7 +115,7 @@ function normalize(scanner: string, data: unknown, repo: string, sha: string, re
       const aliases = arr(v.aliases).map(String);
       const vulnerabilityId = str(v.id);
       if (vulnerabilityId?.startsWith("CVE-") && !aliases.includes(vulnerabilityId)) aliases.push(vulnerabilityId);
-      add({ id: vulnerabilityId, title: str(v.summary) || str(v.id), severity: object(v.database_specific).severity, path: str(object(pkg.package).name) ? str(result.source && object(result.source).path) : null, component: str(object(pkg.package).name), description: str(v.details), url: str(v.references && arr(v.references).map(object).find(x => x.type === "ADVISORY")?.url), cves: aliases.filter(a => a.startsWith("CVE-")) });
+      add({ id: vulnerabilityId, title: str(v.summary) || str(v.id), severity: object(v.database_specific).severity, path: str(object(pkg.package).name) ? str(result.source && object(result.source).path) : null, component: str(object(pkg.package).name), description: str(v.details), url: str(v.references && arr(v.references).map(object).find(x => x.type === "ADVISORY")?.url), cves: advisoryAliases(vulnerabilityId, aliases) });
     }
   }
   if (scanner === "codeql") for (const run of arr(root.runs).map(object)) for (const r of arr(run.results).map(object)) { const loc = object(arr(r.locations)[0]); const physical = object(object(loc.physicalLocation).artifactLocation); const region = object(object(loc.physicalLocation).region); add({ id: str(r.ruleId), title: str(r.message && object(r.message).text), severity: str(r.level), path: str(physical.uri), line: typeof region.startLine === "number" ? region.startLine : null, description: str(r.message && object(r.message).text) }); }
@@ -149,7 +159,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
   const invoke = async (name: string, command: string, args: string[], allowFindings = false) => {
     try {
       const result = await scanner(name, command, args, root, JSON.parse, allowFindings);
-      const rows = normalize(name, result.value, repo, sha, root); result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
+      const rows = normalizeScannerFindings(name, result.value, repo, sha, root); result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Scanner failed.";
       logger.warn({ scanner: name, reason }, "Repository scanner failed");
@@ -167,7 +177,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
   if (names.some(n => ["package-lock.json", "npm-shrinkwrap.json"].includes(n.split(/[\\/]/).at(-1) ?? ""))) {
     try {
       const out = await run("npm", ["audit", "--package-lock-only", "--json", "--userconfig", "/dev/null", "--registry", "https://registry.npmjs.org"], root, true);
-      const rows = normalize("npm-audit", JSON.parse(out.stdout), repo, sha, root); findings.push(...rows); runs.push({ scanner: "npm-audit", version: await version("npm", ["--version"]), findings: rows.length, status: "complete" });
+      const rows = normalizeScannerFindings("npm-audit", JSON.parse(out.stdout), repo, sha, root); findings.push(...rows); runs.push({ scanner: "npm-audit", version: await version("npm", ["--version"]), findings: rows.length, status: "complete" });
     } catch (error) {
       runs.push({ scanner: "npm-audit", version: await version("npm", ["--version"]).catch(() => "unknown"), findings: 0, status: "failed", reason: error instanceof Error ? error.message : "Scanner failed." });
     }
