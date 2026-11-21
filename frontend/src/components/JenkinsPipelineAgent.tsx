@@ -32,11 +32,24 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
     let activeRunJobUrl: string | null = null;
     let activeDeploymentRunId: string | null = null;
     let activeDeploymentJobUrl: string | null = null;
+    const terminalReports = new Set<string>();
     const unsubscribe = desktop.onJenkinsJobProgress((progress) => {
-      if (progress.state !== "running" || !progress.buildUrl) return;
+      if (!progress.buildUrl) return;
       if (activeRun?.runId && progress.jobUrl === activeRunJobUrl) {
-        void reportJenkinsPipelineProgress(projectId, activeRun.runId, { deviceId: desktopId(), buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
-      } else if (activeDeploymentRunId && progress.jobUrl === activeDeploymentJobUrl) {
+        if (progress.state === "running") {
+          void reportJenkinsPipelineProgress(projectId, activeRun.runId, { deviceId: desktopId(), buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
+        } else if (["success", "failure", "aborted"].includes(progress.state) && !terminalReports.has(activeRun.runId)) {
+          const run = activeRun;
+          const runId = run.runId;
+          terminalReports.add(runId);
+          const state = progress.state === "success" ? "passed" : progress.state === "aborted" ? "cancelled" : "failed";
+          void (async () => {
+            const failureLog = state === "failed" ? await desktop.getJenkinsBuildLog(progress.buildUrl!).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
+            await finishJenkinsPipeline(projectId, runId, { deviceId: desktopId(), state, buildUrl: progress.buildUrl!,
+              buildNumber: progress.number, commitSha: progress.commitSha, failureLog });
+          })().catch(() => { terminalReports.delete(runId); });
+        }
+      } else if (activeDeploymentRunId && progress.jobUrl === activeDeploymentJobUrl && progress.state === "running") {
         void reportJenkinsDeployment(projectId, activeDeploymentRunId, { deviceId: desktopId(), state: "running", buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
       }
     });
@@ -72,6 +85,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         const result = await desktop.runJenkinsJob(job.url);
         const state = result.state === "success" ? "passed" : result.state === "aborted" ? "cancelled" : "failed";
         const failureLog = state === "failed" && result.buildUrl ? await desktop.getJenkinsBuildLog(result.buildUrl).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
+        terminalReports.add(run.runId);
         const completion = await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state, buildUrl: result.buildUrl ?? job.url,
           buildNumber: result.number, commitSha: result.commitSha, failureLog });
         activeRun = null;
