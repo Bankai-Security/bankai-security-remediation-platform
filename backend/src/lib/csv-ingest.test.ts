@@ -62,4 +62,27 @@ describe("finding normalization and deduplication", () => {
     expect(plan.notDetectedFingerprints).toEqual(["id:old"]);
     expect(plan.counts.notDetected).toBe(1);
   });
+
+  it("reuses the active matching finding when temporary-path fingerprints drift", () => {
+    const row = parseFindingsCsv(Buffer.from("id,title,severity\nstable,Vulnerability,high\n"))[0]!;
+    const plan = planIngest("project", "scan", [
+      { fingerprint: "resolved-old", externalId: "stable", findingType: "semgrep", filePath: "src/a.py", severity: "High", cvssScore: null, bucket: "Resolved" },
+      { fingerprint: "legacy-id", externalId: "stable", findingType: "semgrep", filePath: "tmp/bankai-scan-old/repo/src/a.py", severity: "High", cvssScore: null, bucket: "In Progress" },
+    ], [{ ...row, findingType: "semgrep", filePath: "src/a.py" }], new Date("2026-11-22T00:00:00Z"), policy);
+    expect(plan.upsertRows).toHaveLength(1);
+    expect(plan.upsertRows[0]?.fingerprint).toBe("legacy-id");
+    expect(plan.upsertRows[0]?.bucket).toBe("In Progress");
+    expect(plan.counts.newDelta).toBe(0);
+    expect(plan.notDetectedFingerprints).toEqual([]);
+  });
+
+  it("does not conflate the same CVE in different components", () => {
+    const parsed = parseFindingsCsv(Buffer.from("id,title,severity\nCVE-2025-0001,Vulnerability,high\n"))[0]!;
+    const row = { ...parsed, cves: "CVE-2025-0001", component: "package-b" };
+    const plan = planIngest("project", "scan", [
+      { fingerprint: "other-package", externalId: "GHSA-x", component: "package-a", cves: "CVE-2025-0001", severity: "High", cvssScore: null, bucket: "In Progress" },
+    ], [row], new Date("2026-11-22T00:00:00Z"), policy);
+    expect(plan.upsertRows[0]?.fingerprint).toBe(row.fingerprint);
+    expect(plan.upsertRows[0]?.bucket).toBe("New Delta");
+  });
 });

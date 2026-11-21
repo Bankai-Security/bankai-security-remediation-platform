@@ -73,7 +73,7 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
 
   const { data: existingRaw, error: existingError } = await supabase
     .from("findings")
-    .select("fingerprint, severity, cvss_score, bucket, file_path")
+    .select("fingerprint, severity, cvss_score, bucket, file_path, external_id, component, finding_type, cves, last_seen_at")
     .eq("project_id", projectId);
   if (existingError) throw new Error("Could not load this project's existing findings.");
 
@@ -83,6 +83,11 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
     cvssScore: f.cvss_score,
     bucket: f.bucket,
     filePath: f.file_path,
+    externalId: f.external_id,
+    component: f.component,
+    findingType: f.finding_type,
+    cves: f.cves,
+    lastSeenAt: f.last_seen_at,
   }));
 
   const rawPlan = planIngest(
