@@ -261,6 +261,22 @@ export interface CreateIssueInput {
   dueDate: string | null;
 }
 
+const JIRA_SUMMARY_MAX_LENGTH = 225;
+
+function limitJiraSummary(summary: string): string {
+  const normalized = summary.trim();
+  if (normalized.length <= JIRA_SUMMARY_MAX_LENGTH) return normalized;
+
+  // Count UTF-16 code units (the length Jira's Java API validates) while
+  // iterating Unicode code points so truncation never splits a surrogate pair.
+  let result = "";
+  for (const character of normalized) {
+    if (result.length + character.length > JIRA_SUMMARY_MAX_LENGTH - 1) break;
+    result += character;
+  }
+  return `${result.trimEnd()}…`;
+}
+
 export interface CreatedIssue {
   key: string;
   url: string;
@@ -311,7 +327,7 @@ export async function createIssue(creds: JiraCredentials, input: CreateIssueInpu
     body: JSON.stringify({
       fields: {
         project: { key: input.projectKey },
-        summary: input.title,
+        summary: limitJiraSummary(input.title),
         issuetype: { name: "Bug" },
         description: toADF(input.description),
         priority: { name: SEVERITY_TO_PRIORITY[input.severity] },
@@ -483,7 +499,7 @@ export async function updateIssue(creds: JiraCredentials, issueKey: string, inpu
       method: "PUT",
       body: JSON.stringify({
         fields: {
-          summary: input.title,
+          summary: limitJiraSummary(input.title),
           description: toADF(input.description),
           priority: { name: SEVERITY_TO_PRIORITY[input.severity] },
           duedate: input.dueDate,
