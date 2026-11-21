@@ -11,6 +11,7 @@ import { errorHandler } from "./middleware/error-handler.js";
 import { originCheck } from "./middleware/origin-check.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { inviteRouter } from "./routes/invite.routes.js";
+import { jiraOAuthRouter } from "./routes/jira-oauth.routes.js";
 import { orgInviteRouter } from "./routes/org-invite.routes.js";
 import { orgRouter } from "./routes/org.routes.js";
 import { projectRouter } from "./routes/project.routes.js";
@@ -38,6 +39,7 @@ export function createApp(): Express {
   // else (auth, project routes) is unaffected: this only intercepts
   // /api/webhooks/*.
   app.use("/api/webhooks", webhookRouter);
+  app.use("/api/jira/oauth", jiraOAuthRouter);
 
   app.use(express.json({ limit: "16kb" }));
   app.use(cookieParser());

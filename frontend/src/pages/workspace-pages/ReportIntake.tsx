@@ -402,7 +402,14 @@ export default function ReportIntake() {
                       </span>
                       {label}
                       {row.source === 'github_ai' && row.triggerType === 'webhook' && (
-                        <span className="ws-card-hint" style={{ marginLeft: 6 }}>(auto, on push)</span>
+                        <span className="ws-card-hint" style={{ marginLeft: 6 }}>
+                          {row.scanType === 'pull_request'
+                            ? `(PR #${row.pullRequestNumber ?? '?'} · ${row.commitSha?.slice(0, 12) ?? 'pinned commit'})`
+                            : '(auto, on push)'}
+                        </span>
+                      )}
+                      {row.source === 'github_ai' && row.triggerType === 'initial' && (
+                        <span className="ws-card-hint" style={{ marginLeft: 6 }}>(initial scan)</span>
                       )}
                     </span>
                     <span className="intake-history-date">{formatDate(row.createdAt)}</span>

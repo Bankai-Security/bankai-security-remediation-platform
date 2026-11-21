@@ -41,6 +41,25 @@ export interface RepoScanResult {
   counts: { newDelta: number; changed: number; inProgress: number; notDetected: number };
 }
 
+// PR scans are pinned to the webhook's exact head revision. They are kept as
+// scan evidence and deliberately do not reconcile the project's baseline
+// findings: a remediation branch must never resolve or re-create tickets.
+export async function runPullRequestRepoScan(input: {
+  supabase: SupabaseClient;
+  projectId: string;
+  scanId: string;
+  github: { creds: GithubCredentials };
+  headSha: string;
+}): Promise<{ commitSha: string; filesScanned: number; findingCount: number; scanners: import("./scanners.js").ScannerRun[] }> {
+  const scan = await scanRepository(input.github.creds, input.headSha);
+  if (!scan.complete) {
+    const failed = scan.scanners.filter((run) => run.status === "failed").map((run) => run.scanner).join(", ");
+    await input.supabase.from("scans").update({ scanner_runs: scan.scanners, scan_complete: false }).eq("id", input.scanId);
+    throw new Error(`Pull request scanner coverage was incomplete (${failed}).`);
+  }
+  return { commitSha: input.headSha, filesScanned: scan.filesScanned, findingCount: scan.findings.length, scanners: scan.scanners };
+}
+
 export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScanResult> {
   const { supabase, projectId, scanId, github, slaPolicyDays, defaultService } = input;
   const commitSha = input.headSha ?? await getBranchHeadSha(github.creds, github.defaultBranch);

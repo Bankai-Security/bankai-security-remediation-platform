@@ -188,7 +188,11 @@ export interface JiraConnection {
   projectKey: string | null;
   email: string | null;
   connectedAt: string | null;
+  oauthAuthorized: boolean;
 }
+
+export interface JiraOAuthSite { id: string; name: string; url: string; scopes: string[] }
+export interface JiraOAuthProject { id: string; key: string; name: string; projectTypeKey?: string }
 
 export function getJiraConnection(projectId: string): Promise<JiraConnection> {
   return apiFetch(`/projects/${projectId}/jira`, { method: "GET" });
@@ -205,6 +209,36 @@ export function disconnectJira(projectId: string): Promise<JiraConnection> {
   return apiFetch(`/projects/${projectId}/jira/disconnect`, { method: "POST" });
 }
 
+export interface VerificationSettings {
+  verification_provider: "none" | "jenkins" | "hosted_ci";
+  ci_bootstrap_status: "none" | "pr_open" | "ready";
+  ci_bootstrap_pr_url: string | null;
+}
+
+export function getVerificationSettings(projectId: string): Promise<VerificationSettings> {
+  return apiFetch(`/projects/${projectId}/verification`, { method: "GET" });
+}
+
+export function setVerificationProvider(projectId: string, provider: VerificationSettings["verification_provider"]): Promise<VerificationSettings> {
+  return apiFetch(`/projects/${projectId}/verification`, { method: "PUT", body: JSON.stringify({ provider }) });
+}
+
+export function startJiraOAuth(projectId: string): Promise<{ authorizationUrl: string }> {
+  return apiFetch(`/projects/${projectId}/jira/oauth/start`, { method: "POST" });
+}
+
+export function getJiraOAuthSites(projectId: string): Promise<{ sites: JiraOAuthSite[] }> {
+  return apiFetch(`/projects/${projectId}/jira/oauth/sites`, { method: "GET" });
+}
+
+export function getJiraOAuthProjects(projectId: string, cloudId: string): Promise<{ projects: JiraOAuthProject[] }> {
+  return apiFetch(`/projects/${projectId}/jira/oauth/projects?cloudId=${encodeURIComponent(cloudId)}`, { method: "GET" });
+}
+
+export function selectJiraOAuthProject(projectId: string, input: { cloudId: string; projectKey: string }): Promise<JiraConnection & { reconciled: number; imported: number }> {
+  return apiFetch(`/projects/${projectId}/jira/oauth/select`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ---------------------------------------------------------------------
 // GitHub connection
 // ---------------------------------------------------------------------
@@ -215,6 +249,7 @@ export interface GithubConnection {
   defaultBranch: string | null;
   connectedAt: string | null;
   webhookRegistered: boolean;
+  workflowRunReporting: boolean;
   webhookUrl: string | null;
   // Only ever present in the response right after connectGithub() — shown
   // once, like the PAT itself, when auto-registration wasn't possible and
@@ -273,6 +308,25 @@ export interface JenkinsfilePullRequest {
   branchName: string;
   commitSha: string;
   path: string;
+}
+
+export interface HostedCiProposal {
+  repo: string;
+  branch: string;
+  baseSha: string;
+  path: string;
+  content: string;
+  summary: string;
+  detectedCommands: Array<{ stage: string; command: string; evidence: string }>;
+  assumptions: string[];
+}
+
+export function generateHostedCiProposal(projectId: string): Promise<HostedCiProposal> {
+  return apiFetch(`/projects/${projectId}/github/hosted-ci/proposal`, { method: "POST", body: JSON.stringify({}) });
+}
+
+export function createHostedCiSetupPullRequest(projectId: string, input: { baseSha: string; content: string }): Promise<{ pullRequest: JenkinsfilePullRequest; branchName: string; commitSha: string; path: string; setupStatus: "pr_open" }> {
+  return apiFetch(`/projects/${projectId}/github/hosted-ci/pull-request`, { method: "POST", body: JSON.stringify(input) });
 }
 
 export function inspectJenkinsfile(projectId: string): Promise<JenkinsfileInspection> {
@@ -352,7 +406,9 @@ export interface Scan {
   status: "Queued" | "Processing" | "Done" | "Failed";
   errorMessage: string | null;
   source: "csv" | "github_ai";
-  triggerType: "manual" | "webhook" | null;
+  triggerType: "manual" | "webhook" | "initial" | null;
+  scanType?: "baseline" | "push" | "pull_request";
+  pullRequestNumber?: number | null;
   commitSha: string | null;
   baseCommitSha: string | null;
   branch: string | null;
@@ -471,7 +527,7 @@ export interface Ticket {
   githubPrState: "open" | "merged" | "closed" | null;
   githubPrError: string | null;
   githubPrLowConfidence: boolean;
-  ciStatus: "queued" | "running" | "passed" | "failed" | "retrying" | "needs_review" | "cancelled" | null;
+  ciStatus: "pending_setup" | "queued" | "running" | "passed" | "failed" | "retrying" | "needs_review" | "cancelled" | null;
   ciRunUrl: string | null;
   ciError: string | null;
   cdStatus: "not_configured" | "queued" | "running" | "passed" | "failed" | "needs_review" | "cancelled";
@@ -483,7 +539,7 @@ export interface Ticket {
 
 export interface JenkinsPipelineClaim {
   runId: string; ticketId: string; commitSha: string | null; branch: string; pullRequestNumber: number;
-  retryCount: number; jobUrl: string; resume?: boolean; buildUrl?: string | null; buildNumber?: number | null; buildSearchSince?: string | null;
+  retryCount: number; jobUrl: string; resume?: boolean; manualRetry?: boolean; buildUrl?: string | null; buildNumber?: number | null; buildSearchSince?: string | null;
 }
 export function claimJenkinsPipeline(projectId: string, input: { deviceId: string; jobUrl: string }): Promise<JenkinsPipelineClaim | undefined> {
   return apiFetch(`/projects/${projectId}/pipeline/claim`, { method: "POST", body: JSON.stringify(input) });

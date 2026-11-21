@@ -68,8 +68,14 @@ Scan / Report  →  Findings  →  Triage  →  Tickets  →  Jira sync  →  Fi
   Scanner output is normalized into Bankai findings with provenance.
 - **Jira import** — existing Jira issues can be pulled in as findings, keeping legacy
   backlogs inside the same triage and remediation flow.
-- **Push-triggered rescans** — an auto-registered GitHub webhook re-scans a repo on every
-  push to the default branch, scanning the complete repository at that commit.
+- **Automatic repository scans** — connecting GitHub queues the first scan at a pinned
+  commit. HMAC-verified webhooks queue deduplicated scans for default-branch pushes and
+  pull request revisions. PR results stay separate from baseline findings and tickets.
+- **Pull request verification** — project Settings lets teams select Jenkins, reviewed
+  GitHub Actions setup, or no CI. Bankai observes the chosen provider and reports exact
+  commit state; an unconfigured or pending integration is never reported as passing.
+- **Jira Cloud authorization** — Atlassian OAuth discovers available sites and projects;
+  the existing API-token connection remains available as a fallback.
 
 ### 2. Triage & Deduplication
 Every finding is fingerprinted so repeat scans classify into **New Delta / In Progress /
@@ -319,6 +325,12 @@ npm run build
 | `MAX_SCAN_FILES` / `MAX_SCAN_FILE_BYTES` / `MAX_SCAN_TOTAL_BYTES` | no | Bound repo-scan volume/latency |
 | `MAX_FIX_CONTEXT_FILES` / `MAX_FIX_CONTEXT_BYTES` / `MAX_FIX_TEST_FILES` / `MAX_FIX_TREE_DEPTH` | no | Bound AI fix-generation context assembly |
 | `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | yes | GitHub OAuth App for per-user "Connect your GitHub account" |
+| `ATLASSIAN_OAUTH_CLIENT_ID` / `ATLASSIAN_OAUTH_CLIENT_SECRET` | no | Optional Atlassian 3LO app for one-click Jira Cloud authorization |
+| `ATLASSIAN_OAUTH_REDIRECT_URI` | no | Optional Jira callback override; defaults to `{BACKEND_PUBLIC_URL}/api/jira/oauth/callback` |
+
+For Jira OAuth, register the callback URL shown in `backend/.env.example` in the Atlassian
+developer console. Apply pending Supabase migrations before deploying the repository
+automation, Jira OAuth, and hosted CI changes.
 
 Full definitions and defaults live in [`backend/src/env.ts`](backend/src/env.ts) and are
 validated (fail-fast) at process startup.
@@ -414,8 +426,10 @@ per request before any nested route runs.
 ## Build and deployment checks
 
 This repository's own workflow at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-checks Bankai source changes. Bankai does not dispatch or track CI for connected customer
-repositories; developers review and merge remediation pull requests themselves.
+checks Bankai source changes. Bankai Desktop can observe local Jenkins multibranch PR jobs
+for remediation pull requests. Jenkins starts the automatic PR build; Bankai reconciles the
+exact commit and does not start another build when discovery is delayed. Developers review
+and merge remediation pull requests themselves.
 
 ---
 

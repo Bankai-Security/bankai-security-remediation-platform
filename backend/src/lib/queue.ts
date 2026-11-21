@@ -10,8 +10,12 @@ export interface RepoScanJobData {
   requestId?: string | undefined;
   scanId: string;
   projectId: string;
-  triggerType: "manual" | "webhook";
-  /** GitHub push SHA. Webhook scans still cover the entire repo at this revision. */
+  triggerType: "manual" | "webhook" | "initial";
+  scanType?: "baseline" | "push" | "pull_request";
+  pullRequestNumber?: number;
+  baseSha?: string;
+  headRepo?: string;
+  /** Full revision SHA from connection-time, push, or pull_request event. */
   headSha?: string;
 }
 

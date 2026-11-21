@@ -13,3 +13,9 @@ export const connectJiraSchema = z.object({
 });
 
 export type ConnectJiraInput = z.infer<typeof connectJiraSchema>;
+
+export const selectJiraOAuthProjectSchema = z.object({
+  cloudId: z.string().uuid("Choose a Jira site."),
+  projectKey: z.string().trim().min(1).max(20).regex(/^[A-Z][A-Z0-9]+$/, "Choose a Jira project."),
+});
+export type SelectJiraOAuthProjectInput = z.infer<typeof selectJiraOAuthProjectSchema>;

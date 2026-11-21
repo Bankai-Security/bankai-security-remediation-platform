@@ -2,17 +2,23 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
 import { decrypt } from "../lib/crypto.js";
 import { enqueueRepoScan } from "../lib/queue.js";
+import { upsertHostedCiEvidenceComment } from "../lib/github.js";
 import { logger } from "../lib/logger.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import {
+  loadGithubCreds,
   markTicketPrClosedWithoutMerge,
   markTicketPrMerged,
 } from "../lib/ticketing.js";
 
 interface WebhookProjectRow {
+  github_repo: string | null;
   github_default_branch: string | null;
   github_webhook_secret_enc: string | null;
   github_connected_at: string | null;
+  verification_provider?: string | null;
+  ci_bootstrap_status?: string | null;
+  ci_bootstrap_pr_url?: string | null;
 }
 
 interface GithubPushPayload {
@@ -24,7 +30,28 @@ interface GithubPushPayload {
 interface GithubPullRequestPayload {
   action?: string;
   number?: number;
-  pull_request?: { merged?: boolean };
+  pull_request?: {
+    merged?: boolean;
+    head?: { sha?: string; ref?: string; repo?: { full_name?: string } | null };
+    base?: { sha?: string; ref?: string; repo?: { full_name?: string } | null };
+  };
+}
+
+interface GithubWorkflowRunPayload {
+  action?: string;
+  workflow?: { path?: string };
+  workflow_run?: {
+    id?: number;
+    event?: string;
+    head_branch?: string;
+    head_sha?: string;
+    html_url?: string;
+    status?: string;
+    conclusion?: string | null;
+    run_started_at?: string | null;
+    updated_at?: string | null;
+    pull_requests?: Array<{ number?: number }>;
+  };
 }
 
 function verifySignature(secret: string, rawBody: Buffer, signatureHeader: string | undefined): boolean {
@@ -54,7 +81,7 @@ export async function handleGithubWebhook(req: Request, res: Response): Promise<
 
   const { data, error } = await supabaseAdmin
     .from("projects")
-    .select("github_default_branch, github_webhook_secret_enc, github_connected_at")
+    .select("github_repo, github_default_branch, github_webhook_secret_enc, github_connected_at, verification_provider, ci_bootstrap_status, ci_bootstrap_pr_url")
     .eq("id", projectId)
     .maybeSingle();
 
@@ -77,7 +104,11 @@ export async function handleGithubWebhook(req: Request, res: Response): Promise<
     return;
   }
   if (event === "pull_request") {
-    await handlePullRequestEvent(projectId, rawBody, res);
+    await handlePullRequestEvent(projectId, project, rawBody, res);
+    return;
+  }
+  if (event === "workflow_run") {
+    await handleWorkflowRunEvent(projectId, project, rawBody, res);
     return;
   }
   if (event !== "push") {
@@ -112,18 +143,25 @@ export async function handleGithubWebhook(req: Request, res: Response): Promise<
     return;
   }
 
-  const { data: scan, error: scanError } = await supabaseAdmin
+  const eventKey = payload.after ? `push:${branch}:${payload.after}` : null;
+  let { data: scan, error: scanError } = await supabaseAdmin
     .from("scans")
     .insert({
       project_id: projectId,
       source: "github_ai",
       status: "Queued",
       trigger_type: "webhook",
+      scan_type: "push",
       branch,
       commit_sha: payload.after ?? null,
+      event_key: eventKey,
     })
     .select("id")
-    .single();
+    .maybeSingle();
+
+  if (scanError?.code === "23505" && eventKey) {
+    ({ data: scan, error: scanError } = await supabaseAdmin.from("scans").select("id").eq("project_id", projectId).eq("event_key", eventKey).maybeSingle());
+  }
 
   if (scanError || !scan) {
     logger.error({ err: scanError, projectId }, "Could not record a scan row for a GitHub webhook push");
@@ -147,7 +185,7 @@ export async function handleGithubWebhook(req: Request, res: Response): Promise<
 // "closed" is interesting here: "opened"/"synchronize"/etc. carry nothing
 // Bankai needs to act on (the ticket already moved to "In Review" when the
 // fix-pr job itself opened the PR).
-async function handlePullRequestEvent(projectId: string, rawBody: Buffer, res: Response): Promise<void> {
+async function handlePullRequestEvent(projectId: string, project: WebhookProjectRow, rawBody: Buffer, res: Response): Promise<void> {
   let payload: GithubPullRequestPayload;
   try {
     payload = JSON.parse(rawBody.toString("utf8")) as GithubPullRequestPayload;
@@ -156,9 +194,91 @@ async function handlePullRequestEvent(projectId: string, rawBody: Buffer, res: R
     return;
   }
 
-  if (payload.action !== "closed" || typeof payload.number !== "number") {
+  if (typeof payload.number !== "number") {
     res.status(200).json({ ignored: true });
     return;
+  }
+
+  if (["opened", "reopened", "synchronize"].includes(payload.action ?? "")) {
+    const pr = payload.pull_request;
+    const headSha = pr?.head?.sha;
+    const baseSha = pr?.base?.sha;
+    const branch = pr?.head?.ref;
+    const headRepo = pr?.head?.repo?.full_name;
+    if (!headSha || !/^[0-9a-f]{40}$/i.test(headSha) || !project.github_default_branch || !project.github_repo
+      || pr?.base?.ref !== project.github_default_branch || pr.base.repo?.full_name?.toLowerCase() !== project.github_repo.toLowerCase()
+      || !headRepo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(headRepo)
+      || !branch) {
+      res.status(200).json({ ignored: true });
+      return;
+    }
+
+    const eventKey = `pr:${payload.number}:${headSha}`;
+    let { data: scan, error } = await supabaseAdmin.from("scans").insert({
+      project_id: projectId,
+      source: "github_ai",
+      status: "Queued",
+      trigger_type: "webhook",
+      scan_type: "pull_request",
+      branch,
+      commit_sha: headSha,
+      base_commit_sha: baseSha ?? null,
+      pull_request_number: payload.number,
+      event_key: eventKey,
+    }).select("id").maybeSingle();
+    if (error?.code === "23505") {
+      ({ data: scan, error } = await supabaseAdmin.from("scans").select("id").eq("project_id", projectId).eq("event_key", eventKey).maybeSingle());
+    }
+    if (error || !scan) {
+      logger.error({ err: error, projectId, prNumber: payload.number }, "Could not record a GitHub pull request scan");
+      res.status(500).end();
+      return;
+    }
+    try {
+      await enqueueRepoScan(
+        { scanId: scan.id, projectId, triggerType: "webhook", scanType: "pull_request", pullRequestNumber: payload.number, headSha, ...(baseSha ? { baseSha } : {}), headRepo },
+        `pr-${projectId}-${payload.number}-${headSha}`,
+      );
+    } catch (err) {
+      logger.error({ err, projectId, prNumber: payload.number, headSha }, "Could not enqueue GitHub pull request scan");
+      res.status(503).end();
+      return;
+    }
+    if (project.verification_provider === "hosted_ci") {
+      const { data: ticket } = await supabaseAdmin.from("tickets").select("id")
+        .eq("project_id", projectId).eq("github_pr_number", payload.number).maybeSingle();
+      if (ticket) {
+        const ready = project.ci_bootstrap_status === "ready";
+        const reopened = payload.action === "reopened";
+        await supabaseAdmin.from("tickets").update({
+          ci_status: !ready ? "pending_setup" : reopened ? "needs_review" : "queued",
+          ci_error: !ready ? "Hosted CI setup is pending review and merge of its workflow pull request."
+            : reopened ? "This pull request was reopened without a new commit. Hosted CI does not start a second automatic run for the same revision; review the existing run or push a new commit."
+              : null,
+        }).eq("id", ticket.id).eq("project_id", projectId);
+      }
+    }
+    res.status(202).json({ queued: true, scanType: "pull_request", pullRequestNumber: payload.number, headSha });
+    return;
+  }
+
+  if (payload.action !== "closed") {
+    res.status(200).json({ ignored: true });
+    return;
+  }
+
+  const bootstrapPrNumber = project.ci_bootstrap_pr_url?.match(/\/pull\/(\d+)(?:\D|$)/)?.[1];
+  if (bootstrapPrNumber && Number(bootstrapPrNumber) === payload.number && project.ci_bootstrap_status === "pr_open") {
+    const merged = payload.pull_request?.merged === true;
+    await supabaseAdmin.from("projects").update({
+      ci_bootstrap_status: merged ? "ready" : "none",
+      ci_bootstrap_pr_url: merged ? project.ci_bootstrap_pr_url : null,
+      ...(merged ? {} : { verification_provider: "none" }),
+    }).eq("id", projectId);
+    if (!merged) {
+      await supabaseAdmin.from("tickets").update({ ci_status: "pending_setup", ci_error: "The hosted CI setup pull request was closed without merging." })
+        .eq("project_id", projectId).eq("github_pr_state", "open");
+    }
   }
 
   if (payload.pull_request?.merged) {
@@ -168,4 +288,98 @@ async function handlePullRequestEvent(projectId: string, rawBody: Buffer, res: R
   }
 
   res.status(200).json({ ok: true });
+}
+
+async function handleWorkflowRunEvent(projectId: string, project: WebhookProjectRow, rawBody: Buffer, res: Response): Promise<void> {
+  let payload: GithubWorkflowRunPayload;
+  try { payload = JSON.parse(rawBody.toString("utf8")) as GithubWorkflowRunPayload; }
+  catch { res.status(400).end(); return; }
+  const run = payload.workflow_run;
+  if (project.verification_provider !== "hosted_ci" || project.ci_bootstrap_status !== "ready"
+    || payload.workflow?.path !== ".github/workflows/bankai-verify.yml" || run?.event !== "pull_request"
+    || !Number.isSafeInteger(run.id) || !run.head_sha || !/^[0-9a-f]{40}$/i.test(run.head_sha)
+    || !run.head_branch || !run.html_url || !["requested", "in_progress", "completed"].includes(payload.action ?? "")) {
+    res.status(200).json({ ignored: true });
+    return;
+  }
+
+  let runUrl: URL;
+  try {
+    runUrl = new URL(run.html_url);
+    if (runUrl.protocol !== "https:" || runUrl.hostname.toLowerCase() !== "github.com" || runUrl.username || runUrl.password) throw new Error("invalid");
+    runUrl.search = ""; runUrl.hash = "";
+  } catch { res.status(200).json({ ignored: true }); return; }
+
+  const workflowStatus = payload.action === "completed" ? "completed" : payload.action === "in_progress" ? "in_progress" : "queued";
+  const pullRequests = (run.pull_requests ?? []).map((pr) => pr.number).filter((n): n is number => Number.isInteger(n) && Number(n) > 0);
+  if (!pullRequests.length) { res.status(200).json({ ignored: true }); return; }
+
+  const github = await loadGithubCreds(supabaseAdmin, projectId);
+  if (!github) { res.status(200).json({ ignored: true }); return; }
+  let conclusion: "passed" | "failed" | "cancelled" | "needs_review" | null = null;
+  if (workflowStatus === "completed") {
+    conclusion = run.conclusion === "success" ? "passed"
+      : run.conclusion === "cancelled" ? "cancelled"
+        : run.conclusion === "failure" || run.conclusion === "timed_out" ? "failed" : "needs_review";
+  }
+
+  for (const prNumber of new Set(pullRequests)) {
+    const { data: prior } = await supabaseAdmin.from("hosted_ci_runs").select("status")
+      .eq("project_id", projectId).eq("github_run_id", run.id).eq("pull_request_number", prNumber).maybeSingle();
+    if (prior?.status === "completed" && workflowStatus !== "completed") continue;
+
+    const { data: ticket } = await supabaseAdmin.from("tickets").select("id,github_fix_commit_sha")
+      .eq("project_id", projectId).eq("github_pr_number", prNumber).maybeSingle();
+    const exactTicketCommit = !ticket?.github_fix_commit_sha || ticket.github_fix_commit_sha.toLowerCase() === run.head_sha.toLowerCase();
+    const reportedConclusion = ticket && !exactTicketCommit ? "needs_review" : conclusion;
+    const startedAt = run.run_started_at && !Number.isNaN(Date.parse(run.run_started_at)) ? run.run_started_at : null;
+    const completedAt = workflowStatus === "completed" && run.updated_at && !Number.isNaN(Date.parse(run.updated_at)) ? run.updated_at : null;
+    const { error: saveError } = await supabaseAdmin.from("hosted_ci_runs").upsert({
+      project_id: projectId,
+      github_run_id: run.id,
+      pull_request_number: prNumber,
+      head_branch: run.head_branch,
+      commit_sha: run.head_sha,
+      status: workflowStatus,
+      conclusion: reportedConclusion,
+      html_url: runUrl.toString(),
+      started_at: startedAt,
+      completed_at: completedAt,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "project_id,github_run_id,pull_request_number" });
+    if (saveError) {
+      logger.error({ err: saveError, projectId, githubRunId: run.id }, "Could not save hosted CI run evidence");
+      res.status(500).end();
+      return;
+    }
+
+    if (ticket) {
+      const ciStatus = reportedConclusion ?? (workflowStatus === "queued" ? "queued" : "running");
+      const message = ticket.github_fix_commit_sha && !exactTicketCommit
+        ? "GitHub Actions reported a different commit than the remediation ticket. Review the run before relying on it."
+        : reportedConclusion === "needs_review" ? "GitHub Actions completed without a recognized conclusion. Review the run manually." : null;
+      await supabaseAdmin.from("tickets").update({ ci_status: ciStatus, ci_run_url: runUrl.toString(), ci_error: message })
+        .eq("id", ticket.id).eq("project_id", projectId);
+    }
+
+    const statusLabel = reportedConclusion === "passed" ? "Passed"
+      : reportedConclusion === "failed" ? "Failed"
+        : reportedConclusion === "cancelled" ? "Cancelled"
+          : reportedConclusion === "needs_review" ? "Needs review"
+            : workflowStatus === "in_progress" ? "Running" : "Queued";
+    const markdown = [
+      "## Bankai hosted CI evidence",
+      "",
+      `- **Pull request:** #${prNumber}`,
+      `- **Commit:** \`${run.head_sha}\``,
+      `- **GitHub Actions:** ${statusLabel} · [View workflow run](${runUrl.toString()})`,
+      `- **Updated:** ${completedAt ?? startedAt ?? new Date().toISOString()}`,
+      "",
+      "Review the result and pull request changes before merging. Bankai does not merge pull requests.",
+    ].join("\n");
+    try { await upsertHostedCiEvidenceComment(github.creds, prNumber, markdown); }
+    catch (err) { logger.warn({ err, projectId, prNumber, githubRunId: run.id }, "Could not publish hosted CI evidence to the pull request"); }
+  }
+
+  res.status(202).json({ recorded: true, githubRunId: run.id });
 }

@@ -65,6 +65,9 @@ const envSchema = z.object({
   // {BACKEND_PUBLIC_URL or http://localhost:PORT}/api/auth/github/callback.
   GITHUB_OAUTH_CLIENT_ID: z.string().min(1),
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1),
+  ATLASSIAN_OAUTH_CLIENT_ID: optionalNonEmptyString,
+  ATLASSIAN_OAUTH_CLIENT_SECRET: optionalNonEmptyString,
+  ATLASSIAN_OAUTH_REDIRECT_URI: z.url().optional(),
 }).superRefine((env, ctx) => {
   const key = env.AI_PROVIDER === "openrouter" ? "OPENROUTER_API_KEY" : "GEMINI_API_KEY";
   if (!env[key]) ctx.addIssue({ code: "custom", path: [key], message: `required for AI_PROVIDER=${env.AI_PROVIDER}` });

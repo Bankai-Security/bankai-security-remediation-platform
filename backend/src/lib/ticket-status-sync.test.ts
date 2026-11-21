@@ -14,7 +14,6 @@ it("repairs a ticket that jumped to Done before its remediation completed", () =
   expect(statusAllowedByCompletionGate("Done", { githubBranchName: "bankai/TT2-68", githubPrNumber: null })).toBe("In Progress");
   expect(reconciledTicketStatus("Done", "To Do", false, { githubBranchName: "bankai/TT2-68" })).toBe("In Progress");
   expect(statusAllowedByCompletionGate("Done", { githubPrNumber: 30, githubPrState: "open" })).toBe("In Review");
-  expect(statusAllowedByCompletionGate("Done", { githubPrNumber: 30, githubPrState: "merged" })).toBe("In Review");
   expect(statusAllowedByCompletionGate("Done", { githubPrNumber: 30, githubPrState: "merged" })).toBe("Done");
 });
 

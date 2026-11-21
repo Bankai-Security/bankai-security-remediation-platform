@@ -154,7 +154,7 @@ export async function registerWebhook(creds: GithubCredentials, input: { url: st
     body: JSON.stringify({
       name: "web",
       active: true,
-      events: ["push", "pull_request"],
+      events: ["push", "pull_request", "workflow_run"],
       config: { url: input.url, content_type: "json", secret: input.secret, insecure_ssl: "0" },
     }),
   });
@@ -169,6 +169,14 @@ export async function registerWebhook(creds: GithubCredentials, input: { url: st
 
   const body = (await res.json()) as { id: number };
   return { id: String(body.id) };
+}
+
+export async function subscribeWebhookEvents(creds: GithubCredentials, webhookId: string): Promise<void> {
+  const res = await githubFetch(creds, `/repos/${creds.repo}/hooks/${encodeURIComponent(webhookId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ events: ["push", "pull_request", "workflow_run"] }),
+  });
+  if (!res.ok) throw new GithubApiError(`Could not update GitHub webhook events (status ${res.status}).`, res.status);
 }
 
 // Best-effort — called during disconnect; a failure here must not block
@@ -518,9 +526,23 @@ export async function getPullRequest(creds: GithubCredentials, prNumber: number)
 }
 
 const JENKINS_EVIDENCE_MARKER = "<!-- bankai-jenkins-evidence -->";
+const PR_SCAN_EVIDENCE_MARKER = "<!-- bankai-pr-scan-evidence -->";
+const HOSTED_CI_EVIDENCE_MARKER = "<!-- bankai-hosted-ci-evidence -->";
 
 /** Keep one Bankai evidence comment per pull request and update it as CD progresses. */
 export async function upsertJenkinsEvidenceComment(creds: GithubCredentials, prNumber: number, markdown: string): Promise<string> {
+  return upsertBankaiComment(creds, prNumber, markdown, JENKINS_EVIDENCE_MARKER);
+}
+
+export async function upsertPullRequestScanEvidenceComment(creds: GithubCredentials, prNumber: number, markdown: string): Promise<string> {
+  return upsertBankaiComment(creds, prNumber, markdown, PR_SCAN_EVIDENCE_MARKER);
+}
+
+export async function upsertHostedCiEvidenceComment(creds: GithubCredentials, prNumber: number, markdown: string): Promise<string> {
+  return upsertBankaiComment(creds, prNumber, markdown, HOSTED_CI_EVIDENCE_MARKER);
+}
+
+async function upsertBankaiComment(creds: GithubCredentials, prNumber: number, markdown: string, marker: string): Promise<string> {
   const userResponse = await githubFetch(creds, "/user");
   if (!userResponse.ok) throw new GithubApiError(`Could not identify the connected GitHub account (status ${userResponse.status}).`, userResponse.status);
   const user = await userResponse.json() as { login?: string };
@@ -530,10 +552,10 @@ export async function upsertJenkinsEvidenceComment(creds: GithubCredentials, prN
     const response = await githubFetch(creds, `/repos/${creds.repo}/issues/${prNumber}/comments?per_page=100&page=${page}`);
     if (!response.ok) throw new GithubApiError(`Could not read pull request comments (status ${response.status}).`, response.status);
     const comments = await response.json() as Array<{ id: number; body?: string; user?: { login?: string } }>;
-    const existing = comments.find((comment) => comment.user?.login === user.login && comment.body?.includes(JENKINS_EVIDENCE_MARKER));
+    const existing = comments.find((comment) => comment.user?.login === user.login && comment.body?.includes(marker));
     if (existing) {
       const update = await githubFetch(creds, `/repos/${creds.repo}/issues/comments/${existing.id}`, {
-        method: "PATCH", body: JSON.stringify({ body: `${JENKINS_EVIDENCE_MARKER}\n${markdown}` }),
+        method: "PATCH", body: JSON.stringify({ body: `${marker}\n${markdown}` }),
       });
       if (!update.ok) throw new GithubApiError(`Could not update the pull request evidence comment (status ${update.status}).`, update.status);
       const result = await update.json() as { html_url?: string };
@@ -543,7 +565,7 @@ export async function upsertJenkinsEvidenceComment(creds: GithubCredentials, prN
   }
 
   const created = await githubFetch(creds, `/repos/${creds.repo}/issues/${prNumber}/comments`, {
-    method: "POST", body: JSON.stringify({ body: `${JENKINS_EVIDENCE_MARKER}\n${markdown}` }),
+    method: "POST", body: JSON.stringify({ body: `${marker}\n${markdown}` }),
   });
   if (!created.ok) throw new GithubApiError(`Could not attach evidence to the pull request (status ${created.status}).`, created.status);
   const result = await created.json() as { html_url?: string };

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, inspectJenkinsfile, recordJenkinsAuditAction, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
+import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, inspectJenkinsfile, recordJenkinsAuditAction, setVerificationProvider, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
@@ -110,9 +110,15 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     return () => { active = false; unsubscribe(); };
   }, [api, projectId, canManage]);
 
-  const saveChoice = (next: 'enabled' | 'skipped') => {
-    setChoice(next);
-    try { localStorage.setItem(`bankai-jenkins-choice:${projectId}`, next); } catch { /* optional preference */ }
+  const saveChoice = async (next: 'enabled' | 'skipped') => {
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      await setVerificationProvider(projectId, next === 'enabled' ? 'jenkins' : 'none');
+      setChoice(next);
+      try { localStorage.setItem(`bankai-jenkins-choice:${projectId}`, next); } catch { /* optional preference */ }
+      setMessage(next === 'enabled' ? 'Jenkins selected for pull request verification.' : 'Jenkins skipped for this project.');
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
   };
   const connect = async (event: FormEvent) => {
     event.preventDefault();

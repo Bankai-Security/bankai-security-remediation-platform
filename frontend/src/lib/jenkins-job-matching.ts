@@ -32,7 +32,9 @@ export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], sel
   // A previously selected PR branch (for example PR-4) can still identify
   // the repository's multibranch parent when a later ticket belongs to PR-5.
   // Walk back through matching Jenkins ancestors and search each scope.
-  const parentJobs = jobs
+  const selectedJob = jobs.find((job) => sameJobUrl(job.url, selectedUrl));
+  const isPriorPullRequestBranch = selectedJob && /^(pr[-_]\d+|remediation\/)/i.test(selectedJob.name);
+  const parentJobs = (isPriorPullRequestBranch ? jobs : [])
     .filter((job) => job.supportsPullRequests && !sameJobUrl(job.url, selectedUrl) && isJobNestedUnder(job.url, selectedUrl))
     .sort((left, right) => right.url.length - left.url.length);
   const scopes = [selectedUrl, ...parentJobs.map((job) => job.url)];

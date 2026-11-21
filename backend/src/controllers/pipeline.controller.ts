@@ -90,6 +90,10 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     throw new HttpError(400, "A desktop ID and selected Jenkins job are required.");
   }
   const selectedJobUrl = validateJenkinsJobUrl(jobUrl);
+  const { data: verificationSettings, error: settingsError } = await supabaseAdmin.from("projects")
+    .select("verification_provider").eq("id", req.project!.id).maybeSingle();
+  if (settingsError) throw new HttpError(500, "Could not load the selected CI provider.");
+  if (verificationSettings?.verification_provider !== "jenkins") { res.status(204).end(); return; }
   const staleBefore = new Date(Date.now() - 30 * 60_000).toISOString();
   const { data: staleRuns } = await supabaseAdmin.from("pipeline_runs").update({ status: "needs_review", conclusion: "desktop_disconnected",
     failure_summary: "Bankai Desktop stopped reporting before this build finished. Check Jenkins before retrying.", completed_at: new Date().toISOString() })
@@ -120,7 +124,7 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     res.status(200).json({ runId: activeRun.id, ticketId: activeRun.ticket_id, commitSha: activeRun.commit_sha, branch: activeRun.head_branch,
       pullRequestNumber: activeRun.pull_request_number, retryCount: activeRun.retry_count, jobUrl: activeRun.jenkins_job_url || selectedJobUrl,
       resume: true, buildUrl: activeRun.jenkins_build_url ?? null, buildNumber: activeRun.jenkins_build_number ?? null,
-      buildSearchSince: activeRun.created_at });
+      manualRetry: false, buildSearchSince: activeRun.claimed_at ?? activeRun.created_at });
     return;
   }
   const { data: queued, error } = await supabaseAdmin.from("pipeline_runs").select("*")
@@ -135,7 +139,7 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
   }
   const { data: claimed, error: claimError } = await supabaseAdmin.from("pipeline_runs").update({
     status: "in_progress", claimed_by: deviceId, claimed_at: new Date().toISOString(), started_at: new Date().toISOString(),
-    jenkins_job_url: selectedJobUrl, updated_at: new Date().toISOString(),
+    jenkins_job_url: selectedJobUrl, updated_at: new Date().toISOString(), manual_retry_requested: false,
   }).eq("id", queued.id).eq("status", "queued").select("*").maybeSingle();
   if (claimError) throw new HttpError(500, "Could not claim Jenkins work.");
   if (!claimed) { res.status(204).end(); return; }
@@ -144,7 +148,8 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     summary: "started Jenkins verification for", linkLabel: `PR #${claimed.pull_request_number}`, linkTo: "tickets", meta: `commit ${claimed.commit_sha}` });
   res.status(200).json({ runId: claimed.id, ticketId: claimed.ticket_id, commitSha: claimed.commit_sha, branch: claimed.head_branch,
     pullRequestNumber: claimed.pull_request_number, retryCount: claimed.retry_count, jobUrl: selectedJobUrl,
-    buildSearchSince: queued.updated_at ?? queued.created_at });
+    manualRetry: queued.manual_retry_requested === true,
+    buildSearchSince: queued.manual_retry_requested === true ? undefined : queued.updated_at ?? queued.created_at });
 }
 
 export async function finishJenkinsRun(req: Request, res: Response): Promise<void> {
@@ -359,6 +364,11 @@ export async function cancelQueuedJenkinsRun(req: Request, res: Response): Promi
 
 export async function retryJenkinsVerification(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
+  const { data: verification } = await supabaseAdmin.from("projects").select("verification_provider")
+    .eq("id", req.project!.id).maybeSingle();
+  if (verification?.verification_provider !== "jenkins") {
+    throw new HttpError(409, "Manual verification retries are available only when Jenkins is the selected provider.");
+  }
   const ticketId = Array.isArray(req.params.ticketId) ? req.params.ticketId[0] : req.params.ticketId;
   if (!ticketId) throw new HttpError(400, "A ticket ID is required.");
 
@@ -388,6 +398,7 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   const { data: queued, error: queueError } = await supabaseAdmin.from("pipeline_runs").update({
     status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
     jenkins_job_url: null, html_url: null, jenkins_build_url: null, jenkins_build_number: null, failure_summary: null, updated_at: now,
+    manual_retry_requested: true,
   }).eq("id", run.id).in("status", ["needs_review", "completed"]).select("id").maybeSingle();
   if (queueError) throw new HttpError(500, "Could not queue the Jenkins verification retry.");
   if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
