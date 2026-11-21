@@ -62,6 +62,10 @@ export interface TicketRow {
   ci_status?: string | null;
   ci_run_url?: string | null;
   ci_error?: string | null;
+  cd_status?: string | null;
+  cd_run_url?: string | null;
+  cd_error?: string | null;
+  cd_target_url?: string | null;
   source?: "csv" | "github_ai" | "jira_import";
   // Only present when selected via SELECT_TICKET's join — absent on rows
   // returned directly from the create_project_ticket* RPCs.
@@ -96,12 +100,16 @@ export function toPublicTicket(row: TicketRow) {
     ciStatus: row.ci_status ?? null,
     ciRunUrl: row.ci_run_url ?? null,
     ciError: row.ci_error ?? null,
+    cdStatus: row.cd_status ?? "not_configured",
+    cdRunUrl: row.cd_run_url ?? null,
+    cdError: row.cd_error ?? null,
+    cdTargetUrl: row.cd_target_url ?? null,
     createdAt: row.created_at,
   };
 }
 
 export const SELECT_TICKET =
-  "id, key, title, service, severity, status, due_date, finding_id, created_at, jira_issue_key, jira_issue_url, jira_sync_error, github_branch_name, github_branch_url, github_branch_error, github_pr_number, github_pr_url, github_pr_state, github_pr_error, github_pr_low_confidence, ci_status, ci_run_url, ci_error, findings ( external_id )";
+  "id, key, title, service, severity, status, due_date, finding_id, created_at, jira_issue_key, jira_issue_url, jira_sync_error, github_branch_name, github_branch_url, github_branch_error, github_pr_number, github_pr_url, github_pr_state, github_pr_error, github_pr_low_confidence, ci_status, ci_run_url, ci_error, cd_status, cd_run_url, cd_error, cd_target_url, findings ( external_id )";
 
 // Repairs legacy or racing writes that marked a ticket Done before its PR merged.
 export async function repairPrematureDoneTickets(supabase: SupabaseClient, projectId: string): Promise<number> {

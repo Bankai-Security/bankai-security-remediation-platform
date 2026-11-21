@@ -517,6 +517,39 @@ export async function getPullRequest(creds: GithubCredentials, prNumber: number)
   return toCreatedPullRequest((await res.json()) as GithubPullRequestApiBody);
 }
 
+const JENKINS_EVIDENCE_MARKER = "<!-- bankai-jenkins-evidence -->";
+
+/** Keep one Bankai evidence comment per pull request and update it as CD progresses. */
+export async function upsertJenkinsEvidenceComment(creds: GithubCredentials, prNumber: number, markdown: string): Promise<string> {
+  const userResponse = await githubFetch(creds, "/user");
+  if (!userResponse.ok) throw new GithubApiError(`Could not identify the connected GitHub account (status ${userResponse.status}).`, userResponse.status);
+  const user = await userResponse.json() as { login?: string };
+  if (!user.login) throw new GithubApiError("GitHub did not return the connected account name.");
+
+  for (let page = 1; page <= 5; page += 1) {
+    const response = await githubFetch(creds, `/repos/${creds.repo}/issues/${prNumber}/comments?per_page=100&page=${page}`);
+    if (!response.ok) throw new GithubApiError(`Could not read pull request comments (status ${response.status}).`, response.status);
+    const comments = await response.json() as Array<{ id: number; body?: string; user?: { login?: string } }>;
+    const existing = comments.find((comment) => comment.user?.login === user.login && comment.body?.includes(JENKINS_EVIDENCE_MARKER));
+    if (existing) {
+      const update = await githubFetch(creds, `/repos/${creds.repo}/issues/comments/${existing.id}`, {
+        method: "PATCH", body: JSON.stringify({ body: `${JENKINS_EVIDENCE_MARKER}\n${markdown}` }),
+      });
+      if (!update.ok) throw new GithubApiError(`Could not update the pull request evidence comment (status ${update.status}).`, update.status);
+      const result = await update.json() as { html_url?: string };
+      return result.html_url ?? `https://github.com/${creds.repo}/pull/${prNumber}`;
+    }
+    if (comments.length < 100) break;
+  }
+
+  const created = await githubFetch(creds, `/repos/${creds.repo}/issues/${prNumber}/comments`, {
+    method: "POST", body: JSON.stringify({ body: `${JENKINS_EVIDENCE_MARKER}\n${markdown}` }),
+  });
+  if (!created.ok) throw new GithubApiError(`Could not attach evidence to the pull request (status ${created.status}).`, created.status);
+  const result = await created.json() as { html_url?: string };
+  return result.html_url ?? `https://github.com/${creds.repo}/pull/${prNumber}`;
+}
+
 export async function updatePullRequestBranchFile(
   creds: GithubCredentials,
   input: { pullRequestNumber: number; branchName: string; filePath: string; content: string; message: string },

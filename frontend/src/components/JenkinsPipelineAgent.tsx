@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { claimJenkinsPipeline, finishJenkinsPipeline, reportJenkinsPipelineProgress } from "../lib/api";
+import { claimJenkinsPipeline, finishJenkinsPipeline, reportJenkinsDeployment, reportJenkinsPipelineProgress } from "../lib/api";
 
 function desktopId(): string {
   const key = "bankai-pipeline-device-id";
@@ -17,10 +17,15 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
     let timer = 0;
     let activeRun: Awaited<ReturnType<typeof claimJenkinsPipeline>> | null = null;
     let activeRunJobUrl: string | null = null;
+    let activeDeploymentRunId: string | null = null;
+    let activeDeploymentJobUrl: string | null = null;
     const unsubscribe = desktop.onJenkinsJobProgress((progress) => {
-      if (!activeRun?.runId || !activeRunJobUrl || progress.jobUrl !== activeRunJobUrl || progress.state !== "running" || !progress.buildUrl) return;
-      void reportJenkinsPipelineProgress(projectId, activeRun.runId, { deviceId: desktopId(), buildUrl: progress.buildUrl, buildNumber: progress.number })
-        .catch(() => undefined);
+      if (progress.state !== "running" || !progress.buildUrl) return;
+      if (activeRun?.runId && progress.jobUrl === activeRunJobUrl) {
+        void reportJenkinsPipelineProgress(projectId, activeRun.runId, { deviceId: desktopId(), buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
+      } else if (activeDeploymentRunId && progress.jobUrl === activeDeploymentJobUrl) {
+        void reportJenkinsDeployment(projectId, activeDeploymentRunId, { deviceId: desktopId(), state: "running", buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
+      }
     });
     const poll = async () => {
       if (stopped || working || document.hidden || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") return;
@@ -55,12 +60,38 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         const result = await desktop.runJenkinsJob(job.url);
         const state = result.state === "success" ? "passed" : result.state === "aborted" ? "cancelled" : "failed";
         const failureLog = state === "failed" && result.buildUrl ? await desktop.getJenkinsBuildLog(result.buildUrl).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
-        await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state, buildUrl: result.buildUrl ?? job.url,
+        const completion = await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state, buildUrl: result.buildUrl ?? job.url,
           buildNumber: result.number, commitSha: result.commitSha, failureLog });
+        if (completion.ciStatus === "passed" && localStorage.getItem(`bankai-cd-enabled:${projectId}`) === "true") {
+          const deploymentJobUrl = localStorage.getItem(`bankai-cd-job:${projectId}`);
+          if (!deploymentJobUrl) return;
+          activeDeploymentRunId = run.runId;
+          activeDeploymentJobUrl = deploymentJobUrl;
+          try {
+            const configuredJob = (await desktop.listJenkinsJobs()).find((item) => item.url === deploymentJobUrl && !item.supportsPullRequests);
+            const jobParameters = await desktop.getJenkinsJobParameters(deploymentJobUrl);
+            if (!configuredJob || !jobParameters.supported) {
+              await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: "needs_review", error: jobParameters.reason ?? "The selected Jenkins deployment job is no longer available." });
+              return;
+            }
+            let values: Record<string, string> = {};
+            try { values = JSON.parse(localStorage.getItem(`bankai-cd-parameters:${projectId}:${deploymentJobUrl}`) || "{}"); } catch { /* use Jenkins defaults */ }
+            await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: "running", jobUrl: deploymentJobUrl });
+            try {
+              const deployment = await desktop.runJenkinsJob(deploymentJobUrl, values);
+              const deploymentState = deployment.state === "success" ? "passed" : deployment.state === "aborted" ? "cancelled" : "failed";
+              await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: deploymentState, buildUrl: deployment.buildUrl,
+                buildNumber: deployment.number, targetUrl: deployment.targetUrl, error: deploymentState === "failed" ? "Jenkins deployment failed. Review its build output." : undefined });
+            } catch (reason) {
+              await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
+                error: reason instanceof Error ? reason.message.slice(0, 1000) : "Could not start the Jenkins deployment." });
+            }
+          } finally { activeDeploymentRunId = null; activeDeploymentJobUrl = null; }
+        }
       } catch {
         // A temporary network or Jenkins failure leaves the server side run in
         // progress; recovery marks stale claims for review instead of duplicating a build.
-      } finally { activeRun = null; activeRunJobUrl = null; working = false; }
+      } finally { activeRun = null; activeRunJobUrl = null; activeDeploymentRunId = null; activeDeploymentJobUrl = null; working = false; }
     };
     const schedule = () => { if (!stopped) timer = window.setTimeout(async () => { await poll(); schedule(); }, 12_000); };
     void poll().finally(schedule);

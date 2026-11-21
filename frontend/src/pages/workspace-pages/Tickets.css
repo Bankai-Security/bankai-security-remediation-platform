@@ -202,6 +202,8 @@
   font-size: 11px;
 }
 .tickets-pipeline-status a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+  .tickets-pipeline-review-hint { display: block; margin-top: 3px; color: var(--color-text-faint); font-size: 11px; }
+.tickets-deployment-target { margin-left: 8px; }
 .tickets-pipeline-cancel { margin-left: 8px; border: 0; padding: 0; background: none; color: var(--color-text-subtle); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .tickets-pipeline-error { display: block; max-width: 300px; margin-top: 3px; color: var(--color-text-subtle); white-space: normal; }
 

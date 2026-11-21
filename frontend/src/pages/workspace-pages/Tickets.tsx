@@ -65,10 +65,30 @@ function PipelineStatus({ ticket, onCancel }: { ticket: Ticket; onCancel?: () =>
   const label = ticket.ciStatus === 'passed' ? 'Jenkins passed' : ticket.ciStatus === 'failed' ? 'Jenkins failed'
     : ticket.ciStatus === 'retrying' ? 'AI retrying' : ticket.ciStatus === 'needs_review' ? 'Jenkins needs review'
       : ticket.ciStatus === 'running' ? 'Jenkins running' : ticket.ciStatus === 'queued' ? 'Jenkins queued' : 'Jenkins cancelled';
+  const reviewHint = ticket.githubPrState === 'open' && ticket.ciStatus === 'passed'
+    ? 'Review the PR; merging stays with you.'
+    : ticket.githubPrState === 'open' && ['failed', 'needs_review', 'cancelled'].includes(ticket.ciStatus)
+      ? 'Review the PR before merging.' : null;
   return <span className="tickets-pipeline-status" title={ticket.ciError ?? label}>
     {ticket.ciRunUrl ? <a href={ticket.ciRunUrl} target="_blank" rel="noreferrer">{label}</a> : label}
+    {reviewHint && <span className="tickets-pipeline-review-hint">{reviewHint}</span>}
     {(ticket.ciStatus === 'queued' || ticket.ciStatus === 'running' || ticket.ciStatus === 'retrying') && onCancel && <button className="tickets-pipeline-cancel" type="button" onClick={onCancel}>{ticket.ciStatus === 'queued' ? 'Cancel queued run' : ticket.ciStatus === 'running' ? 'Stop Jenkins build' : 'Cancel AI retry'}</button>}
     {ticket.ciError && <span className="tickets-pipeline-error">{ticket.ciError}</span>}
+  </span>;
+}
+
+function DeploymentStatus({ ticket, projectId, onCancel }: { ticket: Ticket; projectId: string; onCancel?: () => void }) {
+  if (ticket.cdStatus === 'not_configured') {
+    return <span className="tickets-pipeline-status"><Link to={`/workspace/${projectId}/jenkins`}>CD not configured · Set up</Link></span>;
+  }
+  const label = ticket.cdStatus === 'passed' ? 'Deployment passed' : ticket.cdStatus === 'failed' ? 'Deployment failed'
+    : ticket.cdStatus === 'needs_review' ? 'Deployment needs review' : ticket.cdStatus === 'running' ? 'Deploying'
+      : ticket.cdStatus === 'queued' ? 'Deployment queued' : 'Deployment cancelled';
+  return <span className="tickets-pipeline-status" title={ticket.cdError ?? label}>
+    {ticket.cdRunUrl ? <a href={ticket.cdRunUrl} target="_blank" rel="noreferrer">{label}</a> : label}
+    {ticket.cdTargetUrl && <a className="tickets-deployment-target" href={ticket.cdTargetUrl} target="_blank" rel="noreferrer">Open target</a>}
+    {ticket.cdError && <span className="tickets-pipeline-error">{ticket.cdError}</span>}
+    {ticket.cdStatus === 'running' && onCancel && ticket.cdRunUrl && <button className="tickets-pipeline-cancel" type="button" onClick={onCancel}>Stop deployment</button>}
   </span>;
 }
 
@@ -177,6 +197,17 @@ export default function Tickets() {
       }
     } catch (reason) {
       setStatusError(reason instanceof ApiError ? reason.message : 'Could not cancel the queued Jenkins run.');
+    }
+  };
+
+  const handleStopDeployment = async (ticketId: string) => {
+    const ticket = tickets?.find((item) => item.id === ticketId);
+    if (!ticket?.cdRunUrl || !window.bankaiDesktop) return;
+    try {
+      await window.bankaiDesktop.cancelJenkinsJob(ticket.cdRunUrl);
+      setStatusError('Jenkins stop requested. Bankai will update deployment status when Jenkins confirms it stopped.');
+    } catch (reason) {
+      setStatusError(reason instanceof Error ? reason.message : 'Could not stop the Jenkins deployment.');
     }
   };
 
@@ -332,6 +363,7 @@ export default function Tickets() {
                         <div className="tickets-kanban-card-title">{t.title}</div>
                         <RemediationProgress ticket={t} />
                         <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined} />
+                        <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
                         <div className="tickets-kanban-card-meta">
                           {t.service}
                           {t.findingExternalId && (
@@ -421,6 +453,7 @@ export default function Tickets() {
                       {t.title}
                       <RemediationProgress ticket={t} compact />
                       <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined} />
+                      <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
                       <span className="tickets-table-actions">
                         {t.jiraIssueUrl ? (
                           <a

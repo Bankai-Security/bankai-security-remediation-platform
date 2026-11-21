@@ -62,9 +62,28 @@ async function jenkinsFetch(credentials, url, options = {}) {
 function jenkinsApiUrl(base, relative) {
   return `${base.replace(/\/$/, '')}/${relative.replace(/^\//, '')}`;
 }
+async function getJenkinsJobParameters(credentials, jobUrl) {
+  const target = new URL(jobUrl);
+  const base = new URL(credentials.url);
+  if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname.replace(/\/$/, '') + '/job/')) throw new Error('Choose a job from the connected Jenkins server.');
+  const response = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/api/json?tree=property[parameterDefinitions[name,type,description,defaultParameterValue[value],choices]]`);
+  if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected the credentials or they lack permission to inspect job parameters.' : `Could not inspect Jenkins job parameters (HTTP ${response.status}).`);
+  const data = await response.json();
+  const definitions = (data.property || []).flatMap((item) => item.parameterDefinitions || []);
+  const sensitive = definitions.find((item) => /password|token|secret|credential|private[_-]?key/i.test(`${item.name} ${item.type}`));
+  if (sensitive) return { supported: false, reason: 'This job declares a secret parameter. Remove it from the job parameters and keep secrets in Jenkins credentials.', parameters: [] };
+  const parameters = definitions.map((item) => ({
+    name: String(item.name || ''),
+    type: String(item.type || 'StringParameterDefinition'),
+    description: String(item.description || '').slice(0, 300),
+    defaultValue: String(item.defaultParameterValue?.value ?? ''),
+    choices: Array.isArray(item.choices) ? item.choices.map(String).slice(0, 100) : [],
+  })).filter((item) => item.name && item.name.length <= 100);
+  return { supported: true, reason: null, parameters };
+}
 async function listJenkinsJobs(credentials) {
   const jobs = [];
-  const visit = async (url, depth = 0) => {
+    const visit = async (url, depth = 0, underMultibranch = false) => {
     if (depth > 8 || jobs.length >= 300) return;
     const response = await jenkinsFetch(credentials, `${url.replace(/\/$/, '')}/api/json?tree=jobs[name,url,color,_class]`);
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected the credentials or they lack permission to read jobs.' : `Could not list Jenkins jobs (HTTP ${response.status}).`);
@@ -73,9 +92,9 @@ async function listJenkinsJobs(credentials) {
       const jobClass = String(item._class || '').toLowerCase();
       const isMultibranch = jobClass.includes('multibranch');
       const isFolder = jobClass.includes('folder') || isMultibranch || jobClass.includes('computedfolder');
-      if (isMultibranch && item.url) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: true });
-      if (isFolder && item.url) await visit(item.url, depth + 1);
-      else if (!isMultibranch) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: false });
+        if (isMultibranch && item.url) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: true });
+        if (isFolder && item.url) await visit(item.url, depth + 1, underMultibranch || isMultibranch);
+        else if (!isMultibranch) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: underMultibranch });
     }
   };
   await visit(credentials.url);
@@ -84,7 +103,7 @@ async function listJenkinsJobs(credentials) {
 function progress(event, update) {
   if (!event.sender.isDestroyed()) event.sender.send('bankai:jenkins-job-progress', update);
 }
-async function runJenkinsJob(event, jobUrl) {
+async function runJenkinsJob(event, jobUrl, parameters = {}) {
   const credentials = await readJenkinsCredentials();
   if (!credentials) throw new Error('Connect to Jenkins before starting a build.');
   const target = new URL(jobUrl);
@@ -97,7 +116,28 @@ async function runJenkinsJob(event, jobUrl) {
   } else if (crumbResponse.status !== 404) {
     throw new Error(`Could not prepare Jenkins build request (HTTP ${crumbResponse.status}).`);
   }
-  const queued = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/build`, { method: 'POST', headers: crumbHeaders });
+  let buildUrl = `${target.toString().replace(/\/$/, '')}/build`;
+  let requestOptions = { method: 'POST', headers: crumbHeaders };
+  const entries = Object.entries(parameters || {});
+    if (parameters !== undefined) {
+    const configuration = await getJenkinsJobParameters(credentials, jobUrl);
+    if (!configuration.supported) throw new Error(configuration.reason || 'This Jenkins job cannot be started safely with parameters.');
+    const definitions = new Map(configuration.parameters.map((item) => [item.name, item]));
+    const form = new URLSearchParams();
+    for (const [name, rawValue] of entries) {
+      const definition = definitions.get(name);
+      if (!definition || /password|token|secret|credential|private[_-]?key/i.test(name) || typeof rawValue !== 'string' || rawValue.length > 2000) throw new Error('Enter only non-secret values for parameters declared by this Jenkins job.');
+      if (definition.choices.length && !definition.choices.includes(rawValue)) throw new Error(`Choose a listed value for ${name}.`);
+      form.set(name, rawValue);
+    }
+    for (const definition of configuration.parameters) {
+      if ((!form.has(definition.name) || !form.get(definition.name)) && !definition.defaultValue) throw new Error(`Enter a value for ${definition.name} before deploying.`);
+      if (definition.choices.length && form.has(definition.name) && !definition.choices.includes(form.get(definition.name))) throw new Error(`Choose a listed value for ${definition.name}.`);
+    }
+    buildUrl = `${target.toString().replace(/\/$/, '')}/buildWithParameters`;
+    requestOptions = { method: 'POST', headers: { ...crumbHeaders, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() };
+  }
+  const queued = await jenkinsFetch(credentials, buildUrl, requestOptions);
   if (![200, 201, 202].includes(queued.status)) throw new Error(queued.status === 401 || queued.status === 403 ? 'Jenkins rejected the credentials or they lack permission to start this job.' : `Jenkins could not start the build (HTTP ${queued.status}).`);
   const queueUrl = queued.headers.get('location');
   if (!queueUrl) throw new Error('Jenkins accepted the build but did not return a queue link. Check the Jenkins job page.');
@@ -122,7 +162,12 @@ async function runJenkinsJob(event, jobUrl) {
       const state = current.result === 'SUCCESS' ? 'success' : current.result === 'ABORTED' ? 'aborted' : 'failure';
       const changeCommit = current.changeSet?.items?.find((item) => item.commitId)?.commitId;
       const revisionCommit = current.actions?.map((action) => action.lastBuiltRevision?.SHA1).find(Boolean);
-      const result = { state, buildUrl: current.url || build.url, number: current.number, timestamp: current.timestamp || null, durationMs: current.duration || null, commitSha: changeCommit || revisionCommit || null, jobUrl };
+      const targetParameter = current.actions?.flatMap((action) => action.parameters || []).find((item) => /^(deployment_?url|deploy_?url|target_?url)$/i.test(String(item.name || '')) && typeof item.value === 'string');
+      let targetUrl = null;
+      if (targetParameter) {
+        try { const parsedTarget = new URL(targetParameter.value); if (parsedTarget.protocol === 'https:' && !parsedTarget.username && !parsedTarget.password) { parsedTarget.search = ''; parsedTarget.hash = ''; targetUrl = parsedTarget.toString(); } } catch { /* omit Jenkins values that are not safe public URLs */ }
+      }
+      const result = { state, buildUrl: current.url || build.url, number: current.number, timestamp: current.timestamp || null, durationMs: current.duration || null, commitSha: changeCommit || revisionCommit || null, targetUrl, jobUrl };
       progress(event, result);
       return result;
     }
@@ -262,9 +307,14 @@ ipcMain.handle('bankai:jenkins-disconnect', async () => {
   await fs.rm(JENKINS_STORE(), { force: true });
   return { connected: false };
 });
-ipcMain.handle('bankai:jenkins-run-job', (event, url) => runJenkinsJob(event, url));
+ipcMain.handle('bankai:jenkins-run-job', (event, url, parameters) => runJenkinsJob(event, url, parameters));
 ipcMain.handle('bankai:jenkins-build-log', (_event, url) => getJenkinsBuildLog(url));
 ipcMain.handle('bankai:jenkins-cancel-build', (_event, url) => cancelJenkinsBuild(url));
+ipcMain.handle('bankai:jenkins-get-job-parameters', async (_event, url) => {
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins first.');
+  return getJenkinsJobParameters(credentials, url);
+});
 app.setAsDefaultProtocolClient('bankai');
 app.on('second-instance', (_event, argv) => {
   const projectId = argv.map(projectFromDeepLink).find(Boolean);

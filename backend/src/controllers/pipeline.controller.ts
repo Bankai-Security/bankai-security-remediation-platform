@@ -4,6 +4,7 @@ import { recordActivity } from "../lib/activity.js";
 import { requireRole } from "../lib/roles.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { enqueueJenkinsRetry } from "../lib/queue.js";
+import { publishJenkinsEvidence } from "../lib/jenkins-evidence.js";
 
 const MAX_RETRIES = 2;
 const redact = (value: string) => value
@@ -24,6 +25,14 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     .eq("project_id", req.project!.id).eq("status", "in_progress").lt("claimed_at", staleBefore).select("ticket_id");
   for (const stale of staleRuns ?? []) await supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_error: "Bankai Desktop stopped reporting before this build finished. Check Jenkins before retrying." })
     .eq("id", stale.ticket_id).eq("project_id", req.project!.id);
+  for (const ticketId of new Set((staleRuns ?? []).map((run) => run.ticket_id))) await publishJenkinsEvidence(req.project!.id, ticketId);
+  const deploymentStaleBefore = new Date(Date.now() - 30 * 60_000).toISOString();
+  const { data: staleDeployments } = await supabaseAdmin.from("pipeline_runs").update({ deployment_status: "needs_review",
+    deployment_error: "Bankai Desktop stopped reporting before the deployment finished. Check Jenkins before retrying.", deployment_completed_at: new Date().toISOString() })
+    .eq("project_id", req.project!.id).eq("deployment_status", "running").lt("deployment_started_at", deploymentStaleBefore).select("ticket_id");
+  for (const stale of staleDeployments ?? []) await supabaseAdmin.from("tickets").update({ cd_status: "needs_review", cd_error: "Bankai Desktop stopped reporting before the deployment finished. Check Jenkins before retrying." })
+    .eq("id", stale.ticket_id).eq("project_id", req.project!.id);
+  for (const ticketId of new Set((staleDeployments ?? []).map((run) => run.ticket_id))) await publishJenkinsEvidence(req.project!.id, ticketId);
   const { data: queued, error } = await supabaseAdmin.from("pipeline_runs").select("*")
     .eq("project_id", req.project!.id).eq("status", "queued").order("created_at").limit(1).maybeSingle();
   if (error) throw new HttpError(500, "Could not check for Jenkins work.");
@@ -102,6 +111,7 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
   } else if (state === "failed" && (run.retry_count >= MAX_RETRIES || !eligible)) ciStatus = "needs_review";
   const ciError = ciStatus === "needs_review" ? (eligible ? "The automatic retry limit was reached. Review the Jenkins build and update the pull request." : "Jenkins failed for a setup or environment reason. Fix the Jenkins configuration, then review the pull request.") : summary;
   if (ciStatus !== "retrying") await supabaseAdmin.from("tickets").update({ ci_status: ciStatus, ci_run_url: buildUrl, ci_error: ciError }).eq("id", run.ticket_id).eq("project_id", req.project!.id);
+  if (ciStatus !== "retrying") await publishJenkinsEvidence(req.project!.id, run.ticket_id);
   await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: req.user!.id, actorLabel: "Bankai Desktop", eventType: "pipeline",
     summary: state === "passed" ? "passed Jenkins verification for" : state === "failed" ? `reported Jenkins ${ciStatus} for` : "cancelled Jenkins verification for",
     linkLabel: `PR #${run.pull_request_number}`, linkTo: "tickets", meta: `commit ${run.commit_sha ?? "unknown"} · build ${buildNumber ?? "unknown"}` });
@@ -129,16 +139,77 @@ export async function reportJenkinsProgress(req: Request, res: Response): Promis
   res.status(200).json({ accepted: true });
 }
 
+export async function reportJenkinsDeployment(req: Request, res: Response): Promise<void> {
+  requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
+  const { deviceId, state, jobUrl, buildUrl, buildNumber, targetUrl, error: suppliedError } = req.body ?? {};
+  if (typeof deviceId !== "string" || !/^[\w.-]{8,100}$/.test(deviceId)
+    || !["running", "passed", "failed", "needs_review", "cancelled"].includes(state)) {
+    throw new HttpError(400, "The Jenkins deployment update is invalid.");
+  }
+  const { data: run, error: loadError } = await supabaseAdmin.from("pipeline_runs").select("id,ticket_id,commit_sha,conclusion,claimed_by,jenkins_job_url,deployment_job_url,deployment_status,pull_request_number")
+    .eq("id", req.params.runId).eq("project_id", req.project!.id).eq("claimed_by", deviceId).maybeSingle();
+  if (loadError || !run || run.conclusion !== "passed" || !run.commit_sha) throw new HttpError(409, "Deployment is only available after the matching Jenkins build passes.");
+  const { data: ticket, error: ticketLoadError } = await supabaseAdmin.from("tickets").select("github_pr_state,github_pr_number").eq("id", run.ticket_id).eq("project_id", req.project!.id).maybeSingle();
+  if (ticketLoadError || ticket?.github_pr_state !== "open" || ticket.github_pr_number !== run.pull_request_number) throw new HttpError(409, "Deployment is only available while the verified remediation pull request is open.");
+  if (state === "running" && jobUrl) {
+    try {
+      const ciJob = new URL(run.jenkins_job_url);
+      const deployJob = new URL(jobUrl);
+      if (deployJob.origin !== ciJob.origin || deployJob.protocol !== ciJob.protocol || !deployJob.pathname.startsWith(`${ciJob.pathname.replace(/\/$/, "")}/job/`)) throw new Error("deployment job is outside the Jenkins server");
+    } catch { throw new HttpError(400, "Select a deployment job from the connected Jenkins server."); }
+    const { error } = await supabaseAdmin.from("pipeline_runs").update({ deployment_status: "running", deployment_job_url: jobUrl,
+      deployment_started_at: new Date().toISOString(), deployment_error: null }).eq("id", run.id).eq("conclusion", "passed");
+    if (error) throw new HttpError(500, "Could not start deployment tracking.");
+  } else if (state === "needs_review" && run.deployment_status == null) {
+    await supabaseAdmin.from("pipeline_runs").update({ deployment_status: "needs_review", deployment_job_url: jobUrl ?? null,
+      deployment_started_at: new Date().toISOString() }).eq("id", run.id);
+  } else if (run.deployment_status !== "running") throw new HttpError(409, "This deployment is not running.");
+
+  let safeTargetUrl: string | null = null;
+  if (targetUrl != null) {
+    try {
+      const target = new URL(targetUrl);
+      if (target.protocol !== "https:" || target.username || target.password) throw new Error("unsafe target URL");
+      target.search = ""; target.hash = "";
+      safeTargetUrl = target.toString();
+    } catch { throw new HttpError(400, "Jenkins returned an invalid deployment target link."); }
+  }
+  if (buildUrl != null) {
+    try {
+      const root = new URL(run.deployment_job_url);
+      const build = new URL(buildUrl);
+      const rootPath = root.pathname.replace(/\/$/, "");
+      if (build.origin !== root.origin || build.protocol !== root.protocol || !(build.pathname === rootPath || build.pathname.startsWith(`${rootPath}/`))) throw new Error("build URL outside deployment job");
+    } catch { throw new HttpError(400, "The deployment build link is outside the selected Jenkins job."); }
+  }
+  const finalState = state === "running" ? "running" : state;
+  const finalError = typeof suppliedError === "string" ? redact(suppliedError).slice(0, 1500) : null;
+  const finished = finalState !== "running";
+  const { error: updateError } = await supabaseAdmin.from("pipeline_runs").update({ deployment_status: finalState,
+    deployment_build_url: buildUrl ?? undefined, deployment_build_number: Number.isInteger(buildNumber) ? buildNumber : undefined,
+    deployment_target_url: safeTargetUrl, deployment_error: finalError, deployment_completed_at: finished ? new Date().toISOString() : undefined })
+    .eq("id", run.id);
+  if (updateError) throw new HttpError(500, "Could not save the deployment result.");
+  const { error: ticketError } = await supabaseAdmin.from("tickets").update({ cd_status: finalState,
+    cd_run_url: buildUrl ?? (state === "running" ? null : undefined), cd_error: finalError, cd_target_url: safeTargetUrl }).eq("id", run.ticket_id).eq("project_id", req.project!.id);
+  if (ticketError) throw new HttpError(500, "Could not update the ticket deployment status.");
+  await publishJenkinsEvidence(req.project!.id, run.ticket_id);
+  res.status(200).json({ cdStatus: finalState });
+}
+
 export async function cancelQueuedJenkinsRun(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
-  const { data: ticket } = await supabaseAdmin.from("tickets").select("ci_status").eq("id", req.params.ticketId).eq("project_id", req.project!.id).maybeSingle();
+  const ticketId = Array.isArray(req.params.ticketId) ? req.params.ticketId[0] : req.params.ticketId;
+  if (!ticketId) throw new HttpError(400, "A ticket ID is required.");
+  const { data: ticket } = await supabaseAdmin.from("tickets").select("ci_status").eq("id", ticketId).eq("project_id", req.project!.id).maybeSingle();
   if (ticket?.ci_status === "retrying") {
     await supabaseAdmin.from("tickets").update({ ci_status: "cancelled", ci_error: "The AI retry was cancelled. Review the PR branch for any changes that were already in progress." })
-      .eq("id", req.params.ticketId).eq("project_id", req.project!.id).eq("ci_status", "retrying");
+      .eq("id", ticketId).eq("project_id", req.project!.id).eq("ci_status", "retrying");
+    await publishJenkinsEvidence(req.project!.id, ticketId);
     res.status(200).json({ cancelled: true }); return;
   }
   const { data: queued, error } = await supabaseAdmin.from("pipeline_runs").select("id")
-    .eq("ticket_id", req.params.ticketId).eq("project_id", req.project!.id).eq("status", "queued")
+    .eq("ticket_id", ticketId).eq("project_id", req.project!.id).eq("status", "queued")
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) throw new HttpError(500, "Could not inspect the queued Jenkins run.");
   if (!queued) throw new HttpError(409, "This Jenkins run has already started or finished.");
@@ -146,6 +217,7 @@ export async function cancelQueuedJenkinsRun(req: Request, res: Response): Promi
     .eq("id", queued.id).eq("status", "queued").select("id").maybeSingle();
   if (cancelError) throw new HttpError(500, "Could not cancel the queued Jenkins run.");
   if (!cancelled) throw new HttpError(409, "This Jenkins run has already started.");
-  await supabaseAdmin.from("tickets").update({ ci_status: "cancelled", ci_error: null }).eq("id", req.params.ticketId).eq("project_id", req.project!.id);
+  await supabaseAdmin.from("tickets").update({ ci_status: "cancelled", ci_error: null }).eq("id", ticketId).eq("project_id", req.project!.id);
+  await publishJenkinsEvidence(req.project!.id, ticketId);
   res.status(200).json({ cancelled: true });
 }

@@ -78,29 +78,29 @@ This checklist turns the agreed CI/CD workflow into buildable implementation ste
 
 ## Phase 6: Simple CD through an existing Jenkins deployment job
 
-- [ ] Discover deployment jobs from the connected Jenkins instance or allow the user to select one by name.
-- [ ] Let the user enable/disable CD per repository and select the deployment job; do not require a separate provider integration for v1.
-- [ ] Explain that the selected Jenkins job defines the destination and deployment procedure.
-- [ ] Do not infer a deployment destination or add deployment credentials to the repository.
-- [ ] Configure deployment to run only after the required build/security checks pass.
-- [ ] Confirm whether the chosen Jenkins job supports safe parameterized invocation; expose required non-secret parameters in a clear setup flow.
-- [ ] Trigger deployment and show queued/running/succeeded/failed states, build number, logs link, and target link if Jenkins provides one.
-- [ ] If no deployment job is configured, mark CD as `not_configured` and provide a simple selection/setup path.
-- [ ] Keep the initial CD behavior to the selected existing Jenkins job; defer direct provider integrations.
+- [x] Discover deployment jobs from the connected Jenkins instance or allow the user to select one by name.
+- [x] Let the user enable/disable CD per repository and select the deployment job; do not require a separate provider integration for v1.
+- [x] Explain that the selected Jenkins job defines the destination and deployment procedure.
+- [x] Do not infer a deployment destination or add deployment credentials to the repository.
+- [x] Configure deployment to run only after the required build/security checks pass.
+- [x] Confirm whether the chosen Jenkins job supports safe parameterized invocation; expose required non-secret parameters in a clear setup flow.
+- [x] Trigger deployment and show running/succeeded/failed states, build number, Jenkins link, and target link if Jenkins provides one.
+- [x] If no deployment job is configured, mark CD as `not_configured` and provide a simple selection/setup path.
+- [x] Keep the initial CD behavior to the selected existing Jenkins job; defer direct provider integrations.
 
-**Done when:** a user can choose an existing deployment job and Bankai runs it after successful checks, showing the outcome.
+**Done when:** a user can choose an existing deployment job and Bankai runs it after successful checks, showing the outcome. CD settings and non-secret parameter values live on the desktop; Jenkins retains deployment destinations and credentials. Apply migration `20261121170000_jenkins_deployment_jobs.sql` before using deployment reporting.
 
 ## Phase 7: Evidence and user review
 
-- [ ] Define an evidence payload containing commit SHA, Jenkins build link/result, check summary, deployment job/result, timestamps, and retry count.
-- [ ] Redact secrets and exclude raw credentials, tokens, and sensitive environment values.
-- [ ] Attach evidence as a PR comment or check summary using the existing GitHub integration.
-- [ ] Make evidence idempotent so retries update the summary rather than spamming duplicate comments.
-- [ ] Link to detailed Jenkins logs/deployment view instead of copying sensitive logs into GitHub.
-- [ ] Present final pass/failure and remaining manual action in the desktop and web PR views.
-- [ ] Keep merge under the user's control; Bankai reports results but does not merge automatically in v1.
+- [x] Define an evidence payload containing commit SHA, Jenkins build link/result, remediation finding summary, deployment job/result, timestamps, and retry count.
+- [x] Redact secrets and exclude raw credentials, tokens, console logs, and sensitive environment values.
+- [x] Attach evidence as a PR comment using the project's existing GitHub connection.
+- [x] Make evidence idempotent so retries and deployment updates edit the same Bankai comment instead of adding duplicates.
+- [x] Link to detailed Jenkins build/deployment pages instead of copying console output into GitHub.
+- [x] Present final pass/failure and remaining manual action in the ticket/PR views and in the PR evidence comment.
+- [x] Keep merge under the user's control; Bankai reports results but does not merge automatically in v1.
 
-**Done when:** a reviewer can see what was scanned, built, checked, retried, and deployed, then make the merge decision.
+**Done when:** a reviewer can see the remediation finding, commit, Jenkins build, deployment outcome, retries, and next action in one PR comment, then make the merge decision. Evidence is updated on final CI results, stale-run recovery, and deployment state changes. Apply the Phase 6 deployment migration before deploying the Phase 7 backend changes.
 
 ## Phase 8: Reliability, security, and release readiness
 

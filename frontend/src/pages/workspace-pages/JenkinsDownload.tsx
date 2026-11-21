@@ -3,11 +3,13 @@ import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubCon
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
+import JenkinsDeploymentSetup from '../../components/JenkinsDeploymentSetup';
 
 const downloadUrl = import.meta.env.VITE_BANKAI_DESKTOP_DOWNLOAD_URL;
 type JenkinsJob = { name: string; url: string; color: string; supportsPullRequests?: boolean };
 type JenkinsConnection = { connected: boolean; url?: string; username?: string };
-type JenkinsJobProgress = { state: 'queued' | 'running' | 'success' | 'failure' | 'aborted'; buildUrl?: string; number?: number; timestamp?: number | null; durationMs?: number | null; commitSha?: string | null; jobUrl?: string };
+type JenkinsJobProgress = { state: 'queued' | 'running' | 'success' | 'failure' | 'aborted'; buildUrl?: string; number?: number; timestamp?: number | null; durationMs?: number | null; commitSha?: string | null; targetUrl?: string | null; jobUrl?: string };
+type JenkinsParameterDefinition = { name: string; type: string; description: string; defaultValue: string; choices: string[] };
 
 export default function JenkinsDownload() {
   const { project } = useProject();
@@ -53,7 +55,8 @@ declare global {
       connectJenkins: (input: { url: string; username: string; apiToken: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[] }>;
       listJenkinsJobs: () => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
-      runJenkinsJob: (url: string) => Promise<JenkinsJobProgress>;
+      runJenkinsJob: (url: string, parameters?: Record<string, string>) => Promise<JenkinsJobProgress>;
+      getJenkinsJobParameters: (url: string) => Promise<{ supported: boolean; reason: string | null; parameters: JenkinsParameterDefinition[] }>;
       getJenkinsBuildLog: (url: string) => Promise<string>;
       cancelJenkinsJob: (url: string) => Promise<{ requested: boolean }>;
       onJenkinsJobProgress: (callback: (progress: JenkinsJobProgress) => void) => () => void;
@@ -202,6 +205,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
           {error && <p className="jenkins-browser-error" role="alert">{error}</p>}
           {message && <p className="jenkins-browser-status" role="status">{message}</p>}
         </section>
+        <JenkinsDeploymentSetup projectId={projectId} jobs={jobs} />
         <JenkinsfileSetup projectId={projectId} />
         </>
       )}

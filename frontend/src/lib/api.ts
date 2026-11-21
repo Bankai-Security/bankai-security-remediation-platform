@@ -474,6 +474,10 @@ export interface Ticket {
   ciStatus: "queued" | "running" | "passed" | "failed" | "retrying" | "needs_review" | "cancelled" | null;
   ciRunUrl: string | null;
   ciError: string | null;
+  cdStatus: "not_configured" | "queued" | "running" | "passed" | "failed" | "needs_review" | "cancelled";
+  cdRunUrl: string | null;
+  cdError: string | null;
+  cdTargetUrl: string | null;
   createdAt: string;
 }
 
@@ -492,6 +496,12 @@ export function finishJenkinsPipeline(projectId: string, runId: string, input: {
 }
 export function reportJenkinsPipelineProgress(projectId: string, runId: string, input: { deviceId: string; buildUrl: string; buildNumber?: number }): Promise<{ accepted: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/progress`, { method: "POST", body: JSON.stringify(input) });
+}
+export function reportJenkinsDeployment(projectId: string, runId: string, input: {
+  deviceId: string; state: "running" | "passed" | "failed" | "needs_review" | "cancelled";
+  jobUrl?: string; buildUrl?: string; buildNumber?: number | null; targetUrl?: string | null; error?: string;
+}): Promise<{ cdStatus: string }> {
+  return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/deployment`, { method: "POST", body: JSON.stringify(input) });
 }
 export function cancelQueuedJenkinsPipeline(projectId: string, ticketId: string): Promise<{ cancelled: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/tickets/${ticketId}/cancel`, { method: "POST" });

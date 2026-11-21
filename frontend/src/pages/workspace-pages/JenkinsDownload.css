@@ -151,6 +151,13 @@
 .jenkins-run-status--success { border-color: rgba(21, 128, 61, .3); color: #15803d; }
 .jenkins-run-status--failure { border-color: rgba(180, 35, 24, .3); color: #b42318; }
 .jenkinsfile-setup { width: 100%; margin-top: 28px; padding-top: 23px; border-top: 1px solid var(--color-divider); text-align: left; }
+.jenkins-deployment-enable { margin-top: 14px; display: flex; align-items: flex-start; gap: 9px; color: var(--color-text-subtle); font-size: 13px; line-height: 1.5; cursor: pointer; }
+.jenkins-deployment-enable input { margin-top: 3px; accent-color: var(--color-blue); }
+.jenkins-deployment-setup > label:not(.jenkins-deployment-enable) { display: block; margin: 15px 0 7px; color: var(--color-text-subtle); font-size: 13px; font-weight: 600; }
+.jenkins-deployment-setup select, .jenkins-deployment-parameter input { width: 100%; min-height: 42px; box-sizing: border-box; padding: 0 11px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-text); font: inherit; }
+.jenkins-deployment-parameter { margin-top: 13px; display: flex; flex-direction: column; gap: 6px; }
+.jenkins-deployment-parameter label { color: var(--color-text-subtle); font-size: 12px; font-weight: 600; }
+.jenkins-deployment-parameter label span, .jenkins-deployment-param-help { color: var(--color-text-faint); font-size: 11px; font-weight: 400; line-height: 1.5; }
 .jenkinsfile-setup-heading { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
 .jenkinsfile-setup-heading h2 { margin: 4px 0 0; color: var(--color-text); font-size: 18px; }
 .jenkinsfile-setup-eyebrow { color: var(--color-text-faint); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }

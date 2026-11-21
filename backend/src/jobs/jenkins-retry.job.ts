@@ -5,6 +5,7 @@ import { commitFileToBranch, getBlob, getBranchHeadSha, getPullRequest, getTree 
 import { logger } from "../lib/logger.js";
 import { loadGithubCreds } from "../lib/ticketing.js";
 import { supabaseAdmin } from "../lib/supabase.js";
+import { publishJenkinsEvidence } from "../lib/jenkins-evidence.js";
 import type { JenkinsRetryJobData } from "../lib/queue.js";
 
 function redactLog(value: string): string {
@@ -17,6 +18,7 @@ async function needsReview(data: JenkinsRetryJobData, message: string): Promise<
   if (ticket?.ci_status !== "retrying") return;
   await supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_error: message }).eq("id", data.ticketId).eq("project_id", data.projectId).eq("ci_status", "retrying");
   await supabaseAdmin.from("pipeline_runs").update({ status: "needs_review", conclusion: "needs_review", failure_summary: message.slice(0, 1500), completed_at: new Date().toISOString() }).eq("id", data.runId).eq("project_id", data.projectId);
+  await publishJenkinsEvidence(data.projectId, data.ticketId);
 }
 
 export async function processJenkinsRetryJob(job: Job<JenkinsRetryJobData>): Promise<void> {
