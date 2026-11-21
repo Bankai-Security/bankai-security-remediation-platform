@@ -119,7 +119,8 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
   if (activeRun) {
     res.status(200).json({ runId: activeRun.id, ticketId: activeRun.ticket_id, commitSha: activeRun.commit_sha, branch: activeRun.head_branch,
       pullRequestNumber: activeRun.pull_request_number, retryCount: activeRun.retry_count, jobUrl: activeRun.jenkins_job_url || selectedJobUrl,
-      resume: true, buildUrl: activeRun.jenkins_build_url ?? null, buildNumber: activeRun.jenkins_build_number ?? null });
+      resume: true, buildUrl: activeRun.jenkins_build_url ?? null, buildNumber: activeRun.jenkins_build_number ?? null,
+      buildSearchSince: activeRun.created_at });
     return;
   }
   const { data: queued, error } = await supabaseAdmin.from("pipeline_runs").select("*")
@@ -142,7 +143,8 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
   await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: req.user!.id, actorLabel: "Bankai Desktop", eventType: "pipeline",
     summary: "started Jenkins verification for", linkLabel: `PR #${claimed.pull_request_number}`, linkTo: "tickets", meta: `commit ${claimed.commit_sha}` });
   res.status(200).json({ runId: claimed.id, ticketId: claimed.ticket_id, commitSha: claimed.commit_sha, branch: claimed.head_branch,
-    pullRequestNumber: claimed.pull_request_number, retryCount: claimed.retry_count, jobUrl: selectedJobUrl });
+    pullRequestNumber: claimed.pull_request_number, retryCount: claimed.retry_count, jobUrl: selectedJobUrl,
+    buildSearchSince: queued.updated_at ?? queued.created_at });
 }
 
 export async function finishJenkinsRun(req: Request, res: Response): Promise<void> {

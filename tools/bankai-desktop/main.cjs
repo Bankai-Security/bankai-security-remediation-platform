@@ -272,6 +272,24 @@ async function resumeJenkinsJob(event, jobUrl, existingBuildUrl) {
   }
   throw new Error('The existing Jenkins build is still running. Open Jenkins to check its status.');
 }
+async function findRecentJenkinsBuild(jobUrl, since) {
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins before checking for an existing build.');
+  const job = validateJenkinsResourceUrl(credentials, jobUrl);
+  const threshold = Date.parse(since || '');
+  if (!Number.isFinite(threshold)) return null;
+  const response = await jenkinsFetch(credentials, `${job.toString().replace(/\/$/, '')}/lastBuild/api/json`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Could not inspect the latest Jenkins build (HTTP ${response.status}).`);
+  const build = await response.json();
+  const timestamp = Number(build.timestamp);
+  if (!build.url || !Number.isFinite(timestamp) || timestamp < threshold - 10_000) return null;
+  const target = validateJenkinsResourceUrl(credentials, build.url);
+  if (target.origin !== job.origin || !target.pathname.startsWith(`${job.pathname.replace(/\/$/, '')}/`)) {
+    throw new Error('Jenkins returned a recent build outside the selected pull request job.');
+  }
+  return { url: target.toString(), timestamp };
+}
 async function getJenkinsBuildLog(buildUrl) {
   const credentials = await readJenkinsCredentials();
   if (!credentials) throw new Error('Connect to Jenkins before reading build output.');
@@ -417,6 +435,7 @@ ipcMain.handle('bankai:jenkins-disconnect', async (event) => {
 });
 ipcMain.handle('bankai:jenkins-run-job', (event, url, parameters) => { assertBankaiSender(event); return runJenkinsJob(event, url, parameters); });
 ipcMain.handle('bankai:jenkins-resume-job', (event, jobUrl, buildUrl) => { assertBankaiSender(event); return resumeJenkinsJob(event, jobUrl, buildUrl); });
+ipcMain.handle('bankai:jenkins-find-recent-build', (event, jobUrl, since) => { assertBankaiSender(event); return findRecentJenkinsBuild(jobUrl, since); });
 ipcMain.handle('bankai:jenkins-build-log', (event, url) => { assertBankaiSender(event); return getJenkinsBuildLog(url); });
 ipcMain.handle('bankai:jenkins-cancel-build', (event, url) => { assertBankaiSender(event); return cancelJenkinsBuild(url); });
 ipcMain.handle('bankai:jenkins-get-job-parameters', async (event, url) => {

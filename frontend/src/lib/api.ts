@@ -483,7 +483,7 @@ export interface Ticket {
 
 export interface JenkinsPipelineClaim {
   runId: string; ticketId: string; commitSha: string | null; branch: string; pullRequestNumber: number;
-  retryCount: number; jobUrl: string; resume?: boolean; buildUrl?: string | null; buildNumber?: number | null;
+  retryCount: number; jobUrl: string; resume?: boolean; buildUrl?: string | null; buildNumber?: number | null; buildSearchSince?: string | null;
 }
 export function claimJenkinsPipeline(projectId: string, input: { deviceId: string; jobUrl: string }): Promise<JenkinsPipelineClaim | undefined> {
   return apiFetch(`/projects/${projectId}/pipeline/claim`, { method: "POST", body: JSON.stringify(input) });

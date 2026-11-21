@@ -82,8 +82,17 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
           return;
         }
         activeRunJobUrl = job.url;
-        const result = run.resume
-          ? await desktop.resumeJenkinsJob(job.url, run.buildUrl)
+        let existingBuild = run.buildUrl ? { url: run.buildUrl } : null;
+        if (!existingBuild && run.buildSearchSince && desktop.findRecentJenkinsBuild) {
+          // Jenkins may build a newly discovered PR branch automatically. Give
+          // that build a short window to appear before requesting another one.
+          for (let attempt = 0; attempt < 6 && !existingBuild; attempt += 1) {
+            existingBuild = await desktop.findRecentJenkinsBuild(job.url, run.buildSearchSince);
+            if (!existingBuild && attempt < 5) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+          }
+        }
+        const result = existingBuild || run.resume
+          ? await desktop.resumeJenkinsJob(job.url, existingBuild?.url ?? run.buildUrl)
           : await desktop.runJenkinsJob(job.url);
         const state = result.state === "success" ? "passed" : result.state === "aborted" ? "cancelled" : "failed";
         const failureLog = state === "failed" && result.buildUrl ? await desktop.getJenkinsBuildLog(result.buildUrl).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
