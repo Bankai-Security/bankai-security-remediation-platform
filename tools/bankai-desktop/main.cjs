@@ -125,6 +125,29 @@ async function listJenkinsJobs(credentials) {
   await visit(credentials.url);
   return jobs;
 }
+async function getJenkinsCheckedOutCommit(credentials, buildUrl) {
+  const target = validateJenkinsResourceUrl(credentials, buildUrl);
+  const response = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/consoleText`, { headers: { Accept: 'text/plain' } });
+  if (!response.ok || !response.body) return null;
+
+  // Jenkins SCM metadata is missing from some multibranch build API responses.
+  // Read only the beginning of the console, where the checkout revision is logged.
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  while (size < 256 * 1024) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(Buffer.from(value));
+    size += value.byteLength;
+  }
+  if (size >= 256 * 1024) await reader.cancel();
+
+  const output = Buffer.concat(chunks).toString('utf8').replace(/\u001b\[[0-9;]*m/g, '');
+  const revisions = new Set([...output.matchAll(/Checking out Revision\s+([0-9a-f]{40})\b/gi)].map((match) => match[1].toLowerCase()));
+  // If a pipeline checks out multiple different revisions, do not guess which one was tested.
+  return revisions.size === 1 ? [...revisions][0] : null;
+}
 function progress(event, update) {
   if (!event.sender.isDestroyed()) event.sender.send('bankai:jenkins-job-progress', update);
 }
@@ -186,12 +209,16 @@ async function runJenkinsJob(event, jobUrl, parameters = {}) {
       const state = current.result === 'SUCCESS' ? 'success' : current.result === 'ABORTED' ? 'aborted' : 'failure';
       const changeCommit = current.changeSet?.items?.find((item) => item.commitId)?.commitId;
       const revisionCommit = current.actions?.map((action) => action.lastBuiltRevision?.SHA1).find(Boolean);
+      let commitSha = changeCommit || revisionCommit || null;
+      if (!commitSha) {
+        try { commitSha = await getJenkinsCheckedOutCommit(credentials, current.url || build.url); } catch { /* keep the build result; Bankai will request review if the SHA remains unknown */ }
+      }
       const targetParameter = current.actions?.flatMap((action) => action.parameters || []).find((item) => /^(deployment_?url|deploy_?url|target_?url)$/i.test(String(item.name || '')) && typeof item.value === 'string');
       let targetUrl = null;
       if (targetParameter) {
         try { const parsedTarget = new URL(targetParameter.value); if (parsedTarget.protocol === 'https:' && !parsedTarget.username && !parsedTarget.password) { parsedTarget.search = ''; parsedTarget.hash = ''; targetUrl = parsedTarget.toString(); } } catch { /* omit Jenkins values that are not safe public URLs */ }
       }
-      const result = { state, buildUrl: current.url || build.url, number: current.number, timestamp: current.timestamp || null, durationMs: current.duration || null, commitSha: changeCommit || revisionCommit || null, targetUrl, jobUrl };
+      const result = { state, buildUrl: current.url || build.url, number: current.number, timestamp: current.timestamp || null, durationMs: current.duration || null, commitSha, targetUrl, jobUrl };
       progress(event, result);
       return result;
     }
