@@ -297,6 +297,11 @@ export default function AITriage() {
           <div className="ws-empty-title">No findings yet</div>
           <div className="ws-empty-body">Upload a scan from Report Intake to populate this list.</div>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="ws-empty">
+          <div className="ws-empty-title">No active findings</div>
+          <div className="ws-empty-body">Resolved findings stay available in the bucket filter when you need their history.</div>
+        </div>
       ) : (
         <section className="ws-table">
           <div className="ws-table-head triage-grid">
