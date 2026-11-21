@@ -16,6 +16,8 @@ function recoveryMessage(reason: unknown): string {
   if (/429|rate.?limit/i.test(message)) return "Jenkins is rate limiting requests. Wait briefly, refresh the Jenkins connection, and check the job before retrying.";
   if (/timeout|timed out|still running/i.test(message)) return "Bankai could not confirm whether the Jenkins build finished. Check Jenkins before retrying to avoid a duplicate build.";
   if (/unreach|connection|temporarily unavailable|HTTP 5\d\d/i.test(message)) return "Jenkins is unavailable. Check that it is running, reconnect on the Bankai Jenkins page, and confirm the build state before retrying.";
+  const safeMessage = message.replace(/(authorization|api[_-]?token|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]").slice(0, 400);
+  if (safeMessage) return `Jenkins: ${safeMessage}`;
   return "Bankai could not confirm the Jenkins result. Check the Jenkins job before retrying to avoid duplicate work.";
 }
 

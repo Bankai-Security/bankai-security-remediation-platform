@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs');
 
 // Host the same frontend origin as the web app. This keeps Bankai's cookie
 // session, API runtime config, and OAuth callbacks on their registered origins.
@@ -163,31 +164,36 @@ async function runJenkinsJob(event, jobUrl, parameters = {}) {
   } else if (crumbResponse.status !== 404) {
     throw new Error(`Could not prepare Jenkins build request (HTTP ${crumbResponse.status}).`);
   }
-  let buildUrl = `${target.toString().replace(/\/$/, '')}/build`;
+  let buildUrl = buildEndpoint(target.toString(), false);
   let requestOptions = { method: 'POST', headers: crumbHeaders };
   const entries = Object.entries(parameters || {});
   if (parameters !== undefined) {
     const configuration = await getJenkinsJobParameters(credentials, jobUrl);
     if (!configuration.supported) throw new Error(configuration.reason || 'This Jenkins job cannot be started safely with parameters.');
-    const definitions = new Map(configuration.parameters.map((item) => [item.name, item]));
-    const form = new URLSearchParams();
-    for (const [name, rawValue] of entries) {
-      const definition = definitions.get(name);
-      if (!definition || /password|token|secret|credential|private[_-]?key/i.test(name) || typeof rawValue !== 'string' || rawValue.length > 2000) throw new Error('Enter only non-secret values for parameters declared by this Jenkins job.');
-      if (definition.choices.length && !definition.choices.includes(rawValue)) throw new Error(`Choose a listed value for ${name}.`);
-      form.set(name, rawValue);
+    if (configuration.parameters.length > 0) {
+      const definitions = new Map(configuration.parameters.map((item) => [item.name, item]));
+      const form = new URLSearchParams();
+      for (const [name, rawValue] of entries) {
+        const definition = definitions.get(name);
+        if (!definition || /password|token|secret|credential|private[_-]?key/i.test(name) || typeof rawValue !== 'string' || rawValue.length > 2000) throw new Error('Enter only non-secret values for parameters declared by this Jenkins job.');
+        if (definition.choices.length && !definition.choices.includes(rawValue)) throw new Error(`Choose a listed value for ${name}.`);
+        form.set(name, rawValue);
+      }
+      for (const definition of configuration.parameters) {
+        if ((!form.has(definition.name) || !form.get(definition.name)) && !definition.defaultValue) throw new Error(`Enter a value for ${definition.name} before deploying.`);
+        if (definition.choices.length && form.has(definition.name) && !definition.choices.includes(form.get(definition.name))) throw new Error(`Choose a listed value for ${definition.name}.`);
+      }
+      buildUrl = buildEndpoint(target.toString(), true);
+      requestOptions = { method: 'POST', headers: { ...crumbHeaders, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() };
+    } else if (entries.length) {
+      throw new Error('The selected Jenkins job does not accept parameters.');
     }
-    for (const definition of configuration.parameters) {
-      if ((!form.has(definition.name) || !form.get(definition.name)) && !definition.defaultValue) throw new Error(`Enter a value for ${definition.name} before deploying.`);
-      if (definition.choices.length && form.has(definition.name) && !definition.choices.includes(form.get(definition.name))) throw new Error(`Choose a listed value for ${definition.name}.`);
-    }
-    buildUrl = `${target.toString().replace(/\/$/, '')}/buildWithParameters`;
-    requestOptions = { method: 'POST', headers: { ...crumbHeaders, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() };
   }
   const queued = await jenkinsFetch(credentials, buildUrl, requestOptions);
   if (![200, 201, 202].includes(queued.status)) throw new Error(queued.status === 401 || queued.status === 403 ? 'Jenkins rejected the credentials or they lack permission to start this job.' : `Jenkins could not start the build (HTTP ${queued.status}).`);
-  const queueUrl = queued.headers.get('location');
-  if (!queueUrl) throw new Error('Jenkins accepted the build but did not return a queue link. Check the Jenkins job page.');
+  const location = queued.headers.get('location');
+  if (!location) throw new Error('Jenkins accepted the build but did not return a queue link. Check the Jenkins job page.');
+  const queueUrl = resolveQueueUrl(location, buildUrl);
   progress(event, { state: 'queued', jobUrl });
   let build;
   for (let i = 0; i < 90; i += 1) {
