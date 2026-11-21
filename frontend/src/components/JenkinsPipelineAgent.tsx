@@ -86,8 +86,16 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         if (!existingBuild && run.buildSearchSince && desktop.findRecentJenkinsBuild) {
           // Jenkins may build a newly discovered PR branch automatically. Give
           // that build a short window to appear before requesting another one.
+          // A desktop app can have a newer preload than main process during an
+          // in-place rollout; fall back when that process lacks this IPC route.
           for (let attempt = 0; attempt < 6 && !existingBuild; attempt += 1) {
-            existingBuild = await desktop.findRecentJenkinsBuild(job.url, run.buildSearchSince);
+            try {
+              existingBuild = await desktop.findRecentJenkinsBuild(job.url, run.buildSearchSince);
+            } catch (reason) {
+              const message = reason instanceof Error ? reason.message : String(reason ?? "");
+              if (/No handler registered for ['"]?bankai:jenkins-find-recent-build['"]?/i.test(message)) break;
+              throw reason;
+            }
             if (!existingBuild && attempt < 5) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
           }
         }
