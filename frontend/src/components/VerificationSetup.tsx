@@ -19,6 +19,8 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [checkedAt, setCheckedAt] = useState("");
   const [jenkinsStatus, setJenkinsStatus] = useState("Checking Jenkins…");
   const checkJenkins = useCallback(async () => {
     const desktop = window.bankaiDesktop;
@@ -38,13 +40,18 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
     }
   }, [projectId]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (manual = false) => {
+    setRefreshing(true);
+    setError(null);
+    setCheckedAt("");
     try {
       const current = await getVerificationSettings(projectId);
       setSettings(current);
       if (current.verification_provider === "jenkins") await checkJenkins();
+      if (manual) setCheckedAt(new Date().toLocaleTimeString());
     }
     catch (reason) { setError(reason instanceof ApiError ? reason.message : "Could not load CI settings."); }
+    finally { setRefreshing(false); }
   }, [projectId, checkJenkins]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -85,6 +92,7 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
     finally { setBusy(false); }
   };
 
+  if (!settings && error) return <section className="ws-card settings-section"><p role="alert">{error}</p><button disabled={refreshing} onClick={() => void refresh(true)}>Retry status check</button></section>;
   if (!settings) return <section className="ws-card settings-section"><div className="page-subtitle">Loading CI choices…</div></section>;
   const editable = canManageProject(role as Parameters<typeof canManageProject>[0]);
   const hostedReady = settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status === "ready";
@@ -104,12 +112,13 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
       </div>
       <p className="ws-card-hint">Scanning, triage, ticketing, and remediation stay available when you skip CI. Bankai never merges pull requests.</p>
       <div className="settings-jira-actions" style={{ flexWrap: "wrap", marginTop: 12 }}>
-        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy || settings.verification_provider === "jenkins"} onClick={() => void choose("jenkins")}>{settings.verification_provider === "jenkins" ? "Jenkins selected" : "Use existing Jenkins"}</button>
+        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || refreshing || busy || settings.verification_provider === "jenkins"} onClick={() => void choose("jenkins")}>{settings.verification_provider === "jenkins" ? "Jenkins selected" : "Use existing Jenkins"}</button>
         <Link className="ws-btn ws-btn-secondary" to={`/workspace/${projectId}/jenkins`}>Set up Jenkins</Link>
-        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy} onClick={() => void choose("hosted_ci")}>Use hosted CI</button>
-        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || busy} onClick={() => void choose("none")}>Continue without CI</button>
-        <button type="button" className="settings-jira-toggle-link" disabled={busy} onClick={() => void refresh()}>Refresh status</button>
+        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || refreshing || busy} onClick={() => void choose("hosted_ci")}>Use hosted CI</button>
+        <button type="button" className="ws-btn ws-btn-secondary" disabled={!editable || refreshing || busy} onClick={() => void choose("none")}>Continue without CI</button>
+        <button type="button" className="settings-jira-toggle-link" disabled={busy || refreshing} onClick={() => void refresh(true)}>{refreshing ? "Checking status…" : "Refresh status"}</button>
       </div>
+      <div role="status" aria-live="polite">{checkedAt && `Status checked at ${checkedAt}.`}</div>
       {!editable && <div className="ws-card-hint" style={{ marginTop: 10 }}>Only project editors and admins can change the verification provider.</div>}
       {settings.verification_provider === "jenkins" && <div className="ws-card-hint" style={{ marginTop: 10 }}>{providerReady ? "Jenkins PR verification is configured on this desktop. Keep Bankai Desktop open while builds are monitored." : "Jenkins is selected. In Bankai Desktop, connect Jenkins and choose this repository’s multibranch job on the Jenkins page to enable PR verification."}</div>}
       {settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status === "none" && <div className="ws-card-hint" style={{ marginTop: 10 }}>The hosted workflow has not been added yet. Bankai will show the complete draft for review before opening a setup pull request.</div>}
@@ -118,7 +127,7 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
       )}
       {settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status === "ready" && <div className="ws-card-hint" style={{ marginTop: 10 }}>GitHub Actions runs the reviewed, manifest-derived build and test commands on pull request revisions. Bankai observes the workflow run and reports its exact commit.</div>}
       {settings.verification_provider === "hosted_ci" && settings.ci_bootstrap_status !== "ready" && settings.ci_bootstrap_status !== "pr_open" && !proposal && (
-        <button type="button" className="ws-btn ws-btn-primary" style={{ marginTop: 12 }} disabled={!editable || busy} onClick={() => void openHostedProposal()}>{busy ? "Preparing workflow…" : "Review hosted CI workflow"}</button>
+        <button type="button" className="ws-btn ws-btn-primary" style={{ marginTop: 12 }} disabled={!editable || refreshing || busy} onClick={() => void openHostedProposal()}>{busy ? "Preparing workflow…" : "Review hosted CI workflow"}</button>
       )}
       {proposal && (
         <div style={{ marginTop: 14 }}>
@@ -129,7 +138,7 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
             <pre style={{ overflowX: "auto", maxHeight: 360, padding: 12, background: "var(--color-surface-subtle, #F4F4F5)", borderRadius: 8 }}>{proposal.content}</pre>
           </details>
           <div className="settings-jira-actions">
-            <button type="button" className="ws-btn ws-btn-primary" disabled={!editable || busy} onClick={() => void acceptProposal()}>{busy ? "Opening pull request…" : "Open workflow setup pull request"}</button>
+            <button type="button" className="ws-btn ws-btn-primary" disabled={!editable || refreshing || busy} onClick={() => void acceptProposal()}>{busy ? "Opening pull request…" : "Open workflow setup pull request"}</button>
             <button type="button" className="settings-jira-toggle-link" disabled={busy} onClick={() => setProposal(null)}>Discard draft</button>
           </div>
         </div>
@@ -139,4 +148,5 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
     </section>
   );
 }
+
 
