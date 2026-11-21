@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { recordJenkinsAuditAction } from "../lib/api";
 
 type JenkinsJob = { name: string; url: string; color: string; supportsPullRequests?: boolean };
 type JenkinsParameter = { name: string; type: string; description: string; defaultValue: string; choices: string[] };
@@ -43,10 +44,12 @@ export default function JenkinsDeploymentSetup({ projectId, jobs }: { projectId:
   const setChoice = (next: boolean) => {
     setEnabled(next);
     localStorage.setItem(`bankai-cd-enabled:${projectId}`, String(next));
+    void recordJenkinsAuditAction(projectId, next ? "cd_enabled" : "cd_disabled").catch(() => undefined);
   };
   const selectJob = (url: string) => {
     setJobUrl(url); setDefinitions(null); setValues({});
     localStorage.setItem(`bankai-cd-job:${projectId}`, url);
+    if (url) void recordJenkinsAuditAction(projectId, "cd_job_selected").catch(() => undefined);
     void inspectJob(url);
   };
   const updateParameter = (name: string, value: string) => {

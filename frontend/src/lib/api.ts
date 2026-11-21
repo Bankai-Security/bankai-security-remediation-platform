@@ -489,7 +489,7 @@ export function claimJenkinsPipeline(projectId: string, input: { deviceId: strin
   return apiFetch(`/projects/${projectId}/pipeline/claim`, { method: "POST", body: JSON.stringify(input) });
 }
 export function finishJenkinsPipeline(projectId: string, runId: string, input: {
-  deviceId: string; state: "passed" | "failed" | "cancelled"; buildUrl: string; buildNumber?: number | null;
+  deviceId: string; state: "passed" | "failed" | "cancelled" | "needs_review"; buildUrl?: string; buildNumber?: number | null;
   commitSha?: string | null; failureLog?: string;
 }): Promise<{ ciStatus: string; retrying: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/result`, { method: "POST", body: JSON.stringify(input) });
@@ -505,6 +505,10 @@ export function reportJenkinsDeployment(projectId: string, runId: string, input:
 }
 export function cancelQueuedJenkinsPipeline(projectId: string, ticketId: string): Promise<{ cancelled: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/tickets/${ticketId}/cancel`, { method: "POST" });
+}
+export type JenkinsAuditAction = "connected" | "disconnected" | "ci_job_selected" | "cd_enabled" | "cd_disabled" | "cd_job_selected" | "manual_build_started";
+export function recordJenkinsAuditAction(projectId: string, action: JenkinsAuditAction): Promise<{ recorded: boolean }> {
+  return apiFetch(`/projects/${projectId}/pipeline/audit`, { method: "POST", body: JSON.stringify({ action }) });
 }
 
 export interface TicketFilters {

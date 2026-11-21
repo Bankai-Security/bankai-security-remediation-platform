@@ -1,5 +1,6 @@
 import { upsertJenkinsEvidenceComment } from "./github.js";
 import { logger } from "./logger.js";
+import { recordActivity } from "./activity.js";
 import { loadGithubCreds } from "./ticketing.js";
 import { supabaseAdmin } from "./supabase.js";
 
@@ -86,6 +87,8 @@ export async function publishJenkinsEvidence(projectId: string, ticketId: string
       "Bankai does not merge pull requests. Review and merge remain under your control.",
     ];
     await upsertJenkinsEvidenceComment(github.creds, ticket.github_pr_number, lines.join("\n"));
+    await recordActivity(supabaseAdmin, { projectId, actorId: null, actorLabel: "Bankai GitHub integration", eventType: "pipeline",
+      summary: "updated CI/CD evidence on", linkLabel: `PR #${ticket.github_pr_number}`, linkTo: "tickets" });
   } catch (error) {
     logger.warn({ err: error, projectId, ticketId }, "Could not publish Jenkins evidence to the pull request");
   }

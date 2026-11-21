@@ -87,6 +87,7 @@ function DeploymentStatus({ ticket, projectId, onCancel }: { ticket: Ticket; pro
   return <span className="tickets-pipeline-status" title={ticket.cdError ?? label}>
     {ticket.cdRunUrl ? <a href={ticket.cdRunUrl} target="_blank" rel="noreferrer">{label}</a> : label}
     {ticket.cdTargetUrl && <a className="tickets-deployment-target" href={ticket.cdTargetUrl} target="_blank" rel="noreferrer">Open target</a>}
+    {['failed', 'needs_review', 'cancelled'].includes(ticket.cdStatus) && <Link className="tickets-deployment-target" to={`/workspace/${projectId}/jenkins`}>Review Jenkins setup</Link>}
     {ticket.cdError && <span className="tickets-pipeline-error">{ticket.cdError}</span>}
     {ticket.cdStatus === 'running' && onCancel && ticket.cdRunUrl && <button className="tickets-pipeline-cancel" type="button" onClick={onCancel}>Stop deployment</button>}
   </span>;

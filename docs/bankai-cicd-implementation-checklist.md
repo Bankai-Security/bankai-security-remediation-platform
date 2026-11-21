@@ -104,16 +104,16 @@ This checklist turns the agreed CI/CD workflow into buildable implementation ste
 
 ## Phase 8: Reliability, security, and release readiness
 
-- [ ] Add authorization checks so users can only view/run jobs for repositories and Jenkins connections they control.
-- [ ] Protect credentials with OS-level secure storage and redact them from errors, telemetry, and logs.
-- [ ] Handle Jenkins timeouts, restarts, rate limits, offline desktop state, duplicate webhooks, and stale job status.
-- [ ] Make pipeline triggers idempotent per PR commit and configured job.
-- [ ] Add audit events for connection changes, job selection, builds, retries, deployments, and evidence updates.
-- [ ] Add clear recovery actions for expired credentials, unreachable Jenkins, deleted jobs, and failed deployment.
-- [ ] Validate installer update/uninstall behavior and supported desktop platforms.
-- [ ] Run end-to-end checks using a sample repo with and without a Jenkinsfile and with successful/failing build and deployment jobs.
+- [x] Add authorization checks so project viewers cannot configure or run Jenkins from the Bankai page; all pipeline APIs require an editor-level project role.
+- [x] Protect credentials with Electron `safeStorage`, restrict Jenkins IPC to the signed-in Bankai window, and redact build failures before storage or evidence publication.
+- [x] Handle Jenkins timeouts, restarts, rate limits, offline desktop state, duplicate webhook deliveries, and stale build/deployment status. Read-only requests retry briefly; Jenkins build-start POSTs are never automatically retried.
+- [x] Make pipeline claims idempotent per PR commit, use atomic claim/deployment transitions, and accept duplicate final result reports without queueing another AI retry.
+- [x] Add audit events for connection changes, job selection, builds, retries, deployments, and evidence updates.
+- [x] Add recovery guidance for expired credentials, unreachable Jenkins, deleted jobs, stale runs, and failed deployments.
+- [ ] Validate installer update/uninstall behavior and supported desktop platforms. Windows packaging is rebuilt; install/upgrade/uninstall and macOS/Linux smoke checks remain release QA.
+- [ ] Run end-to-end checks using a sample repo with and without a Jenkinsfile and with successful/failing build and deployment jobs. Not run in this implementation pass.
 
-**Done when:** common connection and pipeline failures are visible, recoverable, and do not falsely appear as successful.
+**Done when:** common connection and pipeline failures are visible, recoverable, and do not falsely appear as successful. Automated pipeline protections are implemented; installer lifecycle and full end-to-end release checks remain.
 
 ## Suggested delivery order
 

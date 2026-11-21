@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, inspectJenkinsfile, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
+import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, inspectJenkinsfile, recordJenkinsAuditAction, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
 import JenkinsDeploymentSetup from '../../components/JenkinsDeploymentSetup';
+import { canEdit } from '../../lib/roles';
 
 const downloadUrl = import.meta.env.VITE_BANKAI_DESKTOP_DOWNLOAD_URL;
 type JenkinsJob = { name: string; url: string; color: string; supportsPullRequests?: boolean };
@@ -27,7 +28,7 @@ export default function JenkinsDownload() {
           <img src={jenkinsLogo} className="jenkins-download-mark jenkins-download-mark--large" alt="Jenkins" />
           <h1 className="jenkins-download-title">Run Jenkins from Bankai</h1>
         </div>
-        {desktopStatus === 'desktop' ? <DesktopJenkinsOptions projectId={project?.id ?? ''} /> : (
+        {desktopStatus === 'desktop' ? <DesktopJenkinsOptions projectId={project?.id ?? ''} canManage={canEdit(project?.myRole)} /> : (
           <>
             <p className="jenkins-download-copy">Connect Jenkins, run builds, and follow deployment results from the Bankai desktop app. Your repository workspace will be ready when you open it there.</p>
             <div className="jenkins-download-actions">
@@ -65,7 +66,7 @@ declare global {
   }
 }
 
-function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
+function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; canManage: boolean }) {
   const api = window.bankaiDesktop;
   const [connection, setConnection] = useState<JenkinsConnection>({ connected: false });
   const [url, setUrl] = useState('');
@@ -85,7 +86,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
   });
 
   useEffect(() => {
-    if (!api) return;
+    if (!api || !canManage) return;
     let active = true;
     void api.getJenkinsConnection().then(async (saved) => {
       if (!active) return;
@@ -105,7 +106,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
     }).catch((reason) => { if (active) setError(errorMessage(reason)); });
     const unsubscribe = api.onJenkinsJobProgress((progress) => setRun(progress));
     return () => { active = false; unsubscribe(); };
-  }, [api, projectId]);
+  }, [api, projectId, canManage]);
 
   const saveChoice = (next: 'enabled' | 'skipped') => {
     setChoice(next);
@@ -117,6 +118,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
     setBusy(true); setError(null); setMessage(null);
     try {
       const result = await api.connectJenkins({ url, username, apiToken });
+      void recordJenkinsAuditAction(projectId, 'connected').catch(() => undefined);
       setConnection(result); setJobs(result.jobs); setApiToken('');
       let savedJob = '';
       try { savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || ''; } catch { /* optional convenience */ }
@@ -136,7 +138,9 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
     if (!api) return;
     setBusy(true); setError(null);
     try {
-      await api.disconnectJenkins(); setConnection({ connected: false }); setJobs([]); setSelectedJob(''); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
+      await api.disconnectJenkins();
+      void recordJenkinsAuditAction(projectId, 'disconnected').catch(() => undefined);
+      setConnection({ connected: false }); setJobs([]); setSelectedJob(''); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -144,6 +148,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
     if (!api || !selectedJob) return;
     setBusy(true); setError(null); setMessage(null); setRun({ state: 'queued' });
     try {
+      await recordJenkinsAuditAction(projectId, 'manual_build_started');
       const result = await api.runJenkinsJob(selectedJob);
       setRun(result);
     } catch (reason) { setRun(null); setError(errorMessage(reason)); }
@@ -152,6 +157,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
   const chooseJob = (value: string) => {
     setSelectedJob(value);
     try { localStorage.setItem(`bankai-jenkins-job:${projectId}`, value); } catch { /* optional convenience */ }
+    if (value) void recordJenkinsAuditAction(projectId, 'ci_job_selected').catch(() => undefined);
   };
   const openBuild = async () => {
     if (run?.buildUrl) await api?.openJenkins(run.buildUrl);
@@ -161,6 +167,8 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
     try { await api?.openJenkins(connection.url); setError(null); }
     catch (reason) { setError(errorMessage(reason)); }
   };
+
+  if (!canManage) return <p className="jenkins-download-note" role="status">Your project role is view only. Ask a project editor to configure or run Jenkins for this repository.</p>;
 
   return (
     <>

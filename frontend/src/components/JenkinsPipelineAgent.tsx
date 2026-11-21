@@ -8,6 +8,16 @@ function desktopId(): string {
   return id;
 }
 
+function recoveryMessage(reason: unknown): string {
+  const message = reason instanceof Error ? reason.message : String(reason ?? "");
+  if (/404|not found|deleted/i.test(message)) return "The selected Jenkins job was not found. Refresh the job list on the Bankai Jenkins page, choose an available job, then review this pull request.";
+  if (/401|403|credential|permission|authentication/i.test(message)) return "Jenkins rejected the saved credentials or permissions. Reconnect on the Bankai Jenkins page, then check the Jenkins build before retrying.";
+  if (/429|rate.?limit/i.test(message)) return "Jenkins is rate limiting requests. Wait briefly, refresh the Jenkins connection, and check the job before retrying.";
+  if (/timeout|timed out|still running/i.test(message)) return "Bankai could not confirm whether the Jenkins build finished. Check Jenkins before retrying to avoid a duplicate build.";
+  if (/unreach|connection|temporarily unavailable|HTTP 5\d\d/i.test(message)) return "Jenkins is unavailable. Check that it is running, reconnect on the Bankai Jenkins page, and confirm the build state before retrying.";
+  return "Bankai could not confirm the Jenkins result. Check the Jenkins job before retrying to avoid duplicate work.";
+}
+
 export default function JenkinsPipelineAgent({ projectId }: { projectId: string }) {
   useEffect(() => {
     const desktop = window.bankaiDesktop;
@@ -62,11 +72,14 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         const failureLog = state === "failed" && result.buildUrl ? await desktop.getJenkinsBuildLog(result.buildUrl).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
         const completion = await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state, buildUrl: result.buildUrl ?? job.url,
           buildNumber: result.number, commitSha: result.commitSha, failureLog });
+        activeRun = null;
+        activeRunJobUrl = null;
         if (completion.ciStatus === "passed" && localStorage.getItem(`bankai-cd-enabled:${projectId}`) === "true") {
           const deploymentJobUrl = localStorage.getItem(`bankai-cd-job:${projectId}`);
           if (!deploymentJobUrl) return;
           activeDeploymentRunId = run.runId;
           activeDeploymentJobUrl = deploymentJobUrl;
+          let deploymentTrackingStarted = false;
           try {
             const configuredJob = (await desktop.listJenkinsJobs()).find((item) => item.url === deploymentJobUrl && !item.supportsPullRequests);
             const jobParameters = await desktop.getJenkinsJobParameters(deploymentJobUrl);
@@ -77,6 +90,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
             let values: Record<string, string> = {};
             try { values = JSON.parse(localStorage.getItem(`bankai-cd-parameters:${projectId}:${deploymentJobUrl}`) || "{}"); } catch { /* use Jenkins defaults */ }
             await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: "running", jobUrl: deploymentJobUrl });
+            deploymentTrackingStarted = true;
             try {
               const deployment = await desktop.runJenkinsJob(deploymentJobUrl, values);
               const deploymentState = deployment.state === "success" ? "passed" : deployment.state === "aborted" ? "cancelled" : "failed";
@@ -84,13 +98,20 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
                 buildNumber: deployment.number, targetUrl: deployment.targetUrl, error: deploymentState === "failed" ? "Jenkins deployment failed. Review its build output." : undefined });
             } catch (reason) {
               await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
-                error: reason instanceof Error ? reason.message.slice(0, 1000) : "Could not start the Jenkins deployment." });
+                error: recoveryMessage(reason) });
             }
+          } catch (reason) {
+            if (!deploymentTrackingStarted) await reportJenkinsDeployment(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
+              error: recoveryMessage(reason) }).catch(() => undefined);
           } finally { activeDeploymentRunId = null; activeDeploymentJobUrl = null; }
         }
-      } catch {
-        // A temporary network or Jenkins failure leaves the server side run in
-        // progress; recovery marks stale claims for review instead of duplicating a build.
+      } catch (reason) {
+        if (activeRun) {
+          await finishJenkinsPipeline(projectId, activeRun.runId, { deviceId: desktopId(), state: "needs_review",
+            buildUrl: activeRunJobUrl ?? activeRun.jobUrl, failureLog: recoveryMessage(reason) }).catch(() => undefined);
+        }
+        // If Bankai itself is offline, the server's stale-run sweep marks the
+        // lease for review after 30 minutes and avoids launching another build.
       } finally { activeRun = null; activeRunJobUrl = null; activeDeploymentRunId = null; activeDeploymentJobUrl = null; working = false; }
     };
     const schedule = () => { if (!stopped) timer = window.setTimeout(async () => { await poll(); schedule(); }, 12_000); };
