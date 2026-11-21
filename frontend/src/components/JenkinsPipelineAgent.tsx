@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { claimJenkinsPipeline, finishJenkinsPipeline, reportJenkinsDeployment, reportJenkinsPipelineProgress } from "../lib/api";
-import { isJobNestedUnder } from "../lib/jenkins-job-matching";
+import { findPullRequestJob } from "../lib/jenkins-job-matching";
 
 function desktopId(): string {
   const key = "bankai-pipeline-device-id";
@@ -50,12 +50,11 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         if (!run) return;
         activeRun = run;
         const expectedNames = new Set([`pr-${run.pullRequestNumber}`.toLowerCase(), `pr_${run.pullRequestNumber}`.toLowerCase(), run.branch.toLowerCase()]);
-        const selected = new URL(selectedJob);
         let job: { name: string; url: string; color: string; supportsPullRequests?: boolean } | undefined;
         for (let attempt = 0; attempt < 18 && !job; attempt += 1) {
           if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") break;
           const jobs = await desktop.listJenkinsJobs();
-          job = jobs.find((item) => expectedNames.has(item.name.toLowerCase()) && isJobNestedUnder(selected.href, item.url));
+          job = findPullRequestJob(jobs, selectedJob, expectedNames);
           if (!job && attempt < 17) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
         }
         if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") {
