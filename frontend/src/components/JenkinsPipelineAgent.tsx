@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { claimJenkinsPipeline, finishJenkinsPipeline, reportJenkinsDeployment, reportJenkinsPipelineProgress } from "../lib/api";
+import { isJobNestedUnder } from "../lib/jenkins-job-matching";
 
 function desktopId(): string {
   const key = "bankai-pipeline-device-id";
@@ -54,7 +55,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         for (let attempt = 0; attempt < 18 && !job; attempt += 1) {
           if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") break;
           const jobs = await desktop.listJenkinsJobs();
-          job = jobs.find((item) => expectedNames.has(item.name.toLowerCase()) && item.url.startsWith(`${selected.toString().replace(/\/$/, "")}/job/`));
+          job = jobs.find((item) => expectedNames.has(item.name.toLowerCase()) && isJobNestedUnder(selected.href, item.url));
           if (!job && attempt < 17) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
         }
         if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") {
@@ -62,8 +63,8 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
           return;
         }
         if (!job) {
-          await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "failed", buildUrl: selectedJob,
-            commitSha: null, failureLog: "Jenkins setup: no matching PR branch job was found. Enable pull request branch discovery in the selected Jenkins multibranch job." });
+          await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
+            failureLog: "Jenkins did not start a build because no matching PR branch job was found under the selected multibranch job. Enable pull request branch discovery in Jenkins, scan the repository, then retry verification." });
           return;
         }
         activeRunJobUrl = job.url;
