@@ -138,6 +138,19 @@ export async function updateFinding(req: Request, res: Response): Promise<void> 
   const { bucket, service } = req.body as UpdateFindingInput;
   const supabase = userScopedClient(req);
 
+  if (bucket || service) {
+    const { data: linkedTicket, error: ticketError } = await supabase
+      .from("tickets")
+      .select("id, key")
+      .eq("project_id", req.project!.id)
+      .eq("finding_id", req.params.findingId)
+      .maybeSingle();
+    if (ticketError) throw new HttpError(500, "Could not check whether this finding is assigned.");
+    if (linkedTicket) {
+      throw new HttpError(409, `This finding is assigned to ${linkedTicket.key}. Update it through the ticket instead.`);
+    }
+  }
+
   const update: Record<string, string> = {};
   if (bucket) {
     update.bucket = bucket;

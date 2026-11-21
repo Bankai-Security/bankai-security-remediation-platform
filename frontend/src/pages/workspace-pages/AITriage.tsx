@@ -17,6 +17,10 @@ import './AITriage.css';
 
 const BUCKETS: Bucket[] = ['New Delta', 'In Progress', 'Changed', 'Resolved'];
 
+function hiddenFromActiveTriage(row: Finding): boolean {
+  return row.bucket === 'Resolved' || (row.ticketStatus === 'Done' && row.notDetectedInLatestScan);
+}
+
 function sevBadgeClass(sev: Severity) {
   return `ws-badge ws-badge--${sev.toLowerCase()}`;
 }
@@ -66,7 +70,7 @@ export default function AITriage() {
   const [fService, setFService] = useState('all');
   const [fSeverity, setFSeverity] = useState('all');
   const [fSla, setFSla] = useState('all');
-  const [fBucket, setFBucket] = useState('all');
+  const [fBucket, setFBucket] = useState('active');
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<'severity' | null>(null);
@@ -109,7 +113,7 @@ export default function AITriage() {
         (fService === 'all' || r.service === fService) &&
         (fSeverity === 'all' || r.severity === fSeverity) &&
         (fSla === 'all' || r.sla === fSla) &&
-        (fBucket === 'all' || r.bucket === fBucket),
+        (fBucket === 'active' ? !hiddenFromActiveTriage(r) : fBucket === 'all' || r.bucket === fBucket),
     );
     if (sortKey === 'severity') list = [...list].sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) * sortDir);
     return list;
@@ -139,7 +143,7 @@ export default function AITriage() {
   const arrow = (key: 'severity') => (sortKey === key ? (sortDir === -1 ? '↓' : '↑') : '↕');
 
   const handleReassign = async (bucket: Bucket) => {
-    if (!project || !openRow) return;
+    if (!project || !openRow || openRow.ticketKey) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -154,7 +158,7 @@ export default function AITriage() {
   };
 
   const handleReassignService = async (service: string) => {
-    if (!project || !openRow || !service.trim()) return;
+    if (!project || !openRow || openRow.ticketKey || !service.trim()) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -172,16 +176,15 @@ export default function AITriage() {
 
   const handleMarkForJira = async (findingIds: string[]) => {
     if (!project) return;
-    // Send already-ticketed findings too so the backend can re-enqueue
-    // remediation when the ticket is still open and has no PR.
+    // Ticketed findings must go through their existing ticket. A completed
+    // ticket has an explicit Reopen action; it must never be reassigned here.
     const eligibleIds = findingIds.filter((id) => {
       const row = findings?.find((f) => f.id === id);
       if (!row) return true;
-      if (!row.ticketKey) return true;
-      return row.ticketStatus !== 'Done';
+      return !row.ticketKey;
     });
     if (eligibleIds.length === 0) {
-      setActionError('Every selected finding is already ticketed and Done.');
+      setActionError('Every selected finding is already assigned to a ticket. Reopen a completed ticket from its finding row if the issue has returned.');
       return;
     }
 
@@ -219,7 +222,7 @@ export default function AITriage() {
     }
   };
 
-  const canReopenTicket = (row: Finding) => row.ticketStatus === 'Done' && !!row.ticketId;
+  const canReopenTicket = (row: Finding) => row.ticketStatus === 'Done' && !!row.ticketId && row.bucket !== 'Resolved';
 
   if (loadError) {
     return (
@@ -240,7 +243,7 @@ export default function AITriage() {
 
       <div className="ws-header-row">
         <div>
-          <div className="ws-header-eyebrow">{findings ? `${findings.length} findings` : 'Loading…'}</div>
+          <div className="ws-header-eyebrow">{findings ? `${findings.filter((row) => !hiddenFromActiveTriage(row)).length} active findings` : 'Loading…'}</div>
           <h2 className="ws-header-title">Review AI decisions</h2>
         </div>
         <div className="triage-filters">
@@ -262,6 +265,7 @@ export default function AITriage() {
             <option value="On track">On track</option>
           </select>
           <select className="ws-select" value={fBucket} onChange={(e) => setFBucket(e.target.value)}>
+            <option value="active">Active findings</option>
             <option value="all">All buckets</option>
             {BUCKETS.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
@@ -314,7 +318,7 @@ export default function AITriage() {
                 className="ws-table-row ws-table-row--clickable triage-grid"
                 style={{
                   background: checked ? '#EFF6FF' : openId === r.id ? 'var(--color-bg)' : 'transparent',
-                  opacity: r.ticketKey && !canReopenTicket(r) ? 0.45 : 1,
+                  opacity: r.ticketKey ? 0.48 : 1,
                 }}
                 onClick={() => {
                   setOpenId(r.id);
@@ -326,7 +330,8 @@ export default function AITriage() {
               >
                 <span
                   className="triage-checkbox-cell"
-                  style={r.ticketKey ? { cursor: 'default' } : undefined}
+                  aria-disabled={!!r.ticketKey}
+                  style={r.ticketKey ? { cursor: 'default', opacity: 0.4 } : undefined}
                   title={r.ticketKey ? `Already ticketed as ${r.ticketKey}` : undefined}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -437,7 +442,16 @@ export default function AITriage() {
             </div>
 
             <div className="triage-drawer-actions">
-              {reassigning ? (
+              {openRow.ticketKey ? (
+                <div className="triage-ticket-lock">
+                  <span>{openRow.ticketStatus === 'Done' ? 'Remediation complete' : 'Assigned for remediation'} · {openRow.ticketKey}. Triage is locked while the ticket owns this finding.</span>
+                  {canReopenTicket(openRow) && (
+                    <button className="ws-btn ws-btn-outline-blue" type="button" disabled={busy || !canEdit(project?.myRole)} onClick={() => void handleReopenTicket()}>
+                      {busy ? 'Reopening…' : `Reopen ticket · ${openRow.ticketKey}`}
+                    </button>
+                  )}
+                </div>
+              ) : reassigning ? (
                 <select
                   className="ws-select"
                   style={{ flex: 1 }}
@@ -491,7 +505,7 @@ export default function AITriage() {
                 </select>
               ) : (
                 <>
-                  <button className="ws-btn ws-btn-success" style={{ flex: 1 }} onClick={() => setOpenId(null)}>Accept</button>
+                  <button className="ws-btn ws-btn-success" style={{ flex: 1 }} onClick={() => setOpenId(null)}>Close</button>
                   <button
                     className="ws-btn ws-btn-secondary"
                     style={{ flex: 1 }}

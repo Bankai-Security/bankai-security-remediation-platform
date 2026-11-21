@@ -242,6 +242,7 @@ export interface ExistingFinding {
   findingType?: string | null;
   cves?: string | null;
   lastSeenAt?: string | null;
+  verifiedRemediation?: boolean;
 }
 
 function canonicalPath(path: string | null | undefined): string {
