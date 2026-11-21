@@ -51,17 +51,17 @@ This checklist turns the agreed CI/CD workflow into buildable implementation ste
 
 ## Phase 4: Jenkinsfile detection and proposal
 
-- [ ] Detect `Jenkinsfile` in the repository's relevant branch.
-- [ ] If found, show its path and associate the repository with a Jenkins job that uses it.
-- [ ] If missing, inspect manifests, languages, build tools, test scripts, and existing CI files.
-- [ ] Generate a starter Jenkinsfile from detected commands and stages; call out uncertain or unsupported assumptions.
-- [ ] Validate the draft for basic declarative pipeline syntax and verify referenced files/commands exist where practical.
-- [ ] Show the complete proposed Jenkinsfile plus a plain-language stage summary in the desktop app.
-- [ ] Let the user edit, accept for a PR, or skip.
-- [ ] Create/update a PR with the Jenkinsfile only after the user accepts; do not add secrets or guessed deployment settings.
-- [ ] Run the new pipeline against the PR branch and surface errors for correction.
+- [x] Detect the root `Jenkinsfile` on the repository's default branch and report the inspected commit.
+- [x] If found, show its path and let the user pair it with the selected Jenkins job for that repository.
+- [x] If missing, inspect bounded repository manifests and existing GitHub Actions workflows for languages, scripts, build tools, and CI clues.
+- [x] Generate a starter pipeline by asking AI to select only exact build/test commands discovered in those manifests; call out assumptions.
+- [x] Validate declarative pipeline structure, reject embedded credentials, and allow only verified commands for generated shell steps.
+- [x] Show the complete editable Jenkinsfile and a plain-language summary/assumptions in the desktop app.
+- [x] Let the user edit, accept for a PR, or discard the proposal.
+- [x] Create a fresh branch and a PR containing only `Jenkinsfile` after acceptance; reject stale base branches and never merge automatically.
+- [x] After PR creation, look for the matching Jenkins multibranch PR job, run it when available, and show the result/build link. Allow edits to update the PR and rerun.
 
-**Done when:** missing Jenkinsfiles result in a reviewable, repository-specific proposal and user-controlled PR.
+**Done when:** missing Jenkinsfiles result in a reviewable, repository-specific proposal and user-controlled PR. Jenkins must have GitHub pull-request branch discovery enabled for Bankai to find and trigger the branch job automatically; otherwise the page explains the setup needed.
 
 ## Phase 5: Connect pipeline to remediation workflow
 

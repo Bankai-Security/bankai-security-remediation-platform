@@ -248,6 +248,49 @@ export function connectGithubFromAccount(
   return apiFetch(`/projects/${projectId}/github/connect-account`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export interface JenkinsfileInspection {
+  repo: string;
+  branch: string;
+  headSha: string;
+  exists: boolean;
+  path: string;
+  content: string | null;
+}
+
+export interface JenkinsfileProposal {
+  repo: string;
+  branch: string;
+  baseSha: string;
+  path: string;
+  content: string;
+  summary: string;
+  assumptions: string[];
+  detectedCommands: Array<{ stage: "Install" | "Build" | "Test"; command: string; evidence: string }>;
+}
+
+export interface JenkinsfilePullRequest {
+  pullRequest: { number: number; url: string; state: "open" | "closed"; headRef: string | null; headSha: string | null; merged: boolean };
+  branchName: string;
+  commitSha: string;
+  path: string;
+}
+
+export function inspectJenkinsfile(projectId: string): Promise<JenkinsfileInspection> {
+  return apiFetch(`/projects/${projectId}/github/jenkinsfile`, { method: "GET" });
+}
+
+export function generateJenkinsfileProposal(projectId: string): Promise<JenkinsfileProposal> {
+  return apiFetch(`/projects/${projectId}/github/jenkinsfile/proposal`, { method: "POST", body: JSON.stringify({}) });
+}
+
+export function createJenkinsfilePullRequest(projectId: string, input: { baseSha: string; content: string; summary: string; assumptions: string[] }): Promise<JenkinsfilePullRequest> {
+  return apiFetch(`/projects/${projectId}/github/jenkinsfile/pull-request`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateJenkinsfilePullRequest(projectId: string, input: { prNumber: number; branchName: string; content: string }): Promise<{ commitSha: string; branchName: string; path: string }> {
+  return apiFetch(`/projects/${projectId}/github/jenkinsfile/pull-request/update`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ---------------------------------------------------------------------
 // GitHub account connection (per-user OAuth grant, reused by the repo
 // picker across every project) — distinct from the per-project connection

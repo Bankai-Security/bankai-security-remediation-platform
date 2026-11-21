@@ -517,6 +517,23 @@ export async function getPullRequest(creds: GithubCredentials, prNumber: number)
   return toCreatedPullRequest((await res.json()) as GithubPullRequestApiBody);
 }
 
+export async function updatePullRequestBranchFile(
+  creds: GithubCredentials,
+  input: { pullRequestNumber: number; branchName: string; filePath: string; content: string; message: string },
+): Promise<string> {
+  const pullRequest = await getPullRequest(creds, input.pullRequestNumber);
+  if (!pullRequest || pullRequest.state !== "open" || pullRequest.headRef !== input.branchName) {
+    throw new GithubApiError(`Pull request #${input.pullRequestNumber} is no longer open on the expected branch.`, 409);
+  }
+  const headSha = await getBranchHeadSha(creds, input.branchName);
+  return (await commitFileToBranch(creds, {
+    branch: input.branchName,
+    baseSha: headSha,
+    message: input.message,
+    files: [{ path: input.filePath, content: input.content }],
+  })).commitSha;
+}
+
 // Deliberately not implemented: merging a pull request. Merging stays a
 // human-only action performed on GitHub itself — Bankai commits the fix and
 // opens the PR, but never clicks merge.

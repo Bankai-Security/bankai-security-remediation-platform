@@ -150,6 +150,29 @@
 .jenkins-run-status { margin-top: 18px; padding: 13px; display: flex; align-items: center; justify-content: center; gap: 5px; flex-wrap: wrap; border: 1px solid var(--color-border); border-radius: 10px; color: var(--color-text-subtle); font-size: 13px; }
 .jenkins-run-status--success { border-color: rgba(21, 128, 61, .3); color: #15803d; }
 .jenkins-run-status--failure { border-color: rgba(180, 35, 24, .3); color: #b42318; }
+.jenkinsfile-setup { width: 100%; margin-top: 28px; padding-top: 23px; border-top: 1px solid var(--color-divider); text-align: left; }
+.jenkinsfile-setup-heading { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+.jenkinsfile-setup-heading h2 { margin: 4px 0 0; color: var(--color-text); font-size: 18px; }
+.jenkinsfile-setup-eyebrow { color: var(--color-text-faint); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.jenkinsfile-code-view { max-height: 360px; margin: 15px 0 0; padding: 14px; overflow: auto; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text); font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; text-align: left; white-space: pre; }
+.jenkinsfile-proposal { margin-top: 15px; }
+.jenkinsfile-proposal-summary { color: var(--color-text-subtle); font-size: 13px; line-height: 1.6; }
+.jenkinsfile-detected-commands { margin: 12px 0; color: var(--color-text-subtle); font-size: 12px; }
+.jenkinsfile-detected-commands summary { color: var(--color-blue); font-weight: 600; cursor: pointer; }
+.jenkinsfile-detected-commands ul { margin: 9px 0 0; padding-left: 18px; }
+.jenkinsfile-detected-commands li { margin-bottom: 7px; }
+.jenkinsfile-detected-commands li code { display: block; color: var(--color-text); font-size: 11px; overflow-wrap: anywhere; }
+.jenkinsfile-detected-commands li span { display: block; margin-top: 2px; color: var(--color-text-faint); }
+.jenkinsfile-proposal label { display: block; margin: 14px 0 7px; color: var(--color-text-subtle); font-size: 13px; font-weight: 600; }
+.jenkinsfile-proposal textarea { width: 100%; min-height: 420px; box-sizing: border-box; padding: 14px; resize: vertical; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.jenkinsfile-proposal textarea:focus { outline: 2px solid rgba(59, 130, 246, .25); border-color: var(--color-blue); }
+.jenkinsfile-assumptions { margin-top: 12px; padding: 12px 14px; border: 1px solid rgba(180, 120, 20, .22); border-radius: 10px; background: rgba(245, 158, 11, .06); color: var(--color-text-subtle); font-size: 12px; }
+.jenkinsfile-assumptions strong { font-size: 12px; }
+.jenkinsfile-assumptions ul { margin: 7px 0 0; padding-left: 18px; line-height: 1.55; }
+.jenkinsfile-created-pr { margin-top: 15px; padding: 14px; display: flex; flex-direction: column; gap: 6px; border: 1px solid rgba(21, 128, 61, .25); border-radius: 10px; color: var(--color-text-subtle); font-size: 13px; }
+.jenkinsfile-created-pr strong { color: #15803d; }
+.jenkinsfile-created-pr a { color: var(--color-blue); font-weight: 600; }
+.jenkins-pr-progress { color: var(--color-blue); }
 .jenkins-download-cta:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .jenkins-browser-error { margin: 10px 0 0; color: #b42318; font-size: 12px; }
 .jenkins-browser-status { margin: 10px 0 0; color: #15803d; font-size: 12px; }

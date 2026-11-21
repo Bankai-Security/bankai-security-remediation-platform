@@ -1,11 +1,12 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { recordActivity } from "../lib/activity.js";
 import { decrypt, encrypt } from "../lib/crypto.js";
-import { deleteWebhook, GithubApiError, registerWebhook, verifyConnection, type GithubCredentials } from "../lib/github.js";
+import { commitFileToBranch, createBranch, createPullRequest, deleteBranch, deleteWebhook, getBlob, getBlobs, getBranchHeadSha, getTree, GithubApiError, registerWebhook, updatePullRequestBranchFile, verifyConnection, type GithubCredentials, type GitTreeEntry } from "../lib/github.js";
 import { HttpError } from "../lib/http-error.js";
+import { buildJenkinsfile, generatePipelinePlan, validateJenkinsfile, type PipelineCommand, type PipelineStage } from "../lib/jenkinsfile-generator.js";
 import { logger } from "../lib/logger.js";
 import { enqueueRepoScan } from "../lib/queue.js";
 import { requireRole } from "../lib/roles.js";
@@ -14,6 +15,104 @@ import { createUserScopedSupabaseClient } from "../lib/supabase.js";
 import { loadGithubCreds } from "../lib/ticketing.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 import type { ConnectGithubFromAccountInput, ConnectGithubInput } from "../schemas/github.schema.js";
+import type { AcceptJenkinsfileProposalInput, UpdateJenkinsfilePullRequestInput } from "../schemas/jenkinsfile.schema.js";
+
+const JENKINSFILE_PATH = "Jenkinsfile";
+const MAX_JENKINSFILE_CONTEXT_BYTES = 75_000;
+
+interface JenkinsfileRepoContext {
+  creds: GithubCredentials;
+  branch: string;
+  headSha: string;
+  tree: GitTreeEntry[];
+}
+
+async function loadJenkinsfileContext(req: Request): Promise<JenkinsfileRepoContext> {
+  const github = await loadGithubCreds(userScopedClient(req), req.project!.id);
+  if (!github) throw new HttpError(422, "Connect GitHub to this project before setting up its Jenkinsfile.");
+  try {
+    const headSha = await getBranchHeadSha(github.creds, github.defaultBranch);
+    const tree = await getTree(github.creds, headSha);
+    return { creds: github.creds, branch: github.defaultBranch, headSha, tree };
+  } catch (error) {
+    throw new HttpError(502, error instanceof Error ? error.message : "Could not inspect this repository on GitHub.");
+  }
+}
+
+function findRootJenkinsfile(tree: GitTreeEntry[]): GitTreeEntry | undefined {
+  return tree.find((entry) => entry.type === "blob" && entry.path === JENKINSFILE_PATH);
+}
+
+function isJenkinsContextFile(path: string): boolean {
+  const name = path.split("/").pop()!.toLowerCase();
+  return path.startsWith(".github/workflows/") || [
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
+    "requirements.txt", "pyproject.toml", "pipfile", "setup.cfg", "pom.xml", "build.gradle", "build.gradle.kts",
+    "mvnw", "gradlew", "go.mod", "cargo.toml", "makefile", "composer.json", "gemfile", "dockerfile",
+  ].includes(name) || name.endsWith(".sln") || name.endsWith(".csproj");
+}
+
+async function fetchJenkinsContextFiles(creds: GithubCredentials, tree: GitTreeEntry[]): Promise<Array<{ path: string; content: string }>> {
+  const entries = tree
+    .filter((entry) => entry.type === "blob" && entry.size !== 0 && isJenkinsContextFile(entry.path) && (entry.size ?? 0) <= 20_000)
+    .sort((a, b) => {
+      const score = (path: string) => path.startsWith(".github/workflows/") ? 3 : path.split("/").length === 1 ? 0 : 1;
+      return score(a.path) - score(b.path) || a.path.localeCompare(b.path);
+    })
+    .slice(0, 24);
+  const fetched = await getBlobs(creds, entries.map(({ path, sha }) => ({ path, sha })), 5);
+  let bytes = 0;
+  const result: Array<{ path: string; content: string }> = [];
+  for (const file of fetched) {
+    if (bytes + file.content.length > MAX_JENKINSFILE_CONTEXT_BYTES) continue;
+    result.push(file);
+    bytes += file.content.length;
+  }
+  return result;
+}
+
+function discoverPipelineCommands(tree: GitTreeEntry[], files: Array<{ path: string; content: string }>): Array<PipelineCommand & { evidence: string }> {
+  const paths = new Set(tree.map((entry) => entry.path));
+  const contentByPath = new Map(files.map((file) => [file.path, file.content]));
+  const commands = new Map<string, PipelineCommand & { evidence: string }>();
+  const add = (stage: PipelineStage, command: string, evidence: string) => commands.set(command, { stage, command, evidence });
+  for (const file of files.filter((candidate) => candidate.path.split("/").pop() === "package.json")) {
+    let packageJson: { scripts?: Record<string, string>; packageManager?: string };
+    try { packageJson = JSON.parse(file.content) as typeof packageJson; } catch { continue; }
+    const dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
+    if (!/^[\w./-]*$/.test(dir) || dir.split("/").includes("..")) continue;
+    const prefix = dir ? `--prefix ${dir}` : "";
+    const lockPath = (name: string) => dir ? `${dir}/${name}` : name;
+    if (paths.has(lockPath("package-lock.json"))) add("Install", `npm ${prefix} ci`.replace(/\s+/g, " ").trim(), file.path + " + package-lock.json");
+    else if (paths.has(lockPath("pnpm-lock.yaml"))) add("Install", `pnpm --dir ${dir || "."} install --frozen-lockfile`, file.path + " + pnpm-lock.yaml");
+    else if (paths.has(lockPath("yarn.lock"))) add("Install", `yarn --cwd ${dir || "."} install --frozen-lockfile`, file.path + " + yarn.lock");
+    else if (paths.has(lockPath("bun.lock")) || paths.has(lockPath("bun.lockb"))) add("Install", `bun --cwd ${dir || "."} install --frozen-lockfile`, file.path + " + bun.lock");
+    for (const name of Object.keys(packageJson.scripts ?? {}).sort()) {
+      const stage = /^(build|compile|typecheck)$/i.test(name) ? "Build" : /^(test|lint|check|verify)$/i.test(name) ? "Test" : null;
+      if (!stage) continue;
+      const command = `npm ${prefix} run ${name}`.replace(/\s+/g, " ").trim();
+      add(stage, command, `${file.path} scripts.${name}`);
+    }
+  }
+  if (contentByPath.has("requirements.txt")) {
+    add("Install", "python -m pip install -r requirements.txt", "requirements.txt");
+    const reqs = contentByPath.get("requirements.txt")!.toLowerCase();
+    if (reqs.includes("pytest")) add("Test", "python -m pytest", "requirements.txt includes pytest");
+  }
+  const pyproject = contentByPath.get("pyproject.toml")?.toLowerCase() ?? "";
+  if (pyproject.includes("pytest")) add("Test", "python -m pytest", "pyproject.toml configures pytest");
+  if (paths.has("go.mod")) { add("Build", "go build ./...", "go.mod"); add("Test", "go test ./...", "go.mod"); }
+  if (paths.has("Cargo.toml")) { add("Build", "cargo build --workspace", "Cargo.toml"); add("Test", "cargo test --workspace", "Cargo.toml"); }
+  if (paths.has("pom.xml")) add("Test", paths.has("mvnw") ? "./mvnw -B test" : "mvn -B test", paths.has("mvnw") ? "pom.xml + mvnw" : "pom.xml");
+  if (paths.has("build.gradle") || paths.has("build.gradle.kts")) add("Test", paths.has("gradlew") ? "./gradlew test" : "gradle test", paths.has("gradlew") ? "Gradle build file + wrapper" : "Gradle build file");
+  if (paths.has("Makefile")) {
+    const makefile = contentByPath.get("Makefile") ?? "";
+    for (const target of ["build", "test", "check", "lint"]) {
+      if (new RegExp(`^${target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`, "m").test(makefile)) add(target === "build" ? "Build" : "Test", `make ${target}`, `Makefile target ${target}`);
+    }
+  }
+  return Array.from(commands.values());
+}
 
 function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
@@ -308,4 +407,134 @@ export async function scanGithubRepo(req: Request, res: Response): Promise<void>
   });
 
   res.status(202).json({ scan: toPublicScan(scan as ScanRow) });
+}
+
+export async function inspectJenkinsfile(req: Request, res: Response): Promise<void> {
+  const context = await loadJenkinsfileContext(req);
+  const entry = findRootJenkinsfile(context.tree);
+  const content = entry ? await getBlob(context.creds, entry.sha) : null;
+  res.status(200).json({
+    repo: context.creds.repo,
+    branch: context.branch,
+    headSha: context.headSha,
+    exists: Boolean(entry),
+    path: entry?.path ?? JENKINSFILE_PATH,
+    content,
+  });
+}
+
+export async function proposeJenkinsfile(req: Request, res: Response): Promise<void> {
+  requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
+  const context = await loadJenkinsfileContext(req);
+  if (findRootJenkinsfile(context.tree)) throw new HttpError(409, "A Jenkinsfile already exists on the repository's default branch. Refresh the page to review it.");
+  const files = await fetchJenkinsContextFiles(context.creds, context.tree);
+  const availableCommands = discoverPipelineCommands(context.tree, files);
+  let plan;
+  try {
+    plan = await generatePipelinePlan({ repo: context.creds.repo, branch: context.branch, files, availableCommands });
+  } catch {
+    throw new HttpError(502, "Could not generate a repository-specific Jenkinsfile. Please try again.");
+  }
+  const content = buildJenkinsfile(plan);
+  const validationError = validateJenkinsfile(content);
+  if (validationError) throw new HttpError(502, "The generated Jenkinsfile did not pass validation. Please generate a new draft.");
+  const assumptions = [...plan.assumptions];
+  if (availableCommands.length === 0 && !assumptions.some((item) => /command|build|test/i.test(item))) {
+    assumptions.push("Bankai could not verify a build or test command from the repository manifests. Add the correct commands before running this pipeline.");
+  }
+  res.status(200).json({
+    repo: context.creds.repo,
+    branch: context.branch,
+    baseSha: context.headSha,
+    path: JENKINSFILE_PATH,
+    content,
+    summary: plan.summary,
+    assumptions,
+    detectedCommands: availableCommands,
+  });
+}
+
+export async function acceptJenkinsfileProposal(req: Request, res: Response): Promise<void> {
+  const project = req.project!;
+  requireRole(project.myRole, ["owner", "admin", "editor"]);
+  const input = req.body as AcceptJenkinsfileProposalInput;
+  const validationError = validateJenkinsfile(input.content);
+  if (validationError) throw new HttpError(422, validationError);
+  const context = await loadJenkinsfileContext(req);
+  if (context.headSha !== input.baseSha) throw new HttpError(409, "The default branch changed while you reviewed this draft. Refresh and generate a new Jenkinsfile proposal.");
+  if (findRootJenkinsfile(context.tree)) throw new HttpError(409, "A Jenkinsfile was added while you reviewed this draft. Refresh to review the repository version.");
+
+  const branchName = `bankai/jenkinsfile-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  try {
+    await createBranch(context.creds, { baseBranch: context.branch, branchName });
+    const { commitSha } = await commitFileToBranch(context.creds, {
+      branch: branchName,
+      baseSha: context.headSha,
+      message: "Add reviewed Jenkins pipeline proposal",
+      files: [{ path: JENKINSFILE_PATH, content: input.content }],
+    });
+    const pullRequest = await createPullRequest(context.creds, {
+      head: branchName,
+      base: context.branch,
+      title: `Add Jenkinsfile for ${context.creds.repo}`,
+      body: [
+        "Bankai prepared this Jenkinsfile from the repository's manifests and CI configuration. A project member reviewed and accepted the draft before Bankai created this pull request.",
+        "",
+        `**Summary:** ${input.summary}`,
+        ...(input.assumptions.length ? ["", "**Assumptions to review:**", ...input.assumptions.map((item) => `- ${item}`)] : []),
+        "",
+        "Review the Jenkinsfile and commands before merging. This PR contains only the Jenkinsfile; it does not add deployment steps or credentials.",
+        "",
+        `Generated from ${context.headSha}. The repository default branch was unchanged at PR creation.`,
+      ].join("\n"),
+    });
+    await recordActivity(userScopedClient(req), {
+      projectId: project.id,
+      actorId: req.user!.id,
+      actorLabel: displayNameFromUser(req.user!),
+      eventType: "pipeline",
+      summary: "opened a Jenkinsfile proposal PR",
+      linkLabel: `${context.creds.repo}#${pullRequest.number}`,
+      linkTo: "jenkins",
+      meta: `branch ${branchName} · commit ${commitSha}`,
+    });
+    res.status(201).json({ pullRequest, branchName, commitSha, path: JENKINSFILE_PATH });
+  } catch (error) {
+    await deleteBranch(context.creds, branchName);
+    if (error instanceof GithubApiError) throw new HttpError(error.status === 403 ? 403 : 502, error.message);
+    throw error;
+  }
+}
+
+export async function updateJenkinsfilePullRequest(req: Request, res: Response): Promise<void> {
+  const project = req.project!;
+  requireRole(project.myRole, ["owner", "admin", "editor"]);
+  const input = req.body as UpdateJenkinsfilePullRequestInput;
+  const validationError = validateJenkinsfile(input.content);
+  if (validationError) throw new HttpError(422, validationError);
+  const github = await loadGithubCreds(userScopedClient(req), project.id);
+  if (!github) throw new HttpError(422, "Connect GitHub to this project before updating its Jenkinsfile pull request.");
+  try {
+    const commitSha = await updatePullRequestBranchFile(github.creds, {
+      pullRequestNumber: input.prNumber,
+      branchName: input.branchName,
+      filePath: JENKINSFILE_PATH,
+      content: input.content,
+      message: "Update reviewed Jenkins pipeline proposal",
+    });
+    await recordActivity(userScopedClient(req), {
+      projectId: project.id,
+      actorId: req.user!.id,
+      actorLabel: displayNameFromUser(req.user!),
+      eventType: "pipeline",
+      summary: "updated a Jenkinsfile pull request",
+      linkLabel: `PR #${input.prNumber}`,
+      linkTo: "jenkins",
+      meta: `branch ${input.branchName} · commit ${commitSha}`,
+    });
+    res.status(200).json({ commitSha, branchName: input.branchName, path: JENKINSFILE_PATH });
+  } catch (error) {
+    if (error instanceof GithubApiError) throw new HttpError(error.status === 403 ? 403 : error.status === 409 ? 409 : 502, error.message);
+    throw error;
+  }
 }

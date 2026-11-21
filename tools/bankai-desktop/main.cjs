@@ -70,7 +70,8 @@ async function listJenkinsJobs(credentials) {
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected the credentials or they lack permission to read jobs.' : `Could not list Jenkins jobs (HTTP ${response.status}).`);
     const data = await response.json();
     for (const item of data.jobs || []) {
-      const isFolder = String(item._class || '').toLowerCase().includes('folder');
+      const jobClass = String(item._class || '').toLowerCase();
+      const isFolder = jobClass.includes('folder') || jobClass.includes('multibranch') || jobClass.includes('computedfolder');
       if (isFolder && item.url) await visit(item.url, depth + 1);
       else jobs.push({ name: item.name, url: item.url, color: item.color || '' });
     }

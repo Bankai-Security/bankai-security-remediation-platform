@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, inspectJenkinsfile, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
@@ -164,6 +165,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
         <button className={`jenkins-choice-card ${choice === 'skipped' ? 'jenkins-choice-card--selected' : ''}`} onClick={() => saveChoice('skipped')}><strong>Skip Jenkins</strong><span>Keep using Bankai without Jenkins jobs.</span></button>
       </div>
       {choice === 'enabled' && (
+        <>
         <section className="jenkins-browser-setup" aria-label="Jenkins setup">
           {!connection.connected ? <form onSubmit={(event) => void connect(event)}>
             <label htmlFor="jenkins-url">Jenkins address</label>
@@ -197,6 +199,8 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
           {error && <p className="jenkins-browser-error" role="alert">{error}</p>}
           {message && <p className="jenkins-browser-status" role="status">{message}</p>}
         </section>
+        <JenkinsfileSetup projectId={projectId} />
+        </>
       )}
       {choice === 'skipped' && <p className="jenkins-download-note" role="status">Jenkins is skipped for this repository. Other Bankai features remain available.</p>}
       {choice === 'unset' && <p className="jenkins-download-note">No Jenkins jobs will run until you choose Use Jenkins.</p>}
@@ -205,3 +209,115 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
 }
 
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong. Check the connection and try again.'; }
+
+function JenkinsfileSetup({ projectId }: { projectId: string }) {
+  const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
+  const [inspection, setInspection] = useState<JenkinsfileInspection | null>(null);
+  const [proposal, setProposal] = useState<JenkinsfileProposal | null>(null);
+  const [createdPr, setCreatedPr] = useState<JenkinsfilePullRequest | null>(null);
+  const [prBuildMessage, setPrBuildMessage] = useState<string | null>(null);
+  const [prBuild, setPrBuild] = useState<JenkinsJobProgress | null>(null);
+  const [prBuildChecking, setPrBuildChecking] = useState(false);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    setBusy(true); setError(null); setProposal(null); setCreatedPr(null);
+    try {
+      const github = await getGithubConnection(projectId);
+      setGithubConnected(github.connected);
+      if (github.connected) setInspection(await inspectJenkinsfile(projectId));
+      else setInspection(null);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { void refresh(); }, [projectId]);
+
+  const generate = async () => {
+    setBusy(true); setError(null); setCreatedPr(null);
+    setPrBuildMessage(null); setPrBuild(null);
+    try { setProposal(await generateJenkinsfileProposal(projectId)); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const accept = async () => {
+    if (!proposal) return;
+    setBusy(true); setError(null);
+    try {
+      setPrBuild(null);
+      if (createdPr) {
+        await updateJenkinsfilePullRequest(projectId, { prNumber: createdPr.pullRequest.number, branchName: createdPr.branchName, content: proposal.content });
+        setPrBuildMessage('Jenkinsfile updated in the pull request. Checking Jenkins for a fresh run…');
+        void runPullRequestBuild(createdPr);
+      } else {
+        const result = await createJenkinsfilePullRequest(projectId, { baseSha: proposal.baseSha, content: proposal.content, summary: proposal.summary, assumptions: proposal.assumptions });
+        setCreatedPr(result);
+        void runPullRequestBuild(result);
+      }
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+
+  const runPullRequestBuild = async (result: JenkinsfilePullRequest) => {
+    const desktop = window.bankaiDesktop;
+    if (!desktop) return;
+    setPrBuildChecking(true);
+    try {
+      const connection = await desktop.getJenkinsConnection();
+      if (!connection.connected) {
+        setPrBuildMessage('Connect Jenkins and configure a multibranch pipeline to run this PR branch.');
+        return;
+      }
+      const expectedNames = new Set([`pr-${result.pullRequest.number}`.toLowerCase(), result.branchName.toLowerCase()]);
+      const headRef = result.pullRequest.headRef?.toLowerCase();
+      if (headRef) expectedNames.add(headRef);
+      setPrBuildMessage('Waiting for Jenkins to discover the new pull request branch…');
+      for (let attempt = 0; attempt < 18; attempt += 1) {
+        const jobs = await desktop.listJenkinsJobs();
+        const prJob = jobs.find((job) => expectedNames.has(job.name.toLowerCase()));
+        if (prJob) {
+          setPrBuildMessage(`Starting Jenkins job ${prJob.name} for this pull request…`);
+          const resultBuild = await desktop.runJenkinsJob(prJob.url);
+          setPrBuild(resultBuild);
+          setPrBuildMessage(resultBuild.state === 'success' ? 'The pull request build passed.' : resultBuild.state === 'failure' ? 'The pull request build failed. Review its Jenkins output and update the draft before merging.' : `The pull request build finished: ${resultBuild.state}.`);
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+      }
+      setPrBuildMessage('Jenkins did not expose a branch job for this PR. Configure GitHub branch discovery in the Jenkins multibranch job, then refresh Jenkins jobs.');
+    } catch (reason) {
+      setPrBuildMessage(`Could not run the pull request build: ${errorMessage(reason)}`);
+    } finally {
+      setPrBuildChecking(false);
+    }
+  };
+
+  return (
+    <section className="jenkinsfile-setup" aria-label="Jenkinsfile setup">
+      <div className="jenkinsfile-setup-heading"><div><span className="jenkinsfile-setup-eyebrow">Repository setup</span><h2>Jenkinsfile</h2></div><button className="jenkins-text-button" type="button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
+      {busy && !inspection && <p className="jenkins-download-note">Checking the repository’s default branch…</p>}
+      {!busy && githubConnected === false && <p className="jenkins-download-note">Connect this project to GitHub before Bankai can inspect or propose a Jenkinsfile. <a href={`/workspace/${projectId}/settings`}>Open GitHub settings</a>.</p>}
+      {inspection?.exists && !createdPr && !proposal && <>
+        <p className="jenkins-browser-status" role="status">Found <code>{inspection.path}</code> on <code>{inspection.branch}</code>.</p>
+        <p className="jenkins-download-note">This is the pipeline Jenkins will use for the repository branch. Review it here, then select the matching Jenkins job above.</p>
+        <pre className="jenkinsfile-code-view">{inspection.content}</pre>
+      </>}
+      {inspection && !inspection.exists && !proposal && !createdPr && <>
+        <p className="jenkins-download-note">No Jenkinsfile was found on <code>{inspection.branch}</code>. Bankai can inspect the manifests and existing CI files and prepare a draft for you to review.</p>
+        <button className="jenkins-download-cta" type="button" onClick={() => void generate()} disabled={busy}>{busy ? 'Inspecting repository…' : 'Generate Jenkinsfile draft'}</button>
+      </>}
+      {proposal && <div className="jenkinsfile-proposal">
+        <p className="jenkinsfile-proposal-summary">{proposal.summary}</p>
+        {proposal.detectedCommands.length > 0 && <details className="jenkinsfile-detected-commands"><summary>Commands Bankai found in the repo</summary><ul>{proposal.detectedCommands.map((item) => <li key={`${item.stage}:${item.command}`}><code>{item.command}</code><span>{item.evidence}</span></li>)}</ul></details>}
+        <label htmlFor="jenkinsfile-draft">Review and edit the complete Jenkinsfile</label>
+        <textarea id="jenkinsfile-draft" spellCheck={false} value={proposal.content} onChange={(event) => setProposal({ ...proposal, content: event.target.value })} />
+        {proposal.assumptions.length > 0 && <div className="jenkinsfile-assumptions"><strong>Assumptions to review</strong><ul>{proposal.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
+        <p className="jenkins-download-note">The draft uses commands found in repository manifests. It includes no deployment steps or credentials. Accepting creates a PR that adds only <code>Jenkinsfile</code>; Bankai will not merge it.</p>
+        <div className="jenkins-job-actions"><button className="jenkins-download-cta" type="button" onClick={() => void accept()} disabled={busy}>{busy ? (createdPr ? 'Updating PR…' : 'Creating PR…') : (createdPr ? 'Update PR and rerun Jenkins' : 'Accept and create pull request')}</button>{!createdPr && <button className="jenkins-text-button" type="button" onClick={() => setProposal(null)} disabled={busy}>Discard draft</button>}</div>
+      </div>}
+      {createdPr && <div className="jenkinsfile-created-pr"><strong>Jenkinsfile pull request created</strong><span>Review the generated pipeline before merging.</span><a href={createdPr.pullRequest.url} target="_blank" rel="noreferrer">Open PR #{createdPr.pullRequest.number} on GitHub</a>{prBuildMessage && <span role="status">{prBuildMessage}</span>}{prBuildChecking && <span className="jenkins-pr-progress">Looking for the Jenkins PR branch…</span>}{prBuild?.buildUrl && <button className="jenkins-text-button" type="button" onClick={() => void window.bankaiDesktop?.openJenkins(prBuild.buildUrl!)}>Open PR build in Bankai browser</button>}{!prBuildChecking && <button className="jenkins-text-button" type="button" onClick={() => void runPullRequestBuild(createdPr)}>Check Jenkins PR job again</button>}</div>}
+      {error && <p className="jenkins-browser-error" role="alert">{error}</p>}
+      {!busy && githubConnected && !inspection && error && <button className="jenkins-text-button" type="button" onClick={() => void refresh()}>Try again</button>}
+    </section>
+  );
+}
