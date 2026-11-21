@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateFix, generatedFixPathsAreInScope, isActionableFixCandidate, isSafePatchPath, type FixFindingInput } from "./gemini-fix.js";
+import { generateFix, generatedFixPathsAreInScope, isActionableFixCandidate, isSafePatchPath, normalizeRepositoryFilePath, type FixFindingInput } from "./gemini-fix.js";
 
 const generateContent = vi.fn();
 
@@ -73,6 +73,15 @@ describe("retry candidate acceptance", () => {
 });
 
 describe("generated patch path validation", () => {
+  it.each([
+    ["tmp/bankai-scan-IFAJcJ/repo/requirements.txt", "requirements.txt"],
+    ["tmp/bankai-scan-IFAJcJ/repo/src/commands.py", "src/commands.py"],
+    ["/tmp/bankai-scan-IFAJcJ/repo/src/commands.py", "src/commands.py"],
+    ["C:\\agent_workspaces\\repo\\src\\commands.py", "src/commands.py"],
+  ])("normalizes legacy checkout path %s", (input, expected) => {
+    expect(normalizeRepositoryFilePath(input)).toBe(expected);
+  });
+
   const fix = (paths: string[]) => ({
     confident: true,
     fixedContent: "patched",

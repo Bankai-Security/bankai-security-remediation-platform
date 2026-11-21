@@ -59,7 +59,7 @@ function finding(input: {
   // checkout. Convert only paths proven to be under this exact checkout;
   // leave every other absolute path intact so remediation rejects it.
   const path = rawPath
-    ? (rawPath.startsWith(`${repoRoot}/`) ? rawPath.slice(repoRoot.length + 1) : rawPath).replace(/^\.?\//, "")
+    ? (rawPath.startsWith(`${repoRoot}/`) ? rawPath.slice(repoRoot.length + 1) : rawPath).replace(/^\.\//, "")
     : null;
   const id = input.id ?? null;
   const title = input.title || id || `${input.scanner} finding`;
