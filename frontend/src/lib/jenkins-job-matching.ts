@@ -27,5 +27,18 @@ export function isJobNestedUnder(parentUrl: string, candidateUrl: string): boole
 export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], selectedUrl: string, expectedNames: Set<string>): T | undefined {
   const isExpectedName = (job: JenkinsJobCandidate) => expectedNames.has(job.name.toLowerCase());
   const selectedPrJob = jobs.find((job) => isExpectedName(job) && job.supportsPullRequests && sameJobUrl(job.url, selectedUrl));
-  return selectedPrJob ?? jobs.find((job) => isExpectedName(job) && isJobNestedUnder(selectedUrl, job.url));
+  if (selectedPrJob) return selectedPrJob;
+
+  // A previously selected PR branch (for example PR-4) can still identify
+  // the repository's multibranch parent when a later ticket belongs to PR-5.
+  // Walk back through matching Jenkins ancestors and search each scope.
+  const parentJobs = jobs
+    .filter((job) => job.supportsPullRequests && !sameJobUrl(job.url, selectedUrl) && isJobNestedUnder(job.url, selectedUrl))
+    .sort((left, right) => right.url.length - left.url.length);
+  const scopes = [selectedUrl, ...parentJobs.map((job) => job.url)];
+  for (const scope of scopes) {
+    const matchingBranch = jobs.find((job) => isExpectedName(job) && isJobNestedUnder(scope, job.url));
+    if (matchingBranch) return matchingBranch;
+  }
+  return undefined;
 }

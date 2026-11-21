@@ -65,7 +65,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         }
         if (!job) {
           await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
-            failureLog: "Jenkins did not start a build because no matching PR branch job was found under the selected multibranch job. Enable pull request branch discovery in Jenkins, scan the repository, then retry verification." });
+            failureLog: `Jenkins did not start a build because no job was found for PR #${run.pullRequestNumber}. Bankai checked the selected job and its multibranch parent. Ensure pull request branch discovery is enabled in Jenkins, scan the repository, then refresh jobs in Bankai and retry verification.` });
           return;
         }
         activeRunJobUrl = job.url;
