@@ -5,9 +5,9 @@ import { useProject } from '../../lib/project-context';
 import './JenkinsDownload.css';
 
 const downloadUrl = import.meta.env.VITE_BANKAI_DESKTOP_DOWNLOAD_URL;
-type JenkinsJob = { name: string; url: string; color: string };
+type JenkinsJob = { name: string; url: string; color: string; supportsPullRequests?: boolean };
 type JenkinsConnection = { connected: boolean; url?: string; username?: string };
-type JenkinsJobProgress = { state: 'queued' | 'running' | 'success' | 'failure' | 'aborted'; buildUrl?: string; number?: number; timestamp?: number | null; durationMs?: number | null; commitSha?: string | null };
+type JenkinsJobProgress = { state: 'queued' | 'running' | 'success' | 'failure' | 'aborted'; buildUrl?: string; number?: number; timestamp?: number | null; durationMs?: number | null; commitSha?: string | null; jobUrl?: string };
 
 export default function JenkinsDownload() {
   const { project } = useProject();
@@ -54,6 +54,8 @@ declare global {
       listJenkinsJobs: () => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
       runJenkinsJob: (url: string) => Promise<JenkinsJobProgress>;
+      getJenkinsBuildLog: (url: string) => Promise<string>;
+      cancelJenkinsJob: (url: string) => Promise<{ requested: boolean }>;
       onJenkinsJobProgress: (callback: (progress: JenkinsJobProgress) => void) => () => void;
       platform: string;
     };
@@ -166,6 +168,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
       </div>
       {choice === 'enabled' && (
         <>
+        <p className="jenkins-download-note">Bankai Desktop checks for remediation PR builds while the app is open. Choose the Jenkins multibranch job for this repository below; PR branch discovery must be enabled for automatic verification and retries.</p>
         <section className="jenkins-browser-setup" aria-label="Jenkins setup">
           {!connection.connected ? <form onSubmit={(event) => void connect(event)}>
             <label htmlFor="jenkins-url">Jenkins address</label>
@@ -181,7 +184,7 @@ function DesktopJenkinsOptions({ projectId }: { projectId: string }) {
             <label htmlFor="jenkins-job">Build job</label>
             <select id="jenkins-job" value={selectedJob} onChange={(event) => chooseJob(event.target.value)} disabled={!jobs.length || busy}>
               <option value="">{jobs.length ? 'Choose a Jenkins job' : 'No jobs found on this Jenkins server'}</option>
-              {jobs.map((job) => <option key={job.url} value={job.url}>{job.name}</option>)}
+              {jobs.map((job) => <option key={job.url} value={job.url}>{job.name}{job.supportsPullRequests ? ' · multibranch PR pipeline' : ''}</option>)}
             </select>
             <div className="jenkins-job-actions">
               <button className="jenkins-download-cta" type="button" onClick={() => void runJob()} disabled={!selectedJob || busy}>{busy ? 'Working…' : 'Run build'}</button>

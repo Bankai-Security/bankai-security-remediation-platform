@@ -71,9 +71,11 @@ async function listJenkinsJobs(credentials) {
     const data = await response.json();
     for (const item of data.jobs || []) {
       const jobClass = String(item._class || '').toLowerCase();
-      const isFolder = jobClass.includes('folder') || jobClass.includes('multibranch') || jobClass.includes('computedfolder');
+      const isMultibranch = jobClass.includes('multibranch');
+      const isFolder = jobClass.includes('folder') || isMultibranch || jobClass.includes('computedfolder');
+      if (isMultibranch && item.url) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: true });
       if (isFolder && item.url) await visit(item.url, depth + 1);
-      else jobs.push({ name: item.name, url: item.url, color: item.color || '' });
+      else if (!isMultibranch) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: false });
     }
   };
   await visit(credentials.url);
@@ -99,7 +101,7 @@ async function runJenkinsJob(event, jobUrl) {
   if (![200, 201, 202].includes(queued.status)) throw new Error(queued.status === 401 || queued.status === 403 ? 'Jenkins rejected the credentials or they lack permission to start this job.' : `Jenkins could not start the build (HTTP ${queued.status}).`);
   const queueUrl = queued.headers.get('location');
   if (!queueUrl) throw new Error('Jenkins accepted the build but did not return a queue link. Check the Jenkins job page.');
-  progress(event, { state: 'queued' });
+  progress(event, { state: 'queued', jobUrl });
   let build;
   for (let i = 0; i < 90; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -110,7 +112,7 @@ async function runJenkinsJob(event, jobUrl) {
     if (queue.executable) { build = queue.executable; break; }
   }
   if (!build?.url) throw new Error('The build is still queued. Open Jenkins to check its status.');
-  progress(event, { state: 'running', buildUrl: build.url, number: build.number });
+  progress(event, { state: 'running', buildUrl: build.url, number: build.number, jobUrl });
   for (let i = 0; i < 180; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     const response = await jenkinsFetch(credentials, `${build.url.replace(/\/$/, '')}/api/json`);
@@ -120,12 +122,50 @@ async function runJenkinsJob(event, jobUrl) {
       const state = current.result === 'SUCCESS' ? 'success' : current.result === 'ABORTED' ? 'aborted' : 'failure';
       const changeCommit = current.changeSet?.items?.find((item) => item.commitId)?.commitId;
       const revisionCommit = current.actions?.map((action) => action.lastBuiltRevision?.SHA1).find(Boolean);
-      const result = { state, buildUrl: current.url || build.url, number: current.number, timestamp: current.timestamp || null, durationMs: current.duration || null, commitSha: changeCommit || revisionCommit || null };
+      const result = { state, buildUrl: current.url || build.url, number: current.number, timestamp: current.timestamp || null, durationMs: current.duration || null, commitSha: changeCommit || revisionCommit || null, jobUrl };
       progress(event, result);
       return result;
     }
   }
   throw new Error('The Jenkins build is still running. Open Jenkins to check its status.');
+}
+async function getJenkinsBuildLog(buildUrl) {
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins before reading build output.');
+  const target = new URL(buildUrl);
+  if (target.origin !== new URL(credentials.url).origin || !target.pathname.startsWith(new URL(credentials.url).pathname.replace(/\/$/, '') + '/job/')) throw new Error('Choose a build from the connected Jenkins server.');
+  const response = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/consoleText`, { headers: { Accept: 'text/plain' } });
+  if (!response.ok) return `Jenkins could not return console output (HTTP ${response.status}).`;
+  const reader = response.body?.getReader();
+  if (!reader) return 'Jenkins did not return console output.';
+  const chunks = [];
+  let size = 0;
+  while (size < 256 * 1024) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(Buffer.from(value)); size += value.byteLength;
+  }
+  if (size >= 256 * 1024) await reader.cancel();
+  let log = Buffer.concat(chunks).toString('utf8').slice(-12_000);
+  const token = credentials.apiToken;
+  if (token) log = log.split(token).join('[REDACTED_JENKINS_TOKEN]');
+  return log.replace(/(password|token|secret|authorization|api[_-]?key)(\s*[=:]\s*)([^\s,;]+)/gi, '$1$2[REDACTED]')
+    .replace(/gh[pousr]_[A-Za-z0-9_]{20,}/g, '[REDACTED_GITHUB_TOKEN]');
+}
+async function cancelJenkinsBuild(buildUrl) {
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins before stopping a build.');
+  const target = new URL(buildUrl);
+  if (target.origin !== new URL(credentials.url).origin || !target.pathname.startsWith(new URL(credentials.url).pathname.replace(/\/$/, '') + '/job/')) throw new Error('Choose a build from the connected Jenkins server.');
+  const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
+  const headers = {};
+  if (crumbResponse.ok) {
+    const crumb = await crumbResponse.json();
+    if (crumb.crumbRequestField && crumb.crumb) headers[crumb.crumbRequestField] = crumb.crumb;
+  } else if (crumbResponse.status !== 404) throw new Error(`Could not prepare Jenkins stop request (HTTP ${crumbResponse.status}).`);
+  const response = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/stop`, { method: 'POST', headers });
+  if (![200, 201, 202, 302, 303].includes(response.status)) throw new Error(response.status === 404 ? 'The Jenkins build has already finished.' : `Jenkins could not stop this build (HTTP ${response.status}).`);
+  return { requested: true };
 }
 
 function projectFromDeepLink(value) {
@@ -223,6 +263,8 @@ ipcMain.handle('bankai:jenkins-disconnect', async () => {
   return { connected: false };
 });
 ipcMain.handle('bankai:jenkins-run-job', (event, url) => runJenkinsJob(event, url));
+ipcMain.handle('bankai:jenkins-build-log', (_event, url) => getJenkinsBuildLog(url));
+ipcMain.handle('bankai:jenkins-cancel-build', (_event, url) => cancelJenkinsBuild(url));
 app.setAsDefaultProtocolClient('bankai');
 app.on('second-instance', (_event, argv) => {
   const projectId = argv.map(projectFromDeepLink).find(Boolean);

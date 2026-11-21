@@ -67,3 +67,14 @@ export async function enqueueFixPrResume(data: FixPrJobData, delay = 0): Promise
   });
   return job.id ? { id: job.id } : {};
 }
+
+export interface JenkinsRetryJobData { requestId?: string; ticketId: string; projectId: string; runId: string; retryCount: number; failureLog: string; }
+export const JENKINS_RETRY_QUEUE_NAME = "jenkins-retry";
+export const jenkinsRetryQueue = new Queue<JenkinsRetryJobData>(JENKINS_RETRY_QUEUE_NAME, { connection: redisConnection });
+export async function enqueueJenkinsRetry(data: JenkinsRetryJobData): Promise<void> {
+  await jenkinsRetryQueue.add("retry", data, {
+    jobId: `jenkins-retry-${data.runId}`,
+    removeOnComplete: { age: 60 * 60 },
+    removeOnFail: { age: 24 * 60 * 60 },
+  });
+}

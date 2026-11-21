@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('bankaiDesktop', Object.freeze({
   listJenkinsJobs: () => ipcRenderer.invoke('bankai:jenkins-list-jobs'),
   disconnectJenkins: () => ipcRenderer.invoke('bankai:jenkins-disconnect'),
   runJenkinsJob: (url) => ipcRenderer.invoke('bankai:jenkins-run-job', url),
+  getJenkinsBuildLog: (url) => ipcRenderer.invoke('bankai:jenkins-build-log', url),
+  cancelJenkinsJob: (url) => ipcRenderer.invoke('bankai:jenkins-cancel-build', url),
   onJenkinsJobProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on('bankai:jenkins-job-progress', listener);

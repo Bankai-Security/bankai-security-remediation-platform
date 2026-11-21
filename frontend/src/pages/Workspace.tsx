@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import JenkinsPipelineAgent from '../components/JenkinsPipelineAgent';
 import { ProjectProvider, useProject } from '../lib/project-context';
 import './Workspace.css';
 import './workspace-pages/shared.css';
@@ -34,6 +35,7 @@ function WorkspaceShell() {
 
   return (
     <div className="workspace">
+      <JenkinsPipelineAgent projectId={project.id} />
       <Sidebar />
       <div className="workspace-content">
         <Outlet />

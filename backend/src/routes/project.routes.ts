@@ -11,6 +11,7 @@ import { githubRouter } from "./github.routes.js";
 import { jiraRouter } from "./jira.routes.js";
 import { memberRouter } from "./member.routes.js";
 import { overviewRouter } from "./overview.routes.js";
+import { pipelineRouter } from "./pipeline.routes.js";
 import { scanRouter } from "./scan.routes.js";
 import { slaRouter } from "./sla.routes.js";
 import { ticketRouter } from "./ticket.routes.js";
@@ -38,6 +39,7 @@ projectScoped.use("/github", githubRouter);
 projectScoped.use("/sla", slaRouter);
 projectScoped.use("/members", memberRouter);
 projectScoped.use("/overview", overviewRouter);
+projectScoped.use("/pipeline", pipelineRouter);
 projectScoped.use("/activity", activityRouter);
 
 projectRouter.use("/:projectId", projectScoped);

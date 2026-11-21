@@ -65,16 +65,16 @@ This checklist turns the agreed CI/CD workflow into buildable implementation ste
 
 ## Phase 5: Connect pipeline to remediation workflow
 
-- [ ] Trigger Jenkins on the proposed remediation branch/PR commit.
-- [ ] Associate every build with repository, PR, commit SHA, remediation task, and pipeline run ID.
-- [ ] Report pipeline state in the Bankai PR/remediation view and (where supported) as a GitHub check.
-- [ ] Retrieve and summarize failure output while redacting secrets and limiting retained log content.
-- [ ] On an eligible failure, send the failure context to the remediation agent and request a targeted fix.
-- [ ] Create a new commit/update the PR and rerun the required checks, bounded by the retry policy.
-- [ ] Stop and mark `needs_review` for exhausted retries, ambiguous failures, or failures requiring environment/credential changes.
-- [ ] Ensure a user can cancel a running pipeline/retry where supported.
+- [x] Queue Jenkins for the proposed remediation branch/PR commit when Bankai opens the remediation PR.
+- [x] Associate every build with repository, PR, full commit SHA, remediation ticket, retry count, and pipeline run ID.
+- [x] Report pipeline state and build link in the Bankai ticket/remediation view. GitHub Checks API reporting is not enabled for the desktop-owned Jenkins connection.
+- [x] Retrieve bounded console output, redact common secret formats, and retain only a short failure summary in the database.
+- [x] For clear build/test/compiler/lint failures, send sanitized failure context to the remediation agent for a targeted fix.
+- [x] Create a new commit on the same PR branch and rerun, with a maximum of two AI retry commits.
+- [x] Mark `needs_review` for retry exhaustion, ambiguous failures, commit mismatch, or Jenkins setup/credential/environment failures.
+- [x] Let users cancel queued runs or stop active Jenkins builds from Bankai Desktop.
 
-**Done when:** a remediation PR receives a build result, eligible failures can be retried safely, and unresolved failures return to a person with useful context.
+**Done when:** a remediation PR receives a commit-matched build result, eligible failures can be retried safely, and unresolved failures return to a person with useful context. The state is shown in Bankai; GitHub check-run reporting remains unavailable for this local Jenkins integration.
 
 ## Phase 6: Simple CD through an existing Jenkins deployment job
 

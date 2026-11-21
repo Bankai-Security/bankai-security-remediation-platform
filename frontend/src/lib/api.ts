@@ -471,7 +471,30 @@ export interface Ticket {
   githubPrState: "open" | "merged" | "closed" | null;
   githubPrError: string | null;
   githubPrLowConfidence: boolean;
+  ciStatus: "queued" | "running" | "passed" | "failed" | "retrying" | "needs_review" | "cancelled" | null;
+  ciRunUrl: string | null;
+  ciError: string | null;
   createdAt: string;
+}
+
+export interface JenkinsPipelineClaim {
+  runId: string; ticketId: string; commitSha: string | null; branch: string; pullRequestNumber: number;
+  retryCount: number; jobUrl: string;
+}
+export function claimJenkinsPipeline(projectId: string, input: { deviceId: string; jobUrl: string }): Promise<JenkinsPipelineClaim | undefined> {
+  return apiFetch(`/projects/${projectId}/pipeline/claim`, { method: "POST", body: JSON.stringify(input) });
+}
+export function finishJenkinsPipeline(projectId: string, runId: string, input: {
+  deviceId: string; state: "passed" | "failed" | "cancelled"; buildUrl: string; buildNumber?: number | null;
+  commitSha?: string | null; failureLog?: string;
+}): Promise<{ ciStatus: string; retrying: boolean }> {
+  return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/result`, { method: "POST", body: JSON.stringify(input) });
+}
+export function reportJenkinsPipelineProgress(projectId: string, runId: string, input: { deviceId: string; buildUrl: string; buildNumber?: number }): Promise<{ accepted: boolean }> {
+  return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/progress`, { method: "POST", body: JSON.stringify(input) });
+}
+export function cancelQueuedJenkinsPipeline(projectId: string, ticketId: string): Promise<{ cancelled: boolean }> {
+  return apiFetch(`/projects/${projectId}/pipeline/tickets/${ticketId}/cancel`, { method: "POST" });
 }
 
 export interface TicketFilters {

@@ -405,6 +405,14 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
         github_pr_error: null,
       })
       .eq("id", ticketId);
+    if (headSha) {
+      const { error: pipelineError } = await supabase.from("pipeline_runs").upsert({
+        ticket_id: ticketId, project_id: projectId, workflow_file: "Jenkinsfile", head_branch: branch,
+        commit_sha: headSha, pull_request_number: pr.number, status: "queued", retry_count: 0,
+      }, { onConflict: "ticket_id,commit_sha", ignoreDuplicates: true });
+      if (pipelineError) logger.error({ err: pipelineError, ticketId, projectId }, "Could not queue Jenkins verification for remediation PR");
+      await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId).eq("project_id", projectId);
+    }
     await maybeTransitionJira(jira, ticket.jira_issue_key, "In Review");
 
     await recordActivity(supabase, {
