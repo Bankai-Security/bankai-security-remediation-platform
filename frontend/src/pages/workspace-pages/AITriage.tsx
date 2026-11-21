@@ -21,6 +21,10 @@ function hiddenFromActiveTriage(row: Finding): boolean {
   return row.bucket === 'Resolved' || (row.ticketStatus === 'Done' && row.notDetectedInLatestScan);
 }
 
+function findingIsResolved(row: Finding): boolean {
+  return row.bucket === 'Resolved' || (row.ticketStatus === 'Done' && row.notDetectedInLatestScan);
+}
+
 function sevBadgeClass(sev: Severity) {
   return `ws-badge ws-badge--${sev.toLowerCase()}`;
 }
@@ -222,7 +226,11 @@ export default function AITriage() {
     }
   };
 
-  const canReopenTicket = (row: Finding) => row.ticketStatus === 'Done' && !!row.ticketId && row.bucket !== 'Resolved';
+  // Reopening is only appropriate when the issue is still present. Once the
+  // latest scan no longer detects it (or triage explicitly resolved it), keep
+  // the ticketed finding read-only and do not offer a reopen action.
+  const canReopenTicket = (row: Finding) =>
+    row.ticketStatus === 'Done' && !!row.ticketId && !findingIsResolved(row);
 
   if (loadError) {
     return (
@@ -323,7 +331,7 @@ export default function AITriage() {
                 className="ws-table-row ws-table-row--clickable triage-grid"
                 style={{
                   background: checked ? '#EFF6FF' : openId === r.id ? 'var(--color-bg)' : 'transparent',
-                  opacity: r.ticketKey ? 0.48 : 1,
+                  opacity: findingIsResolved(r) ? 0.42 : r.ticketKey ? 0.48 : 1,
                 }}
                 onClick={() => {
                   setOpenId(r.id);
@@ -406,7 +414,7 @@ export default function AITriage() {
                   <span className="triage-scan-notice-icon" aria-hidden="true">i</span>
                   <div className="triage-scan-notice-content">
                     <div className="triage-scan-notice-label">SCAN STATUS</div>
-                    <p className="triage-scan-notice-text">This finding was not detected in the latest completed repository scan. It remains open; verify the fix before marking it resolved.</p>
+                  <p className="triage-scan-notice-text">This finding was not detected in the latest completed repository scan. Confirm the remediation before treating the finding as resolved.</p>
                   </div>
                 </div>
               )}
@@ -455,6 +463,10 @@ export default function AITriage() {
                       {busy ? 'Reopening…' : `Reopen ticket · ${openRow.ticketKey}`}
                     </button>
                   )}
+                </div>
+              ) : findingIsResolved(openRow) ? (
+                <div className="triage-ticket-lock">
+                  <span>This finding is resolved and no longer detected in the latest scan. Triage actions are disabled.</span>
                 </div>
               ) : reassigning ? (
                 <select
