@@ -506,6 +506,9 @@ export function reportJenkinsDeployment(projectId: string, runId: string, input:
 export function cancelQueuedJenkinsPipeline(projectId: string, ticketId: string): Promise<{ cancelled: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/tickets/${ticketId}/cancel`, { method: "POST" });
 }
+export function retryJenkinsVerification(projectId: string, ticketId: string): Promise<{ queued: boolean }> {
+  return apiFetch(`/projects/${projectId}/pipeline/tickets/${ticketId}/retry`, { method: "POST" });
+}
 export type JenkinsAuditAction = "connected" | "disconnected" | "ci_job_selected" | "cd_enabled" | "cd_disabled" | "cd_job_selected" | "manual_build_started";
 export function recordJenkinsAuditAction(projectId: string, action: JenkinsAuditAction): Promise<{ recorded: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/audit`, { method: "POST", body: JSON.stringify({ action }) });

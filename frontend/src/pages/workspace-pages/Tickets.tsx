@@ -4,7 +4,7 @@ import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
 import GithubIcon from '../../components/GithubIcon';
 import JiraIcon from '../../components/JiraIcon';
 import RetryFixButton from '../../components/RetryFixButton';
-import { ApiError, cancelQueuedJenkinsPipeline, listTickets, retryTicketFix, syncTicketsToJira, updateTicketStatus, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
+import { ApiError, cancelQueuedJenkinsPipeline, listTickets, retryJenkinsVerification, retryTicketFix, syncTicketsToJira, updateTicketStatus, type Severity, type Ticket, type TicketStatus } from '../../lib/api';
 import { canEdit } from '../../lib/roles';
 import { useProject } from '../../lib/project-context';
 import './Tickets.css';
@@ -60,7 +60,7 @@ function prBadgeTitle(t: Ticket): string {
   return `Open pull request #${t.githubPrNumber}${state}${lowConfidence}`;
 }
 
-function PipelineStatus({ ticket, onCancel }: { ticket: Ticket; onCancel?: () => void }) {
+function PipelineStatus({ ticket, onCancel, onRetry, retrying = false }: { ticket: Ticket; onCancel?: () => void; onRetry?: () => void; retrying?: boolean }) {
   if (!ticket.ciStatus) return null;
   const label = ticket.ciStatus === 'passed' ? 'Jenkins passed' : ticket.ciStatus === 'failed' ? 'Jenkins failed'
     : ticket.ciStatus === 'retrying' ? 'AI retrying' : ticket.ciStatus === 'needs_review' ? 'Jenkins needs review'
@@ -73,6 +73,7 @@ function PipelineStatus({ ticket, onCancel }: { ticket: Ticket; onCancel?: () =>
     {ticket.ciRunUrl ? <a href={ticket.ciRunUrl} target="_blank" rel="noreferrer">{label}</a> : label}
     {reviewHint && <span className="tickets-pipeline-review-hint">{reviewHint}</span>}
     {(ticket.ciStatus === 'queued' || ticket.ciStatus === 'running' || ticket.ciStatus === 'retrying') && onCancel && <button className="tickets-pipeline-cancel" type="button" onClick={onCancel}>{ticket.ciStatus === 'queued' ? 'Cancel queued run' : ticket.ciStatus === 'running' ? 'Stop Jenkins build' : 'Cancel AI retry'}</button>}
+    {ticket.ciStatus === 'needs_review' && ticket.githubPrState === 'open' && onRetry && <button className="tickets-pipeline-cancel" type="button" onClick={onRetry} disabled={retrying}>{retrying ? 'Queueing verification…' : 'Retry Jenkins verification'}</button>}
     {ticket.ciError && <span className="tickets-pipeline-error">{ticket.ciError}</span>}
   </span>;
 }
@@ -103,6 +104,7 @@ export default function Tickets() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [retryingFixId, setRetryingFixId] = useState<string | null>(null);
+  const [retryingPipelineId, setRetryingPipelineId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<TicketStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -182,6 +184,21 @@ export default function Tickets() {
       // The ticket's githubPrError is the durable source of truth.
     } finally {
       setRetryingFixId(null);
+    }
+  };
+
+  const handleRetryJenkins = async (ticketId: string) => {
+    if (!project) return;
+    setRetryingPipelineId(ticketId);
+    setStatusError(null);
+    try {
+      await retryJenkinsVerification(project.id, ticketId);
+      const { tickets: refreshed } = await listTickets(project.id);
+      setTickets(refreshed);
+    } catch (reason) {
+      setStatusError(reason instanceof ApiError ? reason.message : 'Could not queue the Jenkins verification retry.');
+    } finally {
+      setRetryingPipelineId(null);
     }
   };
 
@@ -363,7 +380,8 @@ export default function Tickets() {
                         </div>
                         <div className="tickets-kanban-card-title">{t.title}</div>
                         <RemediationProgress ticket={t} />
-                        <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined} />
+                        <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
+                          onRetry={editable && t.ciStatus === 'needs_review' && t.githubPrState === 'open' ? () => void handleRetryJenkins(t.id) : undefined} retrying={retryingPipelineId === t.id} />
                         <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
                         <div className="tickets-kanban-card-meta">
                           {t.service}
@@ -453,7 +471,8 @@ export default function Tickets() {
                     <span className="tickets-table-title">
                       {t.title}
                       <RemediationProgress ticket={t} compact />
-                      <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined} />
+                            <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
+                              onRetry={editable && t.ciStatus === 'needs_review' && t.githubPrState === 'open' ? () => void handleRetryJenkins(t.id) : undefined} retrying={retryingPipelineId === t.id} />
                       <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
                       <span className="tickets-table-actions">
                         {t.jiraIssueUrl ? (
