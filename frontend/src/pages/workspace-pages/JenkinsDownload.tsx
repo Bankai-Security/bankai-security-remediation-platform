@@ -57,6 +57,7 @@ declare global {
       listJenkinsJobs: () => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
       runJenkinsJob: (url: string, parameters?: Record<string, string>) => Promise<JenkinsJobProgress>;
+      resumeJenkinsJob: (jobUrl: string, buildUrl?: string | null) => Promise<JenkinsJobProgress>;
       getJenkinsJobParameters: (url: string) => Promise<{ supported: boolean; reason: string | null; parameters: JenkinsParameterDefinition[] }>;
       getJenkinsBuildLog: (url: string) => Promise<string>;
       cancelJenkinsJob: (url: string) => Promise<{ requested: boolean }>;

@@ -231,6 +231,47 @@ async function runJenkinsJob(event, jobUrl, parameters = {}) {
   }
   throw new Error('The Jenkins build is still running. Open Jenkins to check its status.');
 }
+async function resumeJenkinsJob(event, jobUrl, existingBuildUrl) {
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins before checking the existing build.');
+  const job = validateJenkinsResourceUrl(credentials, jobUrl);
+  let buildUrl = existingBuildUrl;
+  if (buildUrl) {
+    const build = validateJenkinsResourceUrl(credentials, buildUrl);
+    if (build.origin !== job.origin || !build.pathname.startsWith(`${job.pathname.replace(/\/$/, '')}/`)) throw new Error('The recorded build is outside the selected Jenkins job.');
+    buildUrl = build.toString();
+  } else {
+    const response = await jenkinsFetch(credentials, `${job.toString().replace(/\/$/, '')}/lastBuild/api/json`);
+    if (!response.ok) throw new Error(`Could not inspect the latest Jenkins build (HTTP ${response.status}).`);
+    const latest = await response.json();
+    if (!latest.url) throw new Error('Jenkins has no recorded build to reconcile. Check Jenkins before starting another build.');
+    buildUrl = latest.url;
+  }
+  const validatedBuild = validateJenkinsResourceUrl(credentials, buildUrl);
+  if (validatedBuild.origin !== job.origin || !validatedBuild.pathname.startsWith(`${job.pathname.replace(/\/$/, '')}/`)) throw new Error('The recorded build is outside the selected Jenkins job.');
+  const build = { url: validatedBuild.toString(), number: null };
+  progress(event, { state: 'running', buildUrl: build.url, jobUrl });
+  for (let i = 0; i < 180; i += 1) {
+    const response = await jenkinsFetch(credentials, `${build.url.replace(/\/$/, '')}/api/json`);
+    if (!response.ok) throw new Error(`Could not read Jenkins build status (HTTP ${response.status}).`);
+    const current = await response.json();
+    if (!current.building && current.result) {
+      const state = current.result === 'SUCCESS' ? 'success' : current.result === 'ABORTED' ? 'aborted' : 'failure';
+      const changeCommit = current.changeSet?.items?.find((item) => item.commitId)?.commitId;
+      const revisionCommit = current.actions?.map((action) => action.lastBuiltRevision?.SHA1).find(Boolean);
+      let commitSha = changeCommit || revisionCommit || null;
+      if (!commitSha) {
+        try { commitSha = await getJenkinsCheckedOutCommit(credentials, current.url || build.url); } catch { /* Bankai will request review if the SHA remains unknown */ }
+      }
+      const result = { state, buildUrl: current.url || build.url, number: current.number ?? build.number, timestamp: current.timestamp || null,
+        durationMs: current.duration || null, commitSha, jobUrl };
+      progress(event, result);
+      return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  throw new Error('The existing Jenkins build is still running. Open Jenkins to check its status.');
+}
 async function getJenkinsBuildLog(buildUrl) {
   const credentials = await readJenkinsCredentials();
   if (!credentials) throw new Error('Connect to Jenkins before reading build output.');
@@ -375,6 +416,7 @@ ipcMain.handle('bankai:jenkins-disconnect', async (event) => {
   return { connected: false };
 });
 ipcMain.handle('bankai:jenkins-run-job', (event, url, parameters) => { assertBankaiSender(event); return runJenkinsJob(event, url, parameters); });
+ipcMain.handle('bankai:jenkins-resume-job', (event, jobUrl, buildUrl) => { assertBankaiSender(event); return resumeJenkinsJob(event, jobUrl, buildUrl); });
 ipcMain.handle('bankai:jenkins-build-log', (event, url) => { assertBankaiSender(event); return getJenkinsBuildLog(url); });
 ipcMain.handle('bankai:jenkins-cancel-build', (event, url) => { assertBankaiSender(event); return cancelJenkinsBuild(url); });
 ipcMain.handle('bankai:jenkins-get-job-parameters', async (event, url) => {

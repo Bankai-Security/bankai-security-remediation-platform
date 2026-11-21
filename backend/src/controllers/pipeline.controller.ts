@@ -41,10 +41,34 @@ function validateJenkinsJobUrl(value: unknown): string {
   } catch { throw new HttpError(400, "The Jenkins job address is invalid."); }
 }
 
-async function markJenkinsNeedsReview(projectId: string, run: { id: string; ticket_id: string; pull_request_number: number }, message: string, buildUrl?: string | null): Promise<void> {
+function jobBelongsToSelection(selectedJobUrl: string, actualJobUrl: string): boolean {
+  try {
+    const selected = new URL(selectedJobUrl);
+    const actual = new URL(actualJobUrl);
+    if (selected.origin !== actual.origin || selected.protocol !== actual.protocol) return false;
+    const selectedPath = selected.pathname.replace(/\/+$/, "");
+    const actualPath = actual.pathname.replace(/\/+$/, "");
+    if (actualPath === selectedPath || actualPath.startsWith(`${selectedPath}/job/`)) return true;
+    const selectedParent = selectedPath.match(/^(.*\/job\/)[^/]+$/)?.[1];
+    const actualParent = actualPath.match(/^(.*\/job\/)[^/]+$/)?.[1];
+    return Boolean(selectedParent && actualParent && selectedParent === actualParent);
+  } catch { return false; }
+}
+
+function buildBelongsToJob(jobUrl: string, buildUrl: string): boolean {
+  try {
+    const job = new URL(jobUrl);
+    const build = new URL(buildUrl);
+    const jobPath = job.pathname.replace(/\/+$/, "");
+    return build.origin === job.origin && build.protocol === job.protocol && build.pathname.startsWith(`${jobPath}/`);
+  } catch { return false; }
+}
+
+async function markJenkinsNeedsReview(projectId: string, run: { id: string; ticket_id: string; pull_request_number: number }, message: string, buildUrl?: string | null, jobUrl?: string): Promise<void> {
   const now = new Date().toISOString();
   const safeMessage = redact(message).slice(0, 1500);
   const { data: changed, error } = await supabaseAdmin.from("pipeline_runs").update({ status: "needs_review", conclusion: "needs_review", failure_summary: safeMessage,
+    jenkins_job_url: jobUrl,
     html_url: buildUrl ?? undefined, completed_at: now, updated_at: now }).eq("id", run.id).eq("status", "in_progress").select("id").maybeSingle();
   if (error) throw new HttpError(500, "Could not save the Jenkins recovery state.");
   if (!changed) {
@@ -88,6 +112,16 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
       summary: "marked a stale Jenkins deployment for review on", linkTo: "tickets" });
   }
   for (const ticketId of new Set((staleDeployments ?? []).map((run) => run.ticket_id))) await publishJenkinsEvidence(req.project!.id, ticketId);
+  const { data: activeRun, error: activeError } = await supabaseAdmin.from("pipeline_runs").select("*")
+    .eq("project_id", req.project!.id).eq("status", "in_progress").eq("claimed_by", deviceId)
+    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (activeError) throw new HttpError(500, "Could not check for a Jenkins run to resume.");
+  if (activeRun) {
+    res.status(200).json({ runId: activeRun.id, ticketId: activeRun.ticket_id, commitSha: activeRun.commit_sha, branch: activeRun.head_branch,
+      pullRequestNumber: activeRun.pull_request_number, retryCount: activeRun.retry_count, jobUrl: activeRun.jenkins_job_url || selectedJobUrl,
+      resume: true, buildUrl: activeRun.jenkins_build_url ?? null, buildNumber: activeRun.jenkins_build_number ?? null });
+    return;
+  }
   const { data: queued, error } = await supabaseAdmin.from("pipeline_runs").select("*")
     .eq("project_id", req.project!.id).eq("status", "queued").order("created_at").limit(1).maybeSingle();
   if (error) throw new HttpError(500, "Could not check for Jenkins work.");
@@ -114,7 +148,7 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
 export async function finishJenkinsRun(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
   const { runId } = req.params;
-  const { deviceId, state, buildUrl, buildNumber, commitSha, failureLog } = req.body ?? {};
+  const { deviceId, state, buildUrl, buildNumber, commitSha, failureLog, jobUrl } = req.body ?? {};
   const states = ["passed", "failed", "cancelled", "needs_review"];
   if (typeof deviceId !== "string" || !/^[\w.-]{8,100}$/.test(deviceId) || typeof state !== "string" || !states.includes(state)
     || (state !== "needs_review" && (typeof buildUrl !== "string" || buildUrl.length > 2048))
@@ -132,22 +166,18 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
     }
     throw new HttpError(409, "This Jenkins run has already finished or been reviewed.");
   }
+  const safeJobUrl = jobUrl == null ? run.jenkins_job_url : validateJenkinsJobUrl(jobUrl);
+  if (!jobBelongsToSelection(run.jenkins_job_url, safeJobUrl)) throw new HttpError(400, "The Jenkins job is outside the selected multibranch job.");
   if (state === "needs_review") {
     const message = typeof failureLog === "string" ? failureLog : "Bankai could not confirm the Jenkins result. Check Jenkins before retrying to avoid starting duplicate work.";
-    const safeBuildUrl = typeof buildUrl === "string" ? buildUrl : null;
-    if (safeBuildUrl) {
-      try {
-        const root = new URL(run.jenkins_job_url); const build = new URL(safeBuildUrl);
-        const rootPath = root.pathname.replace(/\/$/, "");
-        if (build.origin !== root.origin || build.protocol !== root.protocol || !(build.pathname === rootPath || build.pathname.startsWith(`${rootPath}/`))) throw new Error("outside Jenkins job");
-      } catch { throw new HttpError(400, "The Jenkins link is outside the selected job."); }
-    }
-    await markJenkinsNeedsReview(req.project!.id, run, message, safeBuildUrl);
+    const safeBuildUrl = typeof buildUrl === "string" ? validateJenkinsJobUrl(buildUrl) : null;
+    if (safeBuildUrl && safeBuildUrl !== safeJobUrl && !buildBelongsToJob(safeJobUrl, safeBuildUrl)) throw new HttpError(400, "The Jenkins link is outside the selected job.");
+    await markJenkinsNeedsReview(req.project!.id, run, message, safeBuildUrl, safeJobUrl);
     res.status(200).json({ ciStatus: "needs_review", retrying: false }); return;
   }
   const validBuildUrl = validateJenkinsJobUrl(buildUrl);
   try {
-    const root = new URL(run.jenkins_job_url);
+    const root = new URL(safeJobUrl);
     const build = new URL(validBuildUrl);
     const rootPath = root.pathname.replace(/\/$/, "");
     if (!(["https:", "http:"].includes(build.protocol)) || build.origin !== root.origin || !(build.pathname === rootPath || build.pathname.startsWith(`${rootPath}/`))) throw new Error("outside selected Jenkins job");
@@ -155,21 +185,21 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
     throw new HttpError(400, "The build link is outside the selected Jenkins job.");
   }
   if (commitSha && run.commit_sha && commitSha.toLowerCase() !== run.commit_sha.toLowerCase()) {
-    await markJenkinsNeedsReview(req.project!.id, run, "Jenkins built a different commit than the remediation PR.", validBuildUrl);
+    await markJenkinsNeedsReview(req.project!.id, run, "Jenkins built a different commit than the remediation PR.", validBuildUrl, safeJobUrl);
     res.status(200).json({ ciStatus: "needs_review", retrying: false }); return;
   }
   if (!commitSha && state !== "cancelled") {
-    await markJenkinsNeedsReview(req.project!.id, run, "Jenkins did not report a commit SHA, so Bankai cannot verify this build matches the PR.", validBuildUrl);
+    await markJenkinsNeedsReview(req.project!.id, run, "Jenkins did not report a commit SHA, so Bankai cannot verify this build matches the PR.", validBuildUrl, safeJobUrl);
     res.status(200).json({ ciStatus: "needs_review", retrying: false }); return;
   }
   if (commitSha && !/^[0-9a-f]{40}$/i.test(commitSha)) {
-    await markJenkinsNeedsReview(req.project!.id, run, "Jenkins did not report a full commit SHA, so Bankai cannot verify this build matches the PR.", validBuildUrl);
+    await markJenkinsNeedsReview(req.project!.id, run, "Jenkins did not report a full commit SHA, so Bankai cannot verify this build matches the PR.", validBuildUrl, safeJobUrl);
     res.status(200).json({ ciStatus: "needs_review", retrying: false }); return;
   }
   const log = typeof failureLog === "string" ? redact(failureLog) : "";
   const summary = state === "failed" ? (log.split(/\r?\n/).filter(Boolean).slice(-8).join("\n").slice(0, 1500) || "Jenkins reported a failed build.") : null;
   const now = new Date().toISOString();
-  const { data: savedRun, error } = await supabaseAdmin.from("pipeline_runs").update({ status: "completed", conclusion: state, html_url: validBuildUrl,
+  const { data: savedRun, error } = await supabaseAdmin.from("pipeline_runs").update({ status: "completed", conclusion: state, html_url: validBuildUrl, jenkins_job_url: safeJobUrl,
     jenkins_build_number: Number.isInteger(buildNumber) ? buildNumber : null, completed_at: now, updated_at: now, failure_summary: summary })
     .eq("id", run.id).eq("status", "in_progress").select("id").maybeSingle();
   if (error) throw new HttpError(500, "Could not save the Jenkins result.");
@@ -202,20 +232,22 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
 
 export async function reportJenkinsProgress(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
-  const { deviceId, buildUrl, buildNumber } = req.body ?? {};
+  const { deviceId, buildUrl, buildNumber, jobUrl } = req.body ?? {};
   if (typeof deviceId !== "string" || !/^[\w.-]{8,100}$/.test(deviceId) || typeof buildUrl !== "string" || buildUrl.length > 2048) {
     throw new HttpError(400, "The Jenkins progress update is invalid.");
   }
   const { data: run, error } = await supabaseAdmin.from("pipeline_runs").select("id,ticket_id,jenkins_job_url")
     .eq("id", req.params.runId).eq("project_id", req.project!.id).eq("claimed_by", deviceId).eq("status", "in_progress").maybeSingle();
   if (error || !run) throw new HttpError(409, "This Jenkins run is no longer claimed by this desktop.");
+  const safeJobUrl = jobUrl == null ? run.jenkins_job_url : validateJenkinsJobUrl(jobUrl);
+  if (!jobBelongsToSelection(run.jenkins_job_url, safeJobUrl)) throw new HttpError(400, "The Jenkins job is outside the selected multibranch job.");
   const safeBuildUrl = validateJenkinsJobUrl(buildUrl);
   try {
-    const root = new URL(run.jenkins_job_url);
+    const root = new URL(safeJobUrl);
     const build = new URL(safeBuildUrl);
     if (build.protocol !== root.protocol || build.origin !== root.origin || !build.pathname.startsWith(`${root.pathname.replace(/\/$/, "")}/`)) throw new Error("outside Jenkins job");
   } catch { throw new HttpError(400, "The build link is outside the selected Jenkins job."); }
-  const { error: updateError } = await supabaseAdmin.from("pipeline_runs").update({ jenkins_build_url: safeBuildUrl,
+  const { error: updateError } = await supabaseAdmin.from("pipeline_runs").update({ jenkins_job_url: safeJobUrl, jenkins_build_url: safeBuildUrl,
     jenkins_build_number: Number.isInteger(buildNumber) ? buildNumber : null, updated_at: new Date().toISOString() }).eq("id", run.id);
   if (updateError) throw new HttpError(500, "Could not save the Jenkins progress update.");
   await supabaseAdmin.from("tickets").update({ ci_run_url: safeBuildUrl }).eq("id", run.ticket_id).eq("project_id", req.project!.id);

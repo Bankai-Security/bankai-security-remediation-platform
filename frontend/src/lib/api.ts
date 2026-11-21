@@ -483,18 +483,18 @@ export interface Ticket {
 
 export interface JenkinsPipelineClaim {
   runId: string; ticketId: string; commitSha: string | null; branch: string; pullRequestNumber: number;
-  retryCount: number; jobUrl: string;
+  retryCount: number; jobUrl: string; resume?: boolean; buildUrl?: string | null; buildNumber?: number | null;
 }
 export function claimJenkinsPipeline(projectId: string, input: { deviceId: string; jobUrl: string }): Promise<JenkinsPipelineClaim | undefined> {
   return apiFetch(`/projects/${projectId}/pipeline/claim`, { method: "POST", body: JSON.stringify(input) });
 }
 export function finishJenkinsPipeline(projectId: string, runId: string, input: {
-  deviceId: string; state: "passed" | "failed" | "cancelled" | "needs_review"; buildUrl?: string; buildNumber?: number | null;
+  deviceId: string; state: "passed" | "failed" | "cancelled" | "needs_review"; jobUrl?: string; buildUrl?: string; buildNumber?: number | null;
   commitSha?: string | null; failureLog?: string;
 }): Promise<{ ciStatus: string; retrying: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/result`, { method: "POST", body: JSON.stringify(input) });
 }
-export function reportJenkinsPipelineProgress(projectId: string, runId: string, input: { deviceId: string; buildUrl: string; buildNumber?: number }): Promise<{ accepted: boolean }> {
+export function reportJenkinsPipelineProgress(projectId: string, runId: string, input: { deviceId: string; jobUrl?: string; buildUrl: string; buildNumber?: number }): Promise<{ accepted: boolean }> {
   return apiFetch(`/projects/${projectId}/pipeline/runs/${runId}/progress`, { method: "POST", body: JSON.stringify(input) });
 }
 export function reportJenkinsDeployment(projectId: string, runId: string, input: {

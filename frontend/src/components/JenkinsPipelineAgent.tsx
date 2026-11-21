@@ -37,7 +37,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
       if (!progress.buildUrl) return;
       if (activeRun?.runId && progress.jobUrl === activeRunJobUrl) {
         if (progress.state === "running") {
-          void reportJenkinsPipelineProgress(projectId, activeRun.runId, { deviceId: desktopId(), buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
+          void reportJenkinsPipelineProgress(projectId, activeRun.runId, { deviceId: desktopId(), jobUrl: progress.jobUrl, buildUrl: progress.buildUrl, buildNumber: progress.number }).catch(() => undefined);
         } else if (["success", "failure", "aborted"].includes(progress.state) && !terminalReports.has(activeRun.runId)) {
           const run = activeRun;
           const runId = run.runId;
@@ -45,7 +45,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
           const state = progress.state === "success" ? "passed" : progress.state === "aborted" ? "cancelled" : "failed";
           void (async () => {
             const failureLog = state === "failed" ? await desktop.getJenkinsBuildLog(progress.buildUrl!).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
-            await finishJenkinsPipeline(projectId, runId, { deviceId: desktopId(), state, buildUrl: progress.buildUrl!,
+            await finishJenkinsPipeline(projectId, runId, { deviceId: desktopId(), state, jobUrl: progress.jobUrl, buildUrl: progress.buildUrl!,
               buildNumber: progress.number, commitSha: progress.commitSha, failureLog });
           })().catch(() => { terminalReports.delete(runId); });
         }
@@ -82,11 +82,13 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
           return;
         }
         activeRunJobUrl = job.url;
-        const result = await desktop.runJenkinsJob(job.url);
+        const result = run.resume
+          ? await desktop.resumeJenkinsJob(job.url, run.buildUrl)
+          : await desktop.runJenkinsJob(job.url);
         const state = result.state === "success" ? "passed" : result.state === "aborted" ? "cancelled" : "failed";
         const failureLog = state === "failed" && result.buildUrl ? await desktop.getJenkinsBuildLog(result.buildUrl).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
         terminalReports.add(run.runId);
-        const completion = await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state, buildUrl: result.buildUrl ?? job.url,
+        const completion = await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state, jobUrl: result.jobUrl ?? job.url, buildUrl: result.buildUrl ?? job.url,
           buildNumber: result.number, commitSha: result.commitSha, failureLog });
         activeRun = null;
         activeRunJobUrl = null;
@@ -124,7 +126,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
       } catch (reason) {
         if (activeRun) {
           await finishJenkinsPipeline(projectId, activeRun.runId, { deviceId: desktopId(), state: "needs_review",
-            buildUrl: activeRunJobUrl ?? activeRun.jobUrl, failureLog: recoveryMessage(reason) }).catch(() => undefined);
+            jobUrl: activeRunJobUrl ?? undefined, buildUrl: activeRunJobUrl ?? activeRun.jobUrl, failureLog: recoveryMessage(reason) }).catch(() => undefined);
         }
         // If Bankai itself is offline, the server's stale-run sweep marks the
         // lease for review after 30 minutes and avoids launching another build.

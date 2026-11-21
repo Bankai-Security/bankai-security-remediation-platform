@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('bankaiDesktop', Object.freeze({
   listJenkinsJobs: () => ipcRenderer.invoke('bankai:jenkins-list-jobs'),
   disconnectJenkins: () => ipcRenderer.invoke('bankai:jenkins-disconnect'),
   runJenkinsJob: (url, parameters) => ipcRenderer.invoke('bankai:jenkins-run-job', url, parameters),
+  resumeJenkinsJob: (jobUrl, buildUrl) => ipcRenderer.invoke('bankai:jenkins-resume-job', jobUrl, buildUrl),
   getJenkinsJobParameters: (url) => ipcRenderer.invoke('bankai:jenkins-get-job-parameters', url),
   getJenkinsBuildLog: (url) => ipcRenderer.invoke('bankai:jenkins-build-log', url),
   cancelJenkinsJob: (url) => ipcRenderer.invoke('bankai:jenkins-cancel-build', url),
