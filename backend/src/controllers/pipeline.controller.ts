@@ -363,7 +363,7 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   if (!ticketId) throw new HttpError(400, "A ticket ID is required.");
 
   const { data: ticket, error: ticketError } = await supabaseAdmin.from("tickets")
-    .select("id,ci_status,github_pr_number,github_pr_state")
+    .select("id,ci_status,github_pr_number,github_pr_state,github_fix_commit_sha")
     .eq("id", ticketId).eq("project_id", req.project!.id).maybeSingle();
   if (ticketError) throw new HttpError(500, "Could not load the remediation pull request.");
   if (!ticket) throw new HttpError(404, "Ticket not found.");
@@ -376,10 +376,11 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   if (active) throw new HttpError(409, "A Jenkins verification is already queued or running for this ticket.");
 
   const { data: run, error: runError } = await supabaseAdmin.from("pipeline_runs").select("id,commit_sha,pull_request_number")
-    .eq("ticket_id", ticketId).eq("project_id", req.project!.id).in("status", ["needs_review", "completed"]).eq("conclusion", "needs_review")
+    .eq("ticket_id", ticketId).eq("project_id", req.project!.id).in("status", ["needs_review", "completed"])
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (runError) throw new HttpError(500, "Could not load the Jenkins run for retry.");
-  if (!run || !run.commit_sha || run.pull_request_number !== ticket.github_pr_number) {
+  if (!run || !run.commit_sha || !ticket.github_fix_commit_sha || run.commit_sha.toLowerCase() !== ticket.github_fix_commit_sha.toLowerCase()
+    || run.pull_request_number !== ticket.github_pr_number) {
     throw new HttpError(409, "Bankai cannot safely retry this run because its pull request commit could not be verified.");
   }
 
@@ -387,7 +388,7 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   const { data: queued, error: queueError } = await supabaseAdmin.from("pipeline_runs").update({
     status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
     jenkins_job_url: null, html_url: null, jenkins_build_url: null, jenkins_build_number: null, failure_summary: null, updated_at: now,
-  }).eq("id", run.id).in("status", ["needs_review", "completed"]).eq("conclusion", "needs_review").select("id").maybeSingle();
+  }).eq("id", run.id).in("status", ["needs_review", "completed"]).select("id").maybeSingle();
   if (queueError) throw new HttpError(500, "Could not queue the Jenkins verification retry.");
   if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
 
