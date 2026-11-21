@@ -4,7 +4,7 @@ import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { recordActivity } from "../lib/activity.js";
 import { decrypt, encrypt } from "../lib/crypto.js";
-import { commitFileToBranch, createBranch, createPullRequest, deleteBranch, deleteWebhook, getBlob, getBlobs, getBranchHeadSha, getTree, GithubApiError, registerWebhook, updatePullRequestBranchFile, verifyConnection, type GithubCredentials, type GitTreeEntry } from "../lib/github.js";
+import { commitFileToBranch, createBranch, createPullRequest, deleteBranch, deleteWebhook, getBlob, getBlobs, getBranchHeadSha, getTree, GithubApiError, registerWebhook, subscribeWebhookEvents, updatePullRequestBranchFile, verifyConnection, type GithubCredentials, type GitTreeEntry } from "../lib/github.js";
 import { HttpError } from "../lib/http-error.js";
 import { buildJenkinsfile, generatePipelinePlan, validateJenkinsfile, type PipelineCommand, type PipelineStage } from "../lib/jenkinsfile-generator.js";
 import { logger } from "../lib/logger.js";
@@ -16,8 +16,10 @@ import { loadGithubCreds } from "../lib/ticketing.js";
 import { displayNameFromUser } from "../lib/user-display.js";
 import type { ConnectGithubFromAccountInput, ConnectGithubInput } from "../schemas/github.schema.js";
 import type { AcceptJenkinsfileProposalInput, UpdateJenkinsfilePullRequestInput } from "../schemas/jenkinsfile.schema.js";
+import type { AcceptHostedCiProposalInput } from "../schemas/hosted-ci.schema.js";
 
 const JENKINSFILE_PATH = "Jenkinsfile";
+const HOSTED_CI_PATH = ".github/workflows/bankai-verify.yml";
 const MAX_JENKINSFILE_CONTEXT_BYTES = 75_000;
 
 interface JenkinsfileRepoContext {
@@ -88,6 +90,7 @@ function discoverPipelineCommands(tree: GitTreeEntry[], files: Array<{ path: str
     else if (paths.has(lockPath("yarn.lock"))) add("Install", `yarn --cwd ${dir || "."} install --frozen-lockfile`, file.path + " + yarn.lock");
     else if (paths.has(lockPath("bun.lock")) || paths.has(lockPath("bun.lockb"))) add("Install", `bun --cwd ${dir || "."} install --frozen-lockfile`, file.path + " + bun.lock");
     for (const name of Object.keys(packageJson.scripts ?? {}).sort()) {
+      if (!/^[A-Za-z0-9:_-]{1,60}$/.test(name)) continue;
       const stage = /^(build|compile|typecheck)$/i.test(name) ? "Build" : /^(test|lint|check|verify)$/i.test(name) ? "Test" : null;
       if (!stage) continue;
       const command = `npm ${prefix} run ${name}`.replace(/\s+/g, " ").trim();
@@ -114,6 +117,83 @@ function discoverPipelineCommands(tree: GitTreeEntry[], files: Array<{ path: str
   return Array.from(commands.values());
 }
 
+function hasHostedCiWorkflow(tree: GitTreeEntry[]): boolean {
+  return tree.some((entry) => entry.type === "blob" && entry.path === HOSTED_CI_PATH);
+}
+
+function buildHostedCiWorkflow(tree: GitTreeEntry[], commands: Array<PipelineCommand & { evidence: string }>): string {
+  if (!commands.some((item) => item.stage === "Build" || item.stage === "Test")) {
+    throw new HttpError(422, "Bankai could not verify a build or test command in this repository. Add those commands to a manifest before setting up hosted CI.");
+  }
+  const paths = new Set(tree.map((entry) => entry.path.toLowerCase()));
+  const setup: string[] = [
+    "      - name: Check out pull request",
+    "        uses: actions/checkout@v4",
+  ];
+  if ([...paths].some((path) => path.endsWith("package.json"))) {
+    setup.push("      - name: Set up Node.js", "        uses: actions/setup-node@v4", "        with:", "          node-version: '22'");
+  }
+  if (paths.has("requirements.txt") || paths.has("pyproject.toml")) {
+    setup.push("      - name: Set up Python", "        uses: actions/setup-python@v5", "        with:", "          python-version: '3.x'");
+  }
+  if (paths.has("go.mod")) setup.push("      - name: Set up Go", "        uses: actions/setup-go@v5", "        with:", "          go-version-file: go.mod");
+  if (paths.has("cargo.toml")) setup.push("      - name: Set up Rust", "        uses: dtolnay/rust-toolchain@stable");
+  if (paths.has("pom.xml") || paths.has("build.gradle") || paths.has("build.gradle.kts")) {
+    setup.push("      - name: Set up Java", "        uses: actions/setup-java@v4", "        with:", "          distribution: temurin", "          java-version: '17'");
+  }
+  const commandsYaml = commands.map((item, index) => [
+    `      - name: ${item.stage} ${index + 1}`,
+    "        run: |",
+    `          ${item.command}`,
+  ].join("\n"));
+  return [
+    "name: Bankai verification",
+    "on:",
+    "  pull_request:",
+    "    types: [opened, synchronize]",
+    `    paths-ignore: ['${HOSTED_CI_PATH}']`,
+    "permissions:",
+    "  contents: read",
+    "jobs:",
+    "  verify:",
+    "    runs-on: ubuntu-latest",
+    "    timeout-minutes: 20",
+    "    steps:",
+    ...setup,
+    ...commandsYaml,
+    "",
+  ].join("\n");
+}
+
+function validateHostedCiWorkflow(content: string, availableCommands: Array<PipelineCommand & { evidence: string }>): string | null {
+  if (content.length > 50_000) return "The hosted workflow is too large.";
+  if (/\$\{\{\s*secrets\.|pull_request_target|workflow_dispatch|workflow_run|deploy|deployment|add-mask|ghp_[\w-]+|AKIA[0-9A-Z]{16}/i.test(content)) {
+    return "The hosted workflow contains a credential, elevated event, or deployment action that Bankai does not allow.";
+  }
+  if (!content.includes(`paths-ignore: ['${HOSTED_CI_PATH}']`) || !content.includes("contents: read")) {
+    return "The workflow must keep read-only repository permissions and skip its own bootstrap pull request.";
+  }
+  const uses = [...content.matchAll(/^\s*uses:\s*([^\s]+)\s*$/gm)].map((match) => match[1]);
+  const allowedActions = new Set(["actions/checkout@v4", "actions/setup-node@v4", "actions/setup-python@v5", "actions/setup-go@v5", "dtolnay/rust-toolchain@stable", "actions/setup-java@v4"]);
+  if (uses.some((action) => !allowedActions.has(action ?? ""))) return "The workflow uses an action that is not in Bankai's reviewed allowlist.";
+  const allowed = new Set(availableCommands.map((item) => item.command));
+  const commands: string[] = [];
+  const lines = content.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*run:\s*\|\s*$/.test(lines[index] ?? "")) continue;
+    const baselineIndent = (lines[index]!.match(/^\s*/) ?? [""])[0]!.length;
+    for (index += 1; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      if (!line.trim()) continue;
+      const indent = (line.match(/^\s*/) ?? [""])[0]!.length;
+      if (indent <= baselineIndent) { index -= 1; break; }
+      commands.push(line.trim());
+    }
+  }
+  if (commands.length === 0 || commands.some((command) => !allowed.has(command))) return "Each shell command must exactly match a command verified from the repository manifests.";
+  return null;
+}
+
 function userScopedClient(req: Request) {
   return createUserScopedSupabaseClient(req.accessToken as string);
 }
@@ -123,6 +203,7 @@ interface GithubConnectionRow {
   github_default_branch: string | null;
   github_connected_at: string | null;
   github_webhook_registered_at: string | null;
+  github_webhook_workflow_run_enabled?: boolean;
 }
 
 function toPublicConnection(row: GithubConnectionRow, projectId: string) {
@@ -132,6 +213,7 @@ function toPublicConnection(row: GithubConnectionRow, projectId: string) {
     defaultBranch: row.github_default_branch,
     connectedAt: row.github_connected_at,
     webhookRegistered: row.github_webhook_registered_at !== null,
+    workflowRunReporting: row.github_webhook_workflow_run_enabled === true,
     // Present even when auto-registration hasn't happened, so the frontend
     // can always show "point GitHub here" in a manual-setup banner — this
     // is a deterministic function of BACKEND_PUBLIC_URL + the project id,
@@ -140,7 +222,7 @@ function toPublicConnection(row: GithubConnectionRow, projectId: string) {
   };
 }
 
-const GITHUB_CONNECTION_SELECT = "github_repo, github_default_branch, github_connected_at, github_webhook_registered_at";
+const GITHUB_CONNECTION_SELECT = "github_repo, github_default_branch, github_connected_at, github_webhook_registered_at, github_webhook_workflow_run_enabled";
 
 export async function getGithubStatus(req: Request, res: Response): Promise<void> {
   const supabase = userScopedClient(req);
@@ -174,9 +256,11 @@ async function persistGithubConnection(input: {
   const { supabase, projectId, actor, repo, token, baseBranch } = input;
 
   let defaultBranch: string;
+  let initialHeadSha: string;
   try {
     const verified = await verifyConnection({ repo, token });
     defaultBranch = baseBranch || verified.defaultBranch;
+    initialHeadSha = await getBranchHeadSha({ repo, token }, defaultBranch);
   } catch (err) {
     if (err instanceof GithubApiError) {
       throw new HttpError(422, err.message);
@@ -193,19 +277,33 @@ async function persistGithubConnection(input: {
   let webhookRegisteredAt: string | null = null;
   let webhookSecret: string | null = null;
   let webhookAutoRegistered = false;
+  let workflowRunReporting = false;
 
   if (env.BACKEND_PUBLIC_URL) {
-    webhookSecret = randomBytes(32).toString("hex");
-    try {
-      const hook = await registerWebhook(
-        { repo, token },
-        { url: `${env.BACKEND_PUBLIC_URL}/api/webhooks/github/${projectId}`, secret: webhookSecret },
-      );
-      webhookId = hook.id;
-      webhookRegisteredAt = new Date().toISOString();
+    const { data: previous } = await supabase.from("projects")
+      .select("github_repo,github_webhook_id,github_webhook_secret_enc,github_webhook_registered_at")
+      .eq("id", projectId).maybeSingle();
+    if (previous?.github_repo === repo && previous.github_webhook_id && previous.github_webhook_secret_enc) {
+      webhookId = previous.github_webhook_id;
+      webhookSecret = decrypt(previous.github_webhook_secret_enc);
+      webhookRegisteredAt = previous.github_webhook_registered_at ?? new Date().toISOString();
       webhookAutoRegistered = true;
-    } catch (err) {
-      logger.warn({ err, repo, projectId }, "Could not auto-register a GitHub webhook — falling back to manual setup");
+      try { await subscribeWebhookEvents({ repo, token }, webhookId!); workflowRunReporting = true; }
+      catch (err) { logger.warn({ err, repo, projectId }, "Could not update existing GitHub webhook subscriptions"); }
+    } else {
+      webhookSecret = randomBytes(32).toString("hex");
+      try {
+        const hook = await registerWebhook(
+          { repo, token },
+          { url: `${env.BACKEND_PUBLIC_URL}/api/webhooks/github/${projectId}`, secret: webhookSecret },
+        );
+        webhookId = hook.id;
+        webhookRegisteredAt = new Date().toISOString();
+        webhookAutoRegistered = true;
+        workflowRunReporting = true;
+      } catch (err) {
+        logger.warn({ err, repo, projectId }, "Could not auto-register a GitHub webhook — falling back to manual setup");
+      }
     }
   }
 
@@ -219,6 +317,7 @@ async function persistGithubConnection(input: {
       github_webhook_secret_enc: webhookSecret ? encrypt(webhookSecret) : null,
       github_webhook_id: webhookId,
       github_webhook_registered_at: webhookRegisteredAt,
+      github_webhook_workflow_run_enabled: workflowRunReporting,
     })
     .eq("id", projectId)
     .select(GITHUB_CONNECTION_SELECT)
@@ -226,6 +325,38 @@ async function persistGithubConnection(input: {
 
   if (error || !data) {
     throw new HttpError(500, "Could not save this GitHub connection.");
+  }
+
+  // Onboarding always starts with a baseline scan. The deterministic event
+  // key makes reconnects and request retries safe while still recovering a
+  // scan that was persisted before Redis was temporarily unavailable.
+  const headSha = initialHeadSha;
+  const eventKey = `initial:${repo}:${defaultBranch}:${headSha}`;
+  let initialScan = await supabase.from("scans").insert({
+    project_id: projectId,
+    uploaded_by: actor.id,
+    source: "github_ai",
+    status: "Queued",
+    trigger_type: "initial",
+    scan_type: "baseline",
+    branch: defaultBranch,
+    commit_sha: headSha,
+    event_key: eventKey,
+  }).select("id").maybeSingle();
+  if (initialScan.error?.code === "23505") {
+    initialScan = await supabase.from("scans").select("id").eq("project_id", projectId).eq("event_key", eventKey).maybeSingle();
+  }
+  if (initialScan.error || !initialScan.data) {
+    throw new HttpError(503, "GitHub is connected, but Bankai could not queue the initial scan. Reconnect GitHub to retry safely.");
+  }
+  try {
+    await enqueueRepoScan(
+      { scanId: initialScan.data.id, projectId, triggerType: "initial", scanType: "baseline", headSha },
+      `initial-${projectId}-${headSha}`,
+    );
+  } catch (err) {
+    logger.error({ err, projectId }, "Could not queue the initial GitHub repository scan");
+    throw new HttpError(503, "GitHub is connected, but the initial scan is waiting for the worker queue. Reconnect GitHub to retry safely.");
   }
 
   await recordActivity(supabase, {
@@ -336,6 +467,7 @@ export async function disconnectGithub(req: Request, res: Response): Promise<voi
       github_webhook_secret_enc: null,
       github_webhook_id: null,
       github_webhook_registered_at: null,
+      github_webhook_workflow_run_enabled: false,
     })
     .eq("id", project.id)
     .select(GITHUB_CONNECTION_SELECT)
@@ -535,6 +667,89 @@ export async function updateJenkinsfilePullRequest(req: Request, res: Response):
     res.status(200).json({ commitSha, branchName: input.branchName, path: JENKINSFILE_PATH });
   } catch (error) {
     if (error instanceof GithubApiError) throw new HttpError(error.status === 403 ? 403 : error.status === 409 ? 409 : 502, error.message);
+    throw error;
+  }
+}
+
+export async function proposeHostedCiWorkflow(req: Request, res: Response): Promise<void> {
+  requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
+  const context = await loadJenkinsfileContext(req);
+  if (hasHostedCiWorkflow(context.tree)) throw new HttpError(409, "A hosted CI workflow already exists on the default branch.");
+  const files = await fetchJenkinsContextFiles(context.creds, context.tree);
+  const commands = discoverPipelineCommands(context.tree, files);
+  const content = buildHostedCiWorkflow(context.tree, commands);
+  const validationError = validateHostedCiWorkflow(content, commands);
+  if (validationError) throw new HttpError(422, validationError);
+  res.status(200).json({
+    repo: context.creds.repo,
+    branch: context.branch,
+    baseSha: context.headSha,
+    path: HOSTED_CI_PATH,
+    content,
+    summary: `GitHub Actions will run ${commands.filter((item) => item.stage !== "Install").map((item) => item.command).join(" and ")} for pull request revisions.`,
+    detectedCommands: commands,
+    assumptions: ["The workflow requests read-only repository access and uses no deployment destination or credentials.", "It starts after a person reviews and merges the workflow proposal pull request."],
+  });
+}
+
+export async function acceptHostedCiWorkflow(req: Request, res: Response): Promise<void> {
+  const project = req.project!;
+  requireRole(project.myRole, ["owner", "admin", "editor"]);
+  const input = req.body as AcceptHostedCiProposalInput;
+  const context = await loadJenkinsfileContext(req);
+  if (context.headSha !== input.baseSha) throw new HttpError(409, "The default branch changed while you reviewed this workflow. Generate a new proposal.");
+  if (hasHostedCiWorkflow(context.tree)) throw new HttpError(409, "A hosted CI workflow was added while you reviewed this proposal.");
+  const files = await fetchJenkinsContextFiles(context.creds, context.tree);
+  const commands = discoverPipelineCommands(context.tree, files);
+  const validationError = validateHostedCiWorkflow(input.content, commands);
+  if (validationError) throw new HttpError(422, validationError);
+  const expectedContent = buildHostedCiWorkflow(context.tree, commands);
+  if (input.content.replace(/\r\n/g, "\n") !== expectedContent.replace(/\r\n/g, "\n")) {
+    throw new HttpError(422, "The reviewed workflow must match Bankai's complete generated draft. Regenerate it if repository commands changed.");
+  }
+
+  const supabase = userScopedClient(req);
+  const { data: config } = await supabase.from("projects").select("ci_bootstrap_status,ci_bootstrap_pr_url").eq("id", project.id).single();
+  if (config?.ci_bootstrap_status === "pr_open" && config.ci_bootstrap_pr_url) {
+    throw new HttpError(409, `A hosted CI setup pull request is already open: ${config.ci_bootstrap_pr_url}`);
+  }
+
+  const branchName = `bankai/hosted-ci-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  try {
+    await createBranch(context.creds, { baseBranch: context.branch, branchName });
+    const { commitSha } = await commitFileToBranch(context.creds, {
+      branch: branchName,
+      baseSha: context.headSha,
+      message: "Add reviewed GitHub Actions verification workflow",
+      files: [{ path: HOSTED_CI_PATH, content: input.content }],
+    });
+    const pullRequest = await createPullRequest(context.creds, {
+      head: branchName,
+      base: context.branch,
+      title: "Add Bankai hosted CI verification",
+      body: [
+        "Bankai prepared this GitHub Actions workflow from build and test commands verified in repository manifests. A project member reviewed the complete workflow before Bankai opened this pull request.",
+        "",
+        "The workflow uses read-only repository permissions, contains no deployment destination or credentials, and runs only for pull request revisions. It skips its own setup PR.",
+        "",
+        "Review and merge this pull request to enable hosted CI. Bankai will keep scans and ticket triage available while setup is pending; it will not treat pending setup as a passing check.",
+        "",
+        `Generated from ${context.headSha}. No files other than ${HOSTED_CI_PATH} were changed.`,
+      ].join("\n"),
+    });
+    const { error } = await supabase.from("projects").update({
+      verification_provider: "hosted_ci",
+      ci_bootstrap_status: "pr_open",
+      ci_bootstrap_pr_url: pullRequest.url,
+    }).eq("id", project.id);
+    if (error) throw new HttpError(500, "The setup pull request was opened, but Bankai could not save its pending status.");
+    await recordActivity(supabase, { projectId: project.id, actorId: req.user!.id, actorLabel: displayNameFromUser(req.user!),
+      eventType: "pipeline", summary: "opened a hosted CI setup pull request", linkLabel: `PR #${pullRequest.number}`, linkTo: "settings", meta: `commit ${commitSha}` });
+    res.status(201).json({ pullRequest, branchName, commitSha, path: HOSTED_CI_PATH, setupStatus: "pr_open" });
+  } catch (error) {
+    await deleteBranch(context.creds, branchName);
+    if (error instanceof HttpError) throw error;
+    if (error instanceof GithubApiError) throw new HttpError(error.status === 403 ? 403 : 502, error.message);
     throw error;
   }
 }

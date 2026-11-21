@@ -15,7 +15,10 @@ export interface ScanRow {
   status: "Queued" | "Processing" | "Done" | "Failed";
   error_message: string | null;
   source: "csv" | "github_ai";
-  trigger_type: "manual" | "webhook" | null;
+  trigger_type: "manual" | "webhook" | "initial" | null;
+  scan_type?: "baseline" | "push" | "pull_request";
+  pull_request_number?: number | null;
+  base_commit_sha?: string | null;
   commit_sha: string | null;
   branch: string | null;
   finding_count: number | null;
@@ -25,7 +28,7 @@ export interface ScanRow {
 }
 
 export const SCAN_SELECT =
-  "id, filename, file_size_bytes, row_count, service_count, new_delta_count, changed_count, in_progress_count, resolved_count, status, error_message, source, trigger_type, commit_sha, branch, finding_count, scanner_runs, scan_complete, created_at";
+  "id, filename, file_size_bytes, row_count, service_count, new_delta_count, changed_count, in_progress_count, resolved_count, status, error_message, source, trigger_type, scan_type, pull_request_number, base_commit_sha, commit_sha, branch, finding_count, scanner_runs, scan_complete, created_at";
 
 export function toPublicScan(row: ScanRow) {
   return {
@@ -42,6 +45,9 @@ export function toPublicScan(row: ScanRow) {
     errorMessage: row.error_message,
     source: row.source,
     triggerType: row.trigger_type,
+    scanType: row.scan_type ?? "baseline",
+    pullRequestNumber: row.pull_request_number ?? null,
+    baseCommitSha: row.base_commit_sha ?? null,
     commitSha: row.commit_sha,
     branch: row.branch,
     findingCount: row.finding_count,

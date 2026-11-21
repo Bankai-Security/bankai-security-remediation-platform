@@ -15,6 +15,7 @@ import { pipelineRouter } from "./pipeline.routes.js";
 import { scanRouter } from "./scan.routes.js";
 import { slaRouter } from "./sla.routes.js";
 import { ticketRouter } from "./ticket.routes.js";
+import { verificationRouter } from "./verification.routes.js";
 
 export const projectRouter = Router();
 
@@ -40,6 +41,7 @@ projectScoped.use("/sla", slaRouter);
 projectScoped.use("/members", memberRouter);
 projectScoped.use("/overview", overviewRouter);
 projectScoped.use("/pipeline", pipelineRouter);
+projectScoped.use("/verification", verificationRouter);
 projectScoped.use("/activity", activityRouter);
 
 projectRouter.use("/:projectId", projectScoped);

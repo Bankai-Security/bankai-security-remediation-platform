@@ -83,7 +83,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         }
         activeRunJobUrl = job.url;
         let existingBuild = run.buildUrl ? { url: run.buildUrl } : null;
-        if (!existingBuild && run.buildSearchSince && desktop.findRecentJenkinsBuild) {
+        if (!run.manualRetry && !existingBuild && run.buildSearchSince && desktop.findRecentJenkinsBuild) {
           // Jenkins may build a newly discovered PR branch automatically. Give
           // that build a short window to appear before requesting another one.
           // A desktop app can have a newer preload than main process during an
@@ -99,9 +99,21 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
             if (!existingBuild && attempt < 5) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
           }
         }
-        const result = existingBuild || run.resume
-          ? await desktop.resumeJenkinsJob(job.url, existingBuild?.url ?? run.buildUrl)
-          : await desktop.runJenkinsJob(job.url);
+        if (!run.manualRetry && !existingBuild && !run.buildUrl) {
+          await finishJenkinsPipeline(projectId, run.runId, {
+            deviceId: desktopId(),
+            state: "needs_review",
+            jobUrl: job.url,
+            failureLog: `Waiting for Jenkins did not reveal a build for PR #${run.pullRequestNumber} at commit ${run.commitSha}. Bankai did not start a second build. Check the multibranch PR job in Jenkins and reconcile the exact commit before retrying.`,
+          });
+          return;
+        }
+        // Jenkins' native pull request trigger owns build creation. Bankai
+        // only observes and reconciles an existing build, preventing a slow
+        // webhook/build discovery from starting duplicate work.
+        const result = run.manualRetry
+          ? await desktop.runJenkinsJob(job.url)
+          : await desktop.resumeJenkinsJob(job.url, existingBuild?.url ?? run.buildUrl);
         const state = result.state === "success" ? "passed" : result.state === "aborted" ? "cancelled" : "failed";
         const failureLog = state === "failed" && result.buildUrl ? await desktop.getJenkinsBuildLog(result.buildUrl).catch(() => "Jenkins build failed; console output could not be retrieved.") : undefined;
         terminalReports.add(run.runId);

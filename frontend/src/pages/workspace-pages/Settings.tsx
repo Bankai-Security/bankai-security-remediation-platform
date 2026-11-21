@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import GithubIcon from '../../components/GithubIcon';
 import RepoPicker from '../../components/RepoPicker';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
+import VerificationSetup from '../../components/VerificationSetup';
 import {
   ApiError,
   connectGithub,
@@ -14,12 +15,16 @@ import {
   getGithubAccountStatus,
   getGithubConnection,
   getJiraConnection,
+  getJiraOAuthProjects,
+  getJiraOAuthSites,
   getScan,
   inviteMember,
   listMembers,
   removeMember,
   revokeInvite,
   scanGithubRepo,
+  selectJiraOAuthProject,
+  startJiraOAuth,
   updateMemberRole,
   listTeams,
   updateProjectSettings,
@@ -28,6 +33,8 @@ import {
   type GithubConnection,
   type GithubUserRepo,
   type JiraConnection,
+  type JiraOAuthProject,
+  type JiraOAuthSite,
   type MemberRole,
   type PendingProjectInvite,
   type ProjectMember,
@@ -127,6 +134,13 @@ export default function Settings() {
   const [email, setEmail] = useState('');
   const [apiToken, setApiToken] = useState('');
   const [projectKey, setProjectKey] = useState('');
+  const [manualJiraFallback, setManualJiraFallback] = useState(false);
+  const [jiraOAuthBusy, setJiraOAuthBusy] = useState(false);
+  const [jiraOAuthSites, setJiraOAuthSites] = useState<JiraOAuthSite[]>([]);
+  const [jiraOAuthProjects, setJiraOAuthProjects] = useState<JiraOAuthProject[]>([]);
+  const [jiraOAuthCloudId, setJiraOAuthCloudId] = useState('');
+  const [jiraOAuthProjectKey, setJiraOAuthProjectKey] = useState('');
+  const [jiraOAuthError, setJiraOAuthError] = useState<string | null>(null);
 
   const [github, setGithub] = useState<GithubConnection | null>(null);
   const [githubLoading, setGithubLoading] = useState(false);
@@ -156,7 +170,19 @@ export default function Settings() {
     let cancelled = false;
     getJiraConnection(project.id)
       .then((conn) => {
-        if (!cancelled) setJira(conn);
+        if (cancelled) return;
+        setJira(conn);
+        if (new URLSearchParams(window.location.search).get('jiraOAuth') === 'error') {
+          setJiraOAuthError('Atlassian authorization did not complete. Check the Jira app callback and permissions, then try again.');
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+        if (conn.oauthAuthorized && !conn.connected) {
+          getJiraOAuthSites(project.id).then(({ sites }) => {
+            if (!cancelled) setJiraOAuthSites(sites);
+          }).catch((err) => {
+            if (!cancelled) setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not load your Jira sites. Reconnect Atlassian to continue.');
+          });
+        }
       })
       .catch(() => {});
     getGithubConnection(project.id)
@@ -173,6 +199,49 @@ export default function Settings() {
       cancelled = true;
     };
   }, [project?.id]);
+
+  const handleStartJiraOAuth = async () => {
+    if (!project) return;
+    setJiraOAuthBusy(true);
+    setJiraOAuthError(null);
+    try {
+      const { authorizationUrl } = await startJiraOAuth(project.id);
+      window.location.assign(authorizationUrl);
+    } catch (err) {
+      setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not start Atlassian authorization.');
+      setJiraOAuthBusy(false);
+    }
+  };
+
+  const handleJiraOAuthSite = async (cloudId: string) => {
+    if (!project) return;
+    setJiraOAuthCloudId(cloudId);
+    setJiraOAuthProjectKey('');
+    setJiraOAuthProjects([]);
+    if (!cloudId) return;
+    setJiraOAuthBusy(true);
+    setJiraOAuthError(null);
+    try {
+      const { projects: available } = await getJiraOAuthProjects(project.id, cloudId);
+      setJiraOAuthProjects(available);
+    } catch (err) {
+      setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not load Jira projects for this site.');
+    } finally { setJiraOAuthBusy(false); }
+  };
+
+  const handleSelectJiraOAuthProject = async () => {
+    if (!project || !jiraOAuthCloudId || !jiraOAuthProjectKey) return;
+    setJiraOAuthBusy(true);
+    setJiraOAuthError(null);
+    try {
+      const conn = await selectJiraOAuthProject(project.id, { cloudId: jiraOAuthCloudId, projectKey: jiraOAuthProjectKey });
+      setJira(conn);
+      refreshProject();
+      setJiraConnectNote('Jira is connected through Atlassian authorization. Ticket links will sync with the selected site and project.');
+    } catch (err) {
+      setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not connect the selected Jira project.');
+    } finally { setJiraOAuthBusy(false); }
+  };
 
   const handlePickRepo = async (picked: GithubUserRepo) => {
     if (!project) return;
@@ -640,7 +709,46 @@ export default function Settings() {
         ) : project && !canManageProject(project.myRole) ? (
           <div className="ws-card-hint">Only admins can connect Jira for this project.</div>
         ) : (
-          <form onSubmit={handleConnect}>
+          <div>
+          {jiraOAuthError && <div className="settings-jira-error" role="alert">{jiraOAuthError}</div>}
+          {jira?.oauthAuthorized && !manualJiraFallback ? (
+            <div>
+              <div className="ws-card-hint" style={{ marginBottom: 12 }}>Atlassian is authorized. Choose a site and project for this Bankai project.</div>
+              <div className="settings-jira-grid">
+                <div className="settings-jira-field">
+                  <label htmlFor="jira-oauth-site" className="settings-field-label">Jira site</label>
+                  <select id="jira-oauth-site" className="settings-jira-input" value={jiraOAuthCloudId} onChange={(event) => void handleJiraOAuthSite(event.target.value)} disabled={jiraOAuthBusy}>
+                    <option value="">Choose a Jira site</option>
+                    {jiraOAuthSites.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.url}</option>)}
+                  </select>
+                </div>
+                <div className="settings-jira-field">
+                  <label htmlFor="jira-oauth-project" className="settings-field-label">Jira project</label>
+                  <select id="jira-oauth-project" className="settings-jira-input" value={jiraOAuthProjectKey} onChange={(event) => setJiraOAuthProjectKey(event.target.value)} disabled={!jiraOAuthCloudId || jiraOAuthBusy}>
+                    <option value="">{jiraOAuthBusy ? 'Loading projects…' : 'Choose a project'}</option>
+                    {jiraOAuthProjects.map((item) => <option key={item.id} value={item.key}>{item.key} · {item.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="settings-jira-actions">
+                <button type="button" className="ws-btn ws-btn-primary" onClick={() => void handleSelectJiraOAuthProject()} disabled={!jiraOAuthCloudId || !jiraOAuthProjectKey || jiraOAuthBusy}>
+                  {jiraOAuthBusy ? 'Connecting…' : 'Connect selected project'}
+                </button>
+                <button type="button" className="settings-jira-toggle-link" onClick={() => setManualJiraFallback(true)}>Use API-token setup instead</button>
+              </div>
+            </div>
+          ) : !manualJiraFallback ? (
+            <div>
+              <div className="ws-card-hint" style={{ marginBottom: 16 }}>Authorize Bankai with Atlassian, then select one of your accessible Jira sites and projects. You can continue using Bankai tickets if you skip Jira.</div>
+              <div className="settings-jira-actions">
+                <button type="button" className="ws-btn ws-btn-primary" onClick={() => void handleStartJiraOAuth()} disabled={jiraOAuthBusy}>
+                  {jiraOAuthBusy ? 'Opening Atlassian…' : 'Connect Jira with Atlassian'}
+                </button>
+                <button type="button" className="settings-jira-toggle-link" onClick={() => setManualJiraFallback(true)}>Use API-token setup instead</button>
+              </div>
+            </div>
+          ) : null}
+          {manualJiraFallback && <form onSubmit={handleConnect}>
             {jiraError && <div className="settings-jira-error" role="alert">{jiraError}</div>}
             <div className="ws-card-hint" style={{ marginBottom: 16 }}>
               New to Jira? <a href="https://www.atlassian.com/software/jira/free" target="_blank" rel="noreferrer">Create a free Jira site</a>, then{' '}
@@ -703,8 +811,10 @@ export default function Settings() {
               <button type="submit" className="ws-btn ws-btn-primary" disabled={jiraLoading}>
                 {jiraLoading ? 'Connecting…' : 'Connect'}
               </button>
+              <button type="button" className="settings-jira-toggle-link" onClick={() => setManualJiraFallback(false)}>Back to Atlassian authorization</button>
             </div>
-          </form>
+          </form>}
+          </div>
         )}
       </section>
 
@@ -739,16 +849,23 @@ export default function Settings() {
             </div>
 
             {github.webhookRegistered ? (
-              <div className="ws-card-hint" style={{ marginTop: 12 }}>
-                <span className="ws-dot" style={{ background: '#22C55E', marginRight: 6 }} />
-                Auto-rescans on push and PR-merge ticket updates: enabled — every push to {github.defaultBranch} triggers a
-                new AI scan, and merging an AI fix's pull request automatically moves its ticket to Done.
-              </div>
+              <>
+                <div className="ws-card-hint" style={{ marginTop: 12 }}>
+                  <span className="ws-dot" style={{ background: '#22C55E', marginRight: 6 }} />
+                  Repository automation is enabled — pushes to {github.defaultBranch} and pull request updates are scanned
+                  against their exact commit. Merging an AI fix's pull request automatically moves its ticket to Done.
+                </div>
+                {!github.workflowRunReporting && (
+                  <div className="settings-jira-error" style={{ marginTop: 10, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
+                    This GitHub webhook does not report hosted CI results yet. Reconnect GitHub to update it, or add the <code>workflow_run</code> event to its event subscriptions.
+                  </div>
+                )}
+              </>
             ) : github.webhookUrl ? (
               <div className="settings-jira-error" style={{ marginTop: 12, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
                 Auto-rescan on push and PR-merge ticket updates aren't set up — this token couldn't create a webhook
                 automatically. Add one manually in the repo's Settings → Webhooks: payload URL <code>{github.webhookUrl}</code>,
-                content type <code>application/json</code>, events <code>push</code> and <code>pull_request</code>
+                content type <code>application/json</code>, events <code>push</code>, <code>pull_request</code>, and <code>workflow_run</code>
                 {justConnectedWebhookSecret ? (
                   <>
                     , and secret <code>{justConnectedWebhookSecret}</code> (shown once — reconnect GitHub to generate a
@@ -898,6 +1015,8 @@ export default function Settings() {
           </form>
         )}
       </section>
+
+      {project && <VerificationSetup projectId={project.id} role={project.myRole} />}
 
       <section className="ws-card settings-section">
         <div className="ws-card-eyebrow">Remediation</div>

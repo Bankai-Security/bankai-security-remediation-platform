@@ -3,8 +3,9 @@ import { recordActivity } from "../lib/activity.js";
 import { decrypt } from "../lib/crypto.js";
 import { GithubApiError } from "../lib/github.js";
 import { logger } from "../lib/logger.js";
+import { publishPullRequestScanEvidence } from "../lib/pr-scan-evidence.js";
 import type { RepoScanJobData } from "../lib/queue.js";
-import { runFullRepoScan } from "../lib/repo-scan.js";
+import { runFullRepoScan, runPullRequestRepoScan, type RepoScanResult } from "../lib/repo-scan.js";
 import type { SlaPolicyDays } from "../lib/sla.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
@@ -79,7 +80,11 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
     const { data: projectServices } = await supabase.from("project_services").select("name").eq("project_id", projectId);
     const defaultService = projectServices?.length === 1 ? (projectServices[0]?.name ?? null) : null;
 
-    const result = await runFullRepoScan({
+    const scanType = job.data.scanType ?? "baseline";
+    if (scanType === "pull_request" && !headSha) throw new Error("Pull request scan is missing its pinned head commit SHA.");
+    const result = scanType === "pull_request"
+      ? await runPullRequestRepoScan({ supabase, projectId, scanId, github: { creds: { ...github.creds, ...(job.data.headRepo ? { repo: job.data.headRepo } : {}) } }, headSha: headSha! })
+      : await runFullRepoScan({
       supabase,
       projectId,
       scanId,
@@ -89,6 +94,14 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
       ...(headSha ? { headSha } : {}),
     });
 
+    const baselineCounts = "counts" in result ? (result as RepoScanResult).counts : null;
+    const resultCounts = baselineCounts ? {
+      new_delta_count: baselineCounts.newDelta,
+      changed_count: baselineCounts.changed,
+      in_progress_count: baselineCounts.inProgress,
+      // Kept in the legacy database column until the next schema cleanup.
+      resolved_count: baselineCounts.notDetected,
+    } : { new_delta_count: 0, changed_count: 0, in_progress_count: 0, resolved_count: 0 };
     const { error: updateError } = await supabase
       .from("scans")
       .update({
@@ -96,12 +109,7 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
         commit_sha: result.commitSha,
         row_count: result.filesScanned,
         finding_count: result.findingCount,
-        new_delta_count: result.counts.newDelta,
-        changed_count: result.counts.changed,
-        in_progress_count: result.counts.inProgress,
-        // Kept in the legacy database column until the next schema cleanup;
-        // the public API exposes this as notDetectedCount.
-        resolved_count: result.counts.notDetected,
+        ...resultCounts,
         scanner_runs: result.scanners,
         scan_complete: true,
       })
@@ -110,6 +118,8 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
       throw new Error("Scan finished but the result could not be saved.");
     }
 
+    if (scanType === "pull_request") await publishPullRequestScanEvidence(projectId, scanId);
+
     await supabase.from("projects").update({ status: "active" }).eq("id", projectId).eq("status", "not_connected");
 
     await recordActivity(supabase, {
@@ -117,15 +127,16 @@ export async function processRepoScanJob(job: Job<RepoScanJobData>): Promise<voi
       actorId: null,
       actorLabel: "AI Scan",
       eventType: "triage",
-      summary: "completed an AI scan of",
+      summary: scanType === "pull_request" ? "completed a pull request scan of" : "completed an AI scan of",
       linkLabel: github.creds.repo,
       linkTo: "intake",
-      meta: `${result.findingCount} findings · ${result.counts.newDelta} new · ${result.counts.changed} changed · ${result.counts.notDetected} not detected`,
+      meta: baselineCounts ? `${result.findingCount} findings · ${baselineCounts.newDelta} new · ${baselineCounts.changed} changed · ${baselineCounts.notDetected} not detected` : `PR #${job.data.pullRequestNumber ?? "?"} · commit ${result.commitSha} · ${result.findingCount} findings (not added to triage)`,
     });
   } catch (err) {
     const message = err instanceof GithubApiError ? err.message : err instanceof Error ? err.message : "AI repo scan failed.";
     logger.error({ err, projectId, scanId }, "AI repo scan job failed");
     await supabase.from("scans").update({ status: "Failed", error_message: message }).eq("id", scanId);
+    if (job.data.scanType === "pull_request") await publishPullRequestScanEvidence(projectId, scanId);
     // Rethrow so BullMQ records/retries the failure — the scans row above
     // is the user-facing state, this is for operational visibility.
     throw err;

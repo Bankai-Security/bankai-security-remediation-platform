@@ -3,8 +3,10 @@ import type { TicketStatus } from "./ticket-status-sync.js";
 
 export interface JiraCredentials {
   site: string;
-  email: string;
-  apiToken: string;
+  email?: string;
+  apiToken?: string;
+  accessToken?: string;
+  cloudId?: string;
 }
 
 export class JiraApiError extends Error {
@@ -22,10 +24,15 @@ function baseUrl(site: string): string {
 }
 
 function jiraFetch(creds: JiraCredentials, path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${baseUrl(creds.site)}${path}`, {
+  const isOAuth = Boolean(creds.accessToken && creds.cloudId);
+  const authHeader = isOAuth
+    ? `Bearer ${creds.accessToken}`
+    : `Basic ${Buffer.from(`${creds.email ?? ""}:${creds.apiToken ?? ""}`).toString("base64")}`;
+  const target = isOAuth ? `https://api.atlassian.com/ex/jira/${encodeURIComponent(creds.cloudId!)}` : baseUrl(creds.site);
+  return fetch(`${target}${path}`, {
     ...init,
     headers: {
-      Authorization: `Basic ${Buffer.from(`${creds.email}:${creds.apiToken}`).toString("base64")}`,
+      Authorization: authHeader,
       Accept: "application/json",
       "Content-Type": "application/json",
       ...init.headers,

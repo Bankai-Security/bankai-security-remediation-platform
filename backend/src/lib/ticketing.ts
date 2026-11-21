@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordActivity } from "./activity.js";
 import { normalizeDate, normalizeSeverity, type FindingUpsertRow } from "./csv-ingest.js";
 import { decrypt } from "./crypto.js";
+import { loadJiraOAuthCredentials } from "./atlassian-oauth.js";
 import { buildBranchName, createBranch, GithubApiError, type GithubCredentials } from "./github.js";
 import { HttpError } from "./http-error.js";
 import {
@@ -158,6 +159,8 @@ export interface ProjectJiraRow {
   jira_email: string | null;
   jira_api_token_enc: string | null;
   jira_connected_at: string | null;
+  jira_cloud_id?: string | null;
+  jira_oauth_access_token_enc?: string | null;
 }
 
 export async function loadJiraCreds(
@@ -166,14 +169,26 @@ export async function loadJiraCreds(
 ): Promise<{ creds: JiraCredentials; projectKey: string } | null> {
   const { data } = await supabase
     .from("projects")
-    .select("jira_site, jira_key, jira_email, jira_api_token_enc, jira_connected_at")
+    .select("jira_site, jira_key, jira_email, jira_api_token_enc, jira_connected_at, jira_cloud_id, jira_oauth_access_token_enc")
     .eq("id", projectId)
     .single();
 
   const row = data as ProjectJiraRow | null;
-  if (!row?.jira_connected_at || !row.jira_site || !row.jira_key || !row.jira_email || !row.jira_api_token_enc) {
+  if (!row?.jira_connected_at || !row.jira_site || !row.jira_key) {
     return null;
   }
+
+  if (row.jira_oauth_access_token_enc && row.jira_cloud_id) {
+    try {
+      const oauth = await loadJiraOAuthCredentials(projectId);
+      if (oauth?.cloudId && oauth.site) return { creds: { site: oauth.site, cloudId: oauth.cloudId, accessToken: oauth.accessToken }, projectKey: row.jira_key };
+    } catch (error) {
+      logger.warn({ err: error, projectId }, "Jira OAuth credentials need reconnection");
+    }
+    return null;
+  }
+
+  if (!row.jira_email || !row.jira_api_token_enc) return null;
 
   return {
     creds: { site: row.jira_site, email: row.jira_email, apiToken: decrypt(row.jira_api_token_enc) },

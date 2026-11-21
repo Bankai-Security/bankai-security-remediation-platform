@@ -5,6 +5,7 @@ import { decrypt } from "../lib/crypto.js";
 import { deleteBranch, deleteWebhook, type GithubCredentials } from "../lib/github.js";
 import { HttpError } from "../lib/http-error.js";
 import { deleteIssue, type JiraCredentials } from "../lib/jira.js";
+import { loadJiraOAuthCredentials } from "../lib/atlassian-oauth.js";
 import { logger } from "../lib/logger.js";
 import { computeProjectStats } from "../lib/project-stats.js";
 import type { ProjectRole } from "../lib/roles.js";
@@ -285,7 +286,7 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   const { data: project, error: fetchError } = await supabase
     .from("projects")
     .select(
-      "id, name, owner_id, jira_site, jira_email, jira_api_token_enc, jira_connected_at, github_repo, github_token_enc, github_connected_at, github_webhook_id",
+      "id, name, owner_id, jira_site, jira_key, jira_email, jira_api_token_enc, jira_oauth_access_token_enc, jira_cloud_id, jira_connected_at, github_repo, github_token_enc, github_connected_at, github_webhook_id",
     )
     .eq("id", req.params.id)
     .maybeSingle();
@@ -310,9 +311,15 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
     project.jira_connected_at && project.jira_site && project.jira_email && project.jira_api_token_enc
       ? decryptCleanupCredential(project.jira_api_token_enc, "jira", project.id)
       : null;
-  const jiraCreds: JiraCredentials | null = jiraToken
+  let jiraCreds: JiraCredentials | null = jiraToken && project.jira_site && project.jira_email
     ? { site: project.jira_site, email: project.jira_email, apiToken: jiraToken }
     : null;
+  if (!jiraCreds && project.jira_connected_at && project.jira_cloud_id && project.jira_oauth_access_token_enc) {
+    try {
+      const oauth = await loadJiraOAuthCredentials(project.id);
+      if (oauth?.cloudId && oauth.site) jiraCreds = { site: oauth.site, cloudId: oauth.cloudId, accessToken: oauth.accessToken };
+    } catch (error) { logger.warn({ err: error, projectId: project.id }, "Could not refresh Jira OAuth credentials while deleting project"); }
+  }
   const githubToken =
     project.github_connected_at && project.github_repo && project.github_token_enc
       ? decryptCleanupCredential(project.github_token_enc, "github", project.id)

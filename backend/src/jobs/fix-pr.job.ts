@@ -406,12 +406,22 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       })
       .eq("id", ticketId);
     if (headSha) {
-      const { error: pipelineError } = await supabase.from("pipeline_runs").upsert({
-        ticket_id: ticketId, project_id: projectId, workflow_file: "Jenkinsfile", head_branch: branch,
-        commit_sha: headSha, pull_request_number: pr.number, status: "queued", retry_count: 0,
-      }, { onConflict: "ticket_id,commit_sha", ignoreDuplicates: true });
-      if (pipelineError) logger.error({ err: pipelineError, ticketId, projectId }, "Could not queue Jenkins verification for remediation PR");
-      await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId).eq("project_id", projectId);
+      const { data: verification } = await supabase.from("projects").select("verification_provider,ci_bootstrap_status").eq("id", projectId).maybeSingle();
+      if (verification?.verification_provider === "jenkins") {
+        const { error: pipelineError } = await supabase.from("pipeline_runs").upsert({
+          ticket_id: ticketId, project_id: projectId, workflow_file: "Jenkinsfile", head_branch: branch,
+          commit_sha: headSha, pull_request_number: pr.number, status: "queued", retry_count: 0,
+        }, { onConflict: "ticket_id,commit_sha", ignoreDuplicates: true });
+        if (pipelineError) logger.error({ err: pipelineError, ticketId, projectId }, "Could not queue Jenkins verification for remediation PR");
+        await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId).eq("project_id", projectId);
+      } else if (verification?.verification_provider === "hosted_ci" && verification.ci_bootstrap_status === "ready") {
+        await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId).eq("project_id", projectId);
+      } else {
+        const ciError = verification?.verification_provider === "none"
+          ? "No CI provider is configured for this project. Choose Jenkins or hosted CI in Settings."
+          : "Hosted CI setup is pending review and merge of its workflow pull request.";
+        await supabase.from("tickets").update({ ci_status: "pending_setup", ci_error: ciError }).eq("id", ticketId).eq("project_id", projectId);
+      }
     }
     await maybeTransitionJira(jira, ticket.jira_issue_key, "In Review");
 
