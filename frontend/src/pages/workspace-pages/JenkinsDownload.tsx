@@ -53,7 +53,7 @@ declare global {
       openJenkins: (url: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getJenkinsConnection: () => Promise<JenkinsConnection>;
-      connectJenkins: (input: { url: string; username: string; apiToken: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[] }>;
+      connectJenkins: (input: { url: string; username: string; apiToken: string; repo: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
       listJenkinsJobs: () => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
       runJenkinsJob: (url: string, parameters?: Record<string, string>) => Promise<JenkinsJobProgress>;
@@ -147,18 +147,20 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     if (!api) return;
     setBusy(true); setError(null); setMessage(null);
     try {
-      const result = await api.connectJenkins({ url, username, apiToken });
+      const github = await getGithubConnection(projectId);
+      if (!github.connected || !github.repo) throw new Error('Connect a GitHub repository in project settings before connecting Jenkins.');
+      const result = await api.connectJenkins({ url, username, apiToken, repo: github.repo });
       void recordJenkinsAuditAction(projectId, 'connected').catch(() => undefined);
       setConnection(result); setJobs(result.jobs); setApiToken('');
       let savedJob = '';
       try { savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || ''; } catch { /* optional convenience */ }
-      const validSavedJob = result.jobs.find((job) => job.url === savedJob);
+      const validSavedJob = result.jobs.find((job) => job.url === savedJob) || result.jobs.find((job) => job.url === result.pipeline.url);
       setSelectedJob(validSavedJob?.url ?? ''); setSelectedJobSupportsPr(Boolean(validSavedJob?.supportsPullRequests)); setRun(null);
       try {
         if (validSavedJob?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, validSavedJob.url);
         else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
       } catch { /* optional readiness hint */ }
-      setMessage(`Connected. Found ${result.jobs.length} Jenkins job${result.jobs.length === 1 ? '' : 's'}.`);
+      setMessage(`${result.pipeline.created ? 'Created' : 'Verified'} multibranch pipeline ${result.pipeline.name} for ${github.repo}. Found ${result.jobs.length} Jenkins job${result.jobs.length === 1 ? '' : 's'}.`);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
