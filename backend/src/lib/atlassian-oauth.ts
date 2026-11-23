@@ -13,7 +13,7 @@ export interface AtlassianSite { id: string; name: string; url: string; scopes: 
 export interface AtlassianProject { id: string; key: string; name: string; projectTypeKey?: string }
 export interface AtlassianTokenPair { accessToken: string; refreshToken: string; expiresAt: string; scope?: string }
 
-interface OAuthState { projectId: string; userId: string; expiresAt: number; nonce: string }
+interface OAuthState { projectId: string; userId: string; expiresAt: number; nonce: string; returnTo?: "onboarding" }
 
 function signingKey(): Buffer {
   const key = Buffer.from(env.TOKEN_ENC_KEY, "base64");
@@ -30,9 +30,9 @@ export function jiraOAuthRedirectUri(): string {
     ?? `${(env.BACKEND_PUBLIC_URL ?? `http://localhost:${env.PORT}`).replace(/\/$/, "")}/api/jira/oauth/callback`;
 }
 
-export function createJiraOAuthAuthorizationUrl(projectId: string, userId: string): string {
+export function createJiraOAuthAuthorizationUrl(projectId: string, userId: string, returnTo?: "onboarding"): string {
   if (!jiraOAuthConfigured()) throw new Error("Jira Cloud OAuth is not configured.");
-  const state: OAuthState = { projectId, userId, expiresAt: Date.now() + 10 * 60_000, nonce: randomBytes(18).toString("base64url") };
+  const state: OAuthState = { projectId, userId, expiresAt: Date.now() + 10 * 60_000, nonce: randomBytes(18).toString("base64url"), ...(returnTo ? { returnTo } : {}) };
   const encoded = Buffer.from(JSON.stringify(state)).toString("base64url");
   const signature = createHmac("sha256", signingKey()).update(encoded).digest("base64url");
   const url = new URL(`${AUTH_ROOT}/authorize`);

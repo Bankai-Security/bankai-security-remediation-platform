@@ -1,7 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('bankaiDesktop', Object.freeze({
-  openJenkins: (url) => ipcRenderer.invoke('bankai:open-jenkins', url),
+  openJenkins: (url, bounds) => ipcRenderer.invoke('bankai:open-jenkins', url, bounds),
+  setJenkinsBrowserBounds: (bounds) => ipcRenderer.invoke('bankai:jenkins-browser-bounds', bounds),
+  closeJenkinsBrowser: () => ipcRenderer.invoke('bankai:jenkins-browser-close'),
+  onJenkinsBrowserNavigation: (callback) => {
+    const listener = (_event, url) => callback(url);
+    ipcRenderer.on('bankai:jenkins-browser-navigation', listener);
+    return () => ipcRenderer.removeListener('bankai:jenkins-browser-navigation', listener);
+  },
   openExternal: (url) => ipcRenderer.invoke('bankai:open-external', url),
   getJenkinsConnection: () => ipcRenderer.invoke('bankai:jenkins-get-connection'),
   connectJenkins: (input) => ipcRenderer.invoke('bankai:jenkins-connect', input),
