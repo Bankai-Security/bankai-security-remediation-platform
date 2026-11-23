@@ -27,12 +27,11 @@ function jenkinsBrowserBounds(width: number): JenkinsBrowserBounds {
   const card = document.querySelector('.jenkins-download-card');
   const cardBounds = card?.getBoundingClientRect();
   const top = Math.max(16, Math.round(cardBounds?.top ?? 64));
-  const totalHeight = Math.max(300, Math.min(Math.round(cardBounds?.height ?? window.innerHeight - top - 20), window.innerHeight - top - 20));
   return {
     x: Math.max(0, Math.round((pageBounds?.right ?? window.innerWidth) - paneWidth - 24)),
     y: top + 56,
     width: paneWidth,
-    height: Math.max(220, totalHeight - 56),
+    height: Math.max(220, Math.round(window.innerHeight - top - 76)),
   };
 }
 
@@ -114,6 +113,8 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const [browserExpanded, setBrowserExpanded] = useState(false);
   const [browserWidth, setBrowserWidth] = useState(() => clampJenkinsBrowserWidth(Math.round(window.innerWidth * .38)));
   const [browserUrl, setBrowserUrl] = useState('');
+  const browserWidthRef = useRef(browserWidth);
+  const queueBrowserBoundsRef = useRef<() => void>(() => undefined);
   const browserResizeStart = useRef<{ pointerId: number; x: number; width: number } | null>(null);
   const browserRestoredWidth = useRef(browserWidth);
   const [choice, setChoice] = useState<'unset' | 'enabled' | 'skipped'>(() => {
@@ -141,20 +142,44 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
 
   useEffect(() => {
     if (!api || !browserOpen) return;
-    const updateBounds = () => {
-      const width = clampJenkinsBrowserWidth(browserWidth);
-      if (width !== browserWidth) setBrowserWidth(width);
-      void api.setJenkinsBrowserBounds(jenkinsBrowserBounds(width)).catch(() => undefined);
+    let frame: number | null = null;
+    let inFlight = false;
+    let queued = false;
+    let disposed = false;
+    const flushBounds = () => {
+      frame = null;
+      if (disposed || inFlight || !queued) return;
+      queued = false;
+      inFlight = true;
+      void api.setJenkinsBrowserBounds(jenkinsBrowserBounds(browserWidthRef.current)).catch(() => undefined).finally(() => {
+        inFlight = false;
+        if (queued && frame === null) frame = window.requestAnimationFrame(flushBounds);
+      });
     };
+    const queueBounds = () => {
+      queued = true;
+      if (!inFlight && frame === null) frame = window.requestAnimationFrame(flushBounds);
+    };
+    const updateBounds = () => {
+      const width = clampJenkinsBrowserWidth(browserWidthRef.current);
+      if (width !== browserWidthRef.current) {
+        browserWidthRef.current = width;
+        setBrowserWidth(width);
+      }
+      queueBounds();
+    };
+    queueBrowserBoundsRef.current = queueBounds;
     window.addEventListener('resize', updateBounds);
     window.addEventListener('scroll', updateBounds, true);
-    const timer = window.requestAnimationFrame(updateBounds);
+    queueBounds();
     return () => {
-      window.cancelAnimationFrame(timer);
+      disposed = true;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      queueBrowserBoundsRef.current = () => undefined;
       window.removeEventListener('resize', updateBounds);
       window.removeEventListener('scroll', updateBounds, true);
     };
-  }, [api, browserOpen, browserWidth]);
+  }, [api, browserOpen]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -296,6 +321,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const openJenkinsInApp = async (targetUrl: string) => {
     if (!api) return;
     const width = clampJenkinsBrowserWidth(browserWidth);
+    browserWidthRef.current = width;
     setBrowserWidth(width);
     setBrowserUrl(targetUrl);
     setBrowserExpanded(false);
@@ -322,7 +348,10 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     }
     const start = browserResizeStart.current;
     if (!start || start.pointerId !== event.pointerId) return;
-    setBrowserWidth(clampJenkinsBrowserWidth(start.width + start.x - event.clientX));
+    const width = clampJenkinsBrowserWidth(start.width + start.x - event.clientX);
+    browserWidthRef.current = width;
+    setBrowserWidth(width);
+    queueBrowserBoundsRef.current();
   };
   const stopResizingJenkinsBrowser = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (browserResizeStart.current?.pointerId === event.pointerId) browserResizeStart.current = null;
@@ -330,17 +359,25 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const handleJenkinsBrowserResizeKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    setBrowserWidth((width) => clampJenkinsBrowserWidth(width + (event.key === 'ArrowLeft' ? 32 : -32)));
+    const width = clampJenkinsBrowserWidth(browserWidthRef.current + (event.key === 'ArrowLeft' ? 32 : -32));
+    browserWidthRef.current = width;
+    setBrowserWidth(width);
+    queueBrowserBoundsRef.current();
   };
   const toggleJenkinsBrowserSize = () => {
     if (browserExpanded) {
-      setBrowserWidth(browserRestoredWidth.current);
+      const width = clampJenkinsBrowserWidth(browserRestoredWidth.current);
+      browserWidthRef.current = width;
+      setBrowserWidth(width);
       setBrowserExpanded(false);
     } else {
       browserRestoredWidth.current = browserWidth;
-      setBrowserWidth(clampJenkinsBrowserWidth((document.querySelector('.jenkins-download-page')?.getBoundingClientRect().width ?? window.innerWidth) - 520));
+      const width = clampJenkinsBrowserWidth((document.querySelector('.jenkins-download-page')?.getBoundingClientRect().width ?? window.innerWidth) - 520);
+      browserWidthRef.current = width;
+      setBrowserWidth(width);
       setBrowserExpanded(true);
     }
+    queueBrowserBoundsRef.current();
   };
   const openBuild = async () => {
     if (run?.buildUrl) await openJenkinsInApp(run.buildUrl);
