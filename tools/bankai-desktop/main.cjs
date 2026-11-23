@@ -367,6 +367,11 @@ function projectFromDeepLink(value) {
     return link.protocol === 'bankai:' && link.hostname === 'open' && id && /^[\w-]+$/.test(id) ? id : null;
   } catch { return null; }
 }
+function desktopPageUrl(route) {
+  const target = new URL(route, WEB_URL);
+  target.searchParams.set('_bankaiDesktopLaunch', String(Date.now()));
+  return target.toString();
+}
 let startupProject = process.argv.map(projectFromDeepLink).find(Boolean) || process.argv.find((arg) => arg.startsWith('--project='))?.slice('--project='.length);
 
 function allowedBankaiUrl(value) {
@@ -404,7 +409,7 @@ function createMainWindow() {
   hardenBankaiWindow(mainWindow);
   const projectId = startupProject;
   const route = projectId && /^[\w-]+$/.test(projectId) ? `/workspace/${projectId}/jenkins` : '/projects';
-  mainWindow.loadURL(WEB_URL.replace(/\/$/, '') + route);
+  mainWindow.loadURL(desktopPageUrl(route));
   mainWindow.on('closed', () => { closeJenkinsBrowser(); mainWindow = undefined; });
 }
 function validateJenkinsBrowserUrl(credentials, rawUrl) {
@@ -421,10 +426,10 @@ function validateJenkinsBrowserUrl(credentials, rawUrl) {
 function setJenkinsBrowserBounds(bounds) {
   if (!jenkinsBrowserView || !mainWindow || mainWindow.isDestroyed()) return { open: false };
   const content = mainWindow.getContentBounds();
-  const x = Math.max(0, Math.min(Math.floor(Number(bounds?.x) || 0), content.width - 280));
-  const y = Math.max(0, Math.min(Math.floor(Number(bounds?.y) || 0), content.height - 120));
-  const width = Math.max(280, Math.min(Math.floor(Number(bounds?.width) || 0), content.width - x));
-  const height = Math.max(120, Math.min(Math.floor(Number(bounds?.height) || 0), content.height - y));
+  const width = Math.max(Math.min(content.width, 280), Math.min(Math.floor(Number(bounds?.width) || 0), content.width));
+  const x = Math.max(0, Math.min(Math.floor(Number(bounds?.x) || 0), content.width - width));
+  const height = Math.max(Math.min(content.height, 120), Math.min(Math.floor(Number(bounds?.height) || 0), content.height));
+  const y = Math.max(0, Math.min(Math.floor(Number(bounds?.y) || 0), content.height - height));
   jenkinsBrowserView.setBounds({ x, y, width, height });
   return { open: true };
 }
@@ -437,6 +442,8 @@ async function openJenkinsBrowser(rawUrl, bounds) {
     jenkinsBrowserView = new WebContentsView({
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false, partition: 'persist:bankai-jenkins' },
     });
+    jenkinsBrowserView.setBorderRadius(16);
+    jenkinsBrowserView.setBackgroundColor('#ffffff');
     mainWindow.contentView.addChildView(jenkinsBrowserView);
     const base = new URL(credentials.url);
     const isJenkinsUrl = (value) => {
@@ -529,7 +536,7 @@ ipcMain.handle('bankai:jenkins-get-job-parameters', async (event, url) => {
 app.setAsDefaultProtocolClient('bankai');
 app.on('second-instance', (_event, argv) => {
   const projectId = argv.map(projectFromDeepLink).find(Boolean);
-  if (projectId && /^[\w-]+$/.test(projectId)) mainWindow?.loadURL(WEB_URL.replace(/\/$/, '') + `/workspace/${projectId}/jenkins`);
+  if (projectId && /^[\w-]+$/.test(projectId)) mainWindow?.loadURL(desktopPageUrl(`/workspace/${projectId}/jenkins`));
   mainWindow?.focus();
 });
 app.whenReady().then(() => {
