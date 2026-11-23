@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, getVerificationSettings, inspectJenkinsfile, recordJenkinsAuditAction, setVerificationProvider, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
+import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
 import './JenkinsDownload.css';
 import JenkinsDeploymentSetup from '../../components/JenkinsDeploymentSetup';
 import { canEdit } from '../../lib/roles';
@@ -11,6 +12,12 @@ type JenkinsJob = { name: string; url: string; color: string; supportsPullReques
 type JenkinsConnection = { connected: boolean; url?: string; username?: string };
 type JenkinsJobProgress = { state: 'queued' | 'running' | 'success' | 'failure' | 'aborted'; buildUrl?: string; number?: number; timestamp?: number | null; durationMs?: number | null; commitSha?: string | null; targetUrl?: string | null; jobUrl?: string };
 type JenkinsParameterDefinition = { name: string; type: string; description: string; defaultValue: string; choices: string[] };
+type JenkinsBrowserBounds = { x: number; y: number; width: number; height: number };
+
+function jenkinsBrowserBounds(expanded: boolean): JenkinsBrowserBounds {
+  const width = expanded ? Math.max(420, window.innerWidth - 320) : Math.min(900, Math.max(480, Math.round(window.innerWidth * .46)));
+  return { x: Math.max(0, window.innerWidth - width), y: 64, width, height: Math.max(240, window.innerHeight - 64) };
+}
 
 export default function JenkinsDownload() {
   const { project } = useProject();
@@ -22,7 +29,9 @@ export default function JenkinsDownload() {
   const desktopDeepLink = project?.id ? `bankai://open?project=${encodeURIComponent(project.id)}` : 'bankai://open';
 
   return (
-    <main className="ws-page ws-page--narrow jenkins-download-page">
+      <main className="ws-page jenkins-download-page">
+      <WorkspaceBreadcrumb current="Jenkins" />
+      <div className="ws-divider" />
       <div className="jenkins-download-card">
         <div className="jenkins-download-heading">
           <img src={jenkinsLogo} className="jenkins-download-mark jenkins-download-mark--large" alt="Jenkins" />
@@ -50,7 +59,10 @@ export default function JenkinsDownload() {
 declare global {
   interface Window {
     bankaiDesktop?: {
-      openJenkins: (url: string) => Promise<void>;
+      openJenkins: (url: string, bounds: JenkinsBrowserBounds) => Promise<{ open: boolean; url: string }>;
+      setJenkinsBrowserBounds: (bounds: JenkinsBrowserBounds) => Promise<{ open: boolean }>;
+      closeJenkinsBrowser: () => Promise<{ closed: boolean }>;
+      onJenkinsBrowserNavigation: (callback: (url: string) => void) => () => void;
       openExternal: (url: string) => Promise<void>;
       getJenkinsConnection: () => Promise<JenkinsConnection>;
       connectJenkins: (input: { url: string; username: string; apiToken: string; repo: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
@@ -81,6 +93,9 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<JenkinsJobProgress | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserExpanded, setBrowserExpanded] = useState(false);
+  const [browserUrl, setBrowserUrl] = useState('');
   const [choice, setChoice] = useState<'unset' | 'enabled' | 'skipped'>(() => {
     try {
       const saved = localStorage.getItem(`bankai-jenkins-choice:${projectId}`);
@@ -103,6 +118,21 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     }).catch(() => undefined);
     return () => { active = false; };
   }, [api, projectId, canManage]);
+
+  useEffect(() => {
+    if (!api || !browserOpen) return;
+    const updateBounds = () => { void api.setJenkinsBrowserBounds(jenkinsBrowserBounds(browserExpanded)).catch(() => undefined); };
+    window.addEventListener('resize', updateBounds);
+    updateBounds();
+    return () => window.removeEventListener('resize', updateBounds);
+  }, [api, browserOpen, browserExpanded]);
+
+  useEffect(() => {
+    if (!api) return;
+    return api.onJenkinsBrowserNavigation((nextUrl) => setBrowserUrl(nextUrl));
+  }, [api]);
+
+  useEffect(() => () => { void api?.closeJenkinsBrowser().catch(() => undefined); }, [api]);
 
   useEffect(() => {
     if (!api || !canManage) return;
@@ -186,6 +216,8 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     setBusy(true); setError(null);
     try {
       await api.disconnectJenkins();
+      await api.closeJenkinsBrowser();
+      setBrowserOpen(false); setBrowserExpanded(false);
       void recordJenkinsAuditAction(projectId, 'disconnected').catch(() => undefined);
       setConnection({ connected: false }); setJobs([]); setSelectedJob(''); setSelectedJobSupportsPr(false); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
       try { localStorage.removeItem(`bankai-jenkins-choice:${projectId}`); } catch { /* optional preference */ }
@@ -217,13 +249,30 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     }
     if (value) void recordJenkinsAuditAction(projectId, 'ci_job_selected').catch(() => undefined);
   };
+  const openJenkinsInApp = async (targetUrl: string) => {
+    if (!api) return;
+    setBrowserUrl(targetUrl);
+    setBrowserExpanded(false);
+    setBrowserOpen(true);
+    try {
+      await api.openJenkins(targetUrl, jenkinsBrowserBounds(false));
+      setError(null);
+    } catch (reason) {
+      setBrowserOpen(false);
+      setError(errorMessage(reason));
+    }
+  };
+  const closeJenkinsInApp = async () => {
+    await api?.closeJenkinsBrowser().catch(() => undefined);
+    setBrowserOpen(false);
+    setBrowserExpanded(false);
+  };
   const openBuild = async () => {
-    if (run?.buildUrl) await api?.openJenkins(run.buildUrl);
+    if (run?.buildUrl) await openJenkinsInApp(run.buildUrl);
   };
   const openJenkinsDashboard = async () => {
     if (!connection.url) return;
-    try { await api?.openJenkins(connection.url); setError(null); }
-    catch (reason) { setError(errorMessage(reason)); }
+    await openJenkinsInApp(connection.url);
   };
 
   if (!canManage) return <p className="jenkins-download-note" role="status">Your project role is view only. Ask a project editor to configure or run Jenkins for this repository.</p>;
@@ -250,11 +299,8 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
             <button className="jenkins-download-cta" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Connect and find jobs'}</button>
           </form> : <>
             <div className="jenkins-connected-row"><div><strong>Connected to Jenkins</strong><span>{connection.url} · {connection.username}</span></div><div className="jenkins-connected-actions"><button className="jenkins-text-button" type="button" onClick={() => void openJenkinsDashboard()}>Open Jenkins</button><button className="jenkins-text-button" type="button" onClick={() => void disconnect()} disabled={busy}>Disconnect</button></div></div>
-            <label htmlFor="jenkins-job">Build job</label>
-            <select id="jenkins-job" value={selectedJob} onChange={(event) => chooseJob(event.target.value)} disabled={!jobs.length || busy}>
-              <option value="">{jobs.length ? 'Choose a Jenkins job' : 'No jobs found on this Jenkins server'}</option>
-              {jobs.map((job) => <option key={job.url} value={job.url}>{job.name}{job.supportsPullRequests ? ' · multibranch PR pipeline' : ' · manual builds only'}</option>)}
-            </select>
+            <label htmlFor="jenkins-job-trigger">Build job</label>
+            <JenkinsJobPicker jobs={jobs} value={selectedJob} onChange={chooseJob} disabled={!jobs.length || busy} />
             <div className="jenkins-job-actions">
               <button className="jenkins-download-cta" type="button" onClick={() => void runJob()} disabled={!selectedJob || busy}>{busy ? 'Working…' : 'Run build'}</button>
               <button className="jenkins-text-button" type="button" onClick={() => void refreshJobs()} disabled={busy}>Refresh jobs</button>
@@ -273,18 +319,123 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
           {message && <p className="jenkins-browser-status" role="status">{message}</p>}
         </section>
         <JenkinsDeploymentSetup projectId={projectId} jobs={jobs} />
-        <JenkinsfileSetup projectId={projectId} />
+        <JenkinsfileSetup projectId={projectId} onOpenJenkins={openJenkinsInApp} />
         </>
       )}
       {choice === 'skipped' && <p className="jenkins-download-note" role="status">Jenkins is skipped for this repository. Other Bankai features remain available.</p>}
       {choice === 'unset' && <p className="jenkins-download-note">No Jenkins jobs will run until you choose Use Jenkins.</p>}
+      {browserOpen && <div className="jenkins-in-app-browser-toolbar" style={{ width: jenkinsBrowserBounds(browserExpanded).width }}>
+        <div className="jenkins-in-app-browser-heading"><span className="jenkins-in-app-browser-dot" /><span>Jenkins browser</span><span className="jenkins-in-app-browser-url" title={browserUrl}>{browserUrl}</span></div>
+        <div className="jenkins-in-app-browser-controls">
+          <button type="button" aria-label={browserExpanded ? 'Restore Jenkins browser size' : 'Expand Jenkins browser'} title={browserExpanded ? 'Restore size' : 'Expand'} onClick={() => setBrowserExpanded((value) => !value)}>{browserExpanded ? '↙' : '↗'}</button>
+          <button type="button" aria-label="Close Jenkins browser" title="Close" onClick={() => void closeJenkinsInApp()}>×</button>
+        </div>
+      </div>}
     </>
+  );
+}
+
+function JenkinsJobPicker({ jobs, value, onChange, disabled }: { jobs: JenkinsJob[]; value: string; onChange: (url: string) => void; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const selected = jobs.find((job) => job.url === value);
+  const filtered = jobs.filter((job) => job.name.toLowerCase().includes(query.trim().toLowerCase()));
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery('');
+    setActiveIndex(Math.max(0, jobs.findIndex((job) => job.url === value)));
+    const focusTimer = window.setTimeout(() => searchRef.current?.focus(), 0);
+    const dismissOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const dismissEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); }
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    document.addEventListener('keydown', dismissEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('pointerdown', dismissOutside);
+      document.removeEventListener('keydown', dismissEscape);
+    };
+  }, [open, jobs, value]);
+
+  const choose = (job: JenkinsJob) => {
+    onChange(job.url);
+    setOpen(false);
+    setQuery('');
+    triggerRef.current?.focus();
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowDown' && open) {
+      event.preventDefault();
+      setActiveIndex((index) => Math.min(index + 1, filtered.length - 1));
+    } else if (event.key === 'ArrowUp' && open) {
+      event.preventDefault();
+      setActiveIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === 'Enter' && open && filtered[activeIndex]) {
+      event.preventDefault();
+      choose(filtered[activeIndex]!);
+    } else if (event.key === 'ArrowDown' && !open) {
+      event.preventDefault();
+      setOpen(true);
+    }
+  };
+
+  return (
+    <div className="jenkins-job-picker" ref={rootRef} onKeyDown={handleKeyDown}>
+      <button
+        id="jenkins-job-trigger"
+        ref={triggerRef}
+        className={`jenkins-job-picker-trigger${open ? ' jenkins-job-picker-trigger--open' : ''}`}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls="jenkins-job-listbox"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className={selected ? '' : 'jenkins-job-picker-placeholder'}>{selected?.name || (jobs.length ? 'Choose a Jenkins job' : 'No jobs found on this Jenkins server')}</span>
+        {selected && <span className="jenkins-job-picker-summary">{selected.supportsPullRequests ? 'Multibranch PR pipeline' : 'Manual builds only'}</span>}
+        <svg className={`jenkins-job-picker-chevron${open ? ' jenkins-job-picker-chevron--open' : ''}`} width="12" height="8" viewBox="0 0 12 8" fill="none" aria-hidden="true"><path d="m1 1.5 5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      {open && (
+        <div className="jenkins-job-picker-menu">
+          <div className="jenkins-job-picker-search-wrap">
+            <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" stroke="currentColor" strokeWidth="1.5"/><path d="m13.2 13.2 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            <input ref={searchRef} className="jenkins-job-picker-search" type="search" aria-label="Search Jenkins jobs" placeholder="Search Jenkins jobs…" value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} />
+          </div>
+          <div id="jenkins-job-listbox" className="jenkins-job-picker-options" role="listbox" aria-label="Jenkins jobs">
+            {filtered.length ? filtered.map((job, index) => (
+              <button
+                key={job.url}
+                type="button"
+                role="option"
+                aria-selected={job.url === value}
+                className={`jenkins-job-picker-option${job.url === value ? ' jenkins-job-picker-option--selected' : ''}${index === activeIndex ? ' jenkins-job-picker-option--active' : ''}`}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => choose(job)}
+              >
+                <span className="jenkins-job-picker-option-copy"><span className="jenkins-job-picker-option-name">{job.name}</span><span className="jenkins-job-picker-option-type">{job.supportsPullRequests ? 'Multibranch PR pipeline' : 'Manual builds only'}</span></span>
+                {job.url === value && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3 8.5 3.2 3.1L13 4.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+              </button>
+            )) : <div className="jenkins-job-picker-empty">No Jenkins jobs match “{query}”.</div>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong. Check the connection and try again.'; }
 
-function JenkinsfileSetup({ projectId }: { projectId: string }) {
+function JenkinsfileSetup({ projectId, onOpenJenkins }: { projectId: string; onOpenJenkins: (url: string) => Promise<void> }) {
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
   const [inspection, setInspection] = useState<JenkinsfileInspection | null>(null);
   const [proposal, setProposal] = useState<JenkinsfileProposal | null>(null);
@@ -389,7 +540,7 @@ function JenkinsfileSetup({ projectId }: { projectId: string }) {
         <p className="jenkins-download-note">The draft uses commands found in repository manifests. It includes no deployment steps or credentials. Accepting creates a PR that adds only <code>Jenkinsfile</code>; Bankai will not merge it.</p>
         <div className="jenkins-job-actions"><button className="jenkins-download-cta" type="button" onClick={() => void accept()} disabled={busy}>{busy ? (createdPr ? 'Updating PR…' : 'Creating PR…') : (createdPr ? 'Update PR and rerun Jenkins' : 'Accept and create pull request')}</button>{!createdPr && <button className="jenkins-text-button" type="button" onClick={() => setProposal(null)} disabled={busy}>Discard draft</button>}</div>
       </div>}
-      {createdPr && <div className="jenkinsfile-created-pr"><strong>Jenkinsfile pull request created</strong><span>Review the generated pipeline before merging.</span><a href={createdPr.pullRequest.url} target="_blank" rel="noreferrer">Open PR #{createdPr.pullRequest.number} on GitHub</a>{prBuildMessage && <span role="status">{prBuildMessage}</span>}{prBuildChecking && <span className="jenkins-pr-progress">Looking for the Jenkins PR branch…</span>}{prBuild?.buildUrl && <button className="jenkins-text-button" type="button" onClick={() => void window.bankaiDesktop?.openJenkins(prBuild.buildUrl!)}>Open PR build in Bankai browser</button>}{!prBuildChecking && <button className="jenkins-text-button" type="button" onClick={() => void runPullRequestBuild(createdPr)}>Check Jenkins PR job again</button>}</div>}
+      {createdPr && <div className="jenkinsfile-created-pr"><strong>Jenkinsfile pull request created</strong><span>Review the generated pipeline before merging.</span><a href={createdPr.pullRequest.url} target="_blank" rel="noreferrer">Open PR #{createdPr.pullRequest.number} on GitHub</a>{prBuildMessage && <span role="status">{prBuildMessage}</span>}{prBuildChecking && <span className="jenkins-pr-progress">Looking for the Jenkins PR branch…</span>}{prBuild?.buildUrl && <button className="jenkins-text-button" type="button" onClick={() => void onOpenJenkins(prBuild.buildUrl!)}>Open PR build in Bankai browser</button>}{!prBuildChecking && <button className="jenkins-text-button" type="button" onClick={() => void runPullRequestBuild(createdPr)}>Check Jenkins PR job again</button>}</div>}
       {error && <p className="jenkins-browser-error" role="alert">{error}</p>}
       {!busy && githubConnected && !inspection && error && <button className="jenkins-text-button" type="button" onClick={() => void refresh()}>Try again</button>}
     </section>

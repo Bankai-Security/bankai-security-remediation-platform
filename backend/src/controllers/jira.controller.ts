@@ -164,37 +164,40 @@ export async function disconnectJira(req: Request, res: Response): Promise<void>
   res.status(200).json(toPublicConnection(data as JiraConnectionRow));
 }
 
-function callbackUrl(projectId: string, result: "connected" | "error"): string {
-  const url = new URL(`/workspace/${encodeURIComponent(projectId)}/settings`, env.FRONTEND_ORIGIN);
+function callbackUrl(projectId: string, result: "connected" | "error", returnTo?: "onboarding"): string {
+  const path = returnTo ? "/projects/new" : `/workspace/${encodeURIComponent(projectId)}/settings`;
+  const url = new URL(path, env.FRONTEND_ORIGIN);
   url.searchParams.set("jiraOAuth", result);
+  if (returnTo) url.searchParams.set("projectId", projectId);
   return url.toString();
 }
 
 export async function startJiraOAuth(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin"]);
   if (!jiraOAuthConfigured()) throw new HttpError(503, "Jira one-click authorization is not configured. Use the API-token fallback or configure Atlassian OAuth on the backend.");
-  const authorizationUrl = createJiraOAuthAuthorizationUrl(req.project!.id, req.user!.id);
+  const returnTo = req.body?.returnTo === "onboarding" ? "onboarding" : undefined;
+  const authorizationUrl = createJiraOAuthAuthorizationUrl(req.project!.id, req.user!.id, returnTo);
   res.status(200).json({ authorizationUrl });
 }
 
 export async function jiraOAuthCallback(req: Request, res: Response): Promise<void> {
   const state = typeof req.query.state === "string" ? parseJiraOAuthState(req.query.state) : null;
   if (!state) { res.status(400).send("Jira authorization could not be verified. Return to Bankai and try again."); return; }
-  if (typeof req.query.error === "string" || typeof req.query.code !== "string") { res.redirect(callbackUrl(state.projectId, "error")); return; }
+  if (typeof req.query.error === "string" || typeof req.query.code !== "string") { res.redirect(callbackUrl(state.projectId, "error", state.returnTo)); return; }
 
   const [{ data: project }, { data: membership }] = await Promise.all([
     supabaseAdmin.from("projects").select("id,owner_id").eq("id", state.projectId).maybeSingle(),
     supabaseAdmin.from("project_members").select("role").eq("project_id", state.projectId).eq("user_id", state.userId).maybeSingle(),
   ]);
   const role = project?.owner_id === state.userId ? "owner" : membership?.role;
-  if (!project || !["owner", "admin"].includes(role ?? "")) { res.redirect(callbackUrl(state.projectId, "error")); return; }
+  if (!project || !["owner", "admin"].includes(role ?? "")) { res.redirect(callbackUrl(state.projectId, "error", state.returnTo)); return; }
 
   try {
     const pair = await exchangeJiraOAuthCode(req.query.code);
     await saveJiraOAuthTokens(supabaseAdmin, state.projectId, pair);
-    res.redirect(callbackUrl(state.projectId, "connected"));
+    res.redirect(callbackUrl(state.projectId, "connected", state.returnTo));
   } catch {
-    res.redirect(callbackUrl(state.projectId, "error"));
+    res.redirect(callbackUrl(state.projectId, "error", state.returnTo));
   }
 }
 

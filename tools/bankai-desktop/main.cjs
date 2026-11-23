@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, shell, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs');
@@ -15,7 +15,7 @@ const isLocalDev = WEB_URL.startsWith('http://localhost:');
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 let mainWindow;
-let browserWindow;
+let jenkinsBrowserView;
 const JENKINS_STORE = () => path.join(app.getPath('userData'), 'jenkins-connection.bin');
 
 function validateJenkinsUrl(value) {
@@ -405,34 +405,80 @@ function createMainWindow() {
   const projectId = startupProject;
   const route = projectId && /^[\w-]+$/.test(projectId) ? `/workspace/${projectId}/jenkins` : '/projects';
   mainWindow.loadURL(WEB_URL.replace(/\/$/, '') + route);
-  mainWindow.on('closed', () => { mainWindow = undefined; });
+  mainWindow.on('closed', () => { closeJenkinsBrowser(); mainWindow = undefined; });
 }
-function openJenkinsBrowser(rawUrl) {
-  const target = new URL(rawUrl);
-  if (!['https:', 'http:'].includes(target.protocol) || (target.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(target.hostname))) {
-    throw new Error('Jenkins must use HTTPS or a localhost address.');
+function validateJenkinsBrowserUrl(credentials, rawUrl) {
+  let target;
+  try { target = new URL(rawUrl); } catch { throw new Error('Enter a valid Jenkins address.'); }
+  const base = new URL(credentials.url);
+  const basePath = base.pathname.replace(/\/$/, '');
+  if (target.username || target.password || target.origin !== base.origin || (target.pathname !== basePath && !target.pathname.startsWith(basePath + '/'))
+    || !['https:', 'http:'].includes(target.protocol) || (target.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname))) {
+    throw new Error('Open a Jenkins page from the connected server.');
   }
-  if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
-  browserWindow = new BrowserWindow({
-    width: 1280, height: 860, minWidth: 800, minHeight: 600, title: 'Jenkins · Bankai', parent: mainWindow,
-    icon: path.join(__dirname, 'build', 'icon.png'),
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, partition: 'persist:bankai-jenkins' },
-  });
-  const origin = target.origin;
-  browserWindow.webContents.on('will-navigate', (event, value) => {
-    try { if (new URL(value).origin !== origin) event.preventDefault(); } catch { event.preventDefault(); }
-  });
-  browserWindow.webContents.setWindowOpenHandler(({ url }) => {
-    try { if (new URL(url).origin === origin) return { action: 'allow' }; } catch { /* reject invalid URLs */ }
-    return { action: 'deny' };
-  });
-  browserWindow.on('closed', () => { browserWindow = undefined; });
-  return browserWindow.loadURL(target.toString());
+  return target;
 }
-ipcMain.handle('bankai:open-jenkins', (event, url) => {
+function setJenkinsBrowserBounds(bounds) {
+  if (!jenkinsBrowserView || !mainWindow || mainWindow.isDestroyed()) return { open: false };
+  const content = mainWindow.getContentBounds();
+  const x = Math.max(0, Math.min(Math.floor(Number(bounds?.x) || 0), content.width - 280));
+  const y = Math.max(0, Math.min(Math.floor(Number(bounds?.y) || 0), content.height - 120));
+  const width = Math.max(280, Math.min(Math.floor(Number(bounds?.width) || 0), content.width - x));
+  const height = Math.max(120, Math.min(Math.floor(Number(bounds?.height) || 0), content.height - y));
+  jenkinsBrowserView.setBounds({ x, y, width, height });
+  return { open: true };
+}
+async function openJenkinsBrowser(rawUrl, bounds) {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Bankai window is not available.');
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins before opening its browser.');
+  const target = validateJenkinsBrowserUrl(credentials, rawUrl);
+  if (!jenkinsBrowserView) {
+    jenkinsBrowserView = new WebContentsView({
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false, partition: 'persist:bankai-jenkins' },
+    });
+    mainWindow.contentView.addChildView(jenkinsBrowserView);
+    const base = new URL(credentials.url);
+    const isJenkinsUrl = (value) => {
+      try { const url = new URL(value); const basePath = base.pathname.replace(/\/$/, ''); return url.origin === base.origin && (url.pathname === basePath || url.pathname.startsWith(basePath + '/')); }
+      catch { return false; }
+    };
+    jenkinsBrowserView.webContents.on('will-navigate', (event, value) => { if (!isJenkinsUrl(value)) event.preventDefault(); });
+    jenkinsBrowserView.webContents.setWindowOpenHandler(({ url }) => {
+      if (isJenkinsUrl(url)) void jenkinsBrowserView?.webContents.loadURL(url);
+      return { action: 'deny' };
+    });
+    jenkinsBrowserView.webContents.on('will-redirect', (event, value) => { if (!isJenkinsUrl(value)) event.preventDefault(); });
+    jenkinsBrowserView.webContents.on('did-navigate', (_event, value) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('bankai:jenkins-browser-navigation', value);
+    });
+    jenkinsBrowserView.webContents.on('did-navigate-in-page', (_event, value) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('bankai:jenkins-browser-navigation', value);
+    });
+  }
+  setJenkinsBrowserBounds(bounds);
+  await jenkinsBrowserView.webContents.loadURL(target.toString());
+  return { open: true, url: target.toString() };
+}
+function closeJenkinsBrowser() {
+  if (!jenkinsBrowserView) return { closed: true };
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(jenkinsBrowserView);
+  if (!jenkinsBrowserView.webContents.isDestroyed()) jenkinsBrowserView.webContents.close();
+  jenkinsBrowserView = undefined;
+  return { closed: true };
+}
+ipcMain.handle('bankai:open-jenkins', (event, url, bounds) => {
   assertBankaiSender(event);
   if (typeof url !== 'string' || url.length > 2048) throw new Error('Enter a valid Jenkins address.');
-  return openJenkinsBrowser(url);
+  return openJenkinsBrowser(url, bounds);
+});
+ipcMain.handle('bankai:jenkins-browser-bounds', (event, bounds) => {
+  assertBankaiSender(event);
+  return setJenkinsBrowserBounds(bounds);
+});
+ipcMain.handle('bankai:jenkins-browser-close', (event) => {
+  assertBankaiSender(event);
+  return closeJenkinsBrowser();
 });
 ipcMain.handle('bankai:open-external', (event, value) => {
   assertBankaiSender(event);

@@ -223,8 +223,8 @@ export function setVerificationProvider(projectId: string, provider: Verificatio
   return apiFetch(`/projects/${projectId}/verification`, { method: "PUT", body: JSON.stringify({ provider }) });
 }
 
-export function startJiraOAuth(projectId: string): Promise<{ authorizationUrl: string }> {
-  return apiFetch(`/projects/${projectId}/jira/oauth/start`, { method: "POST" });
+export function startJiraOAuth(projectId: string, returnTo?: "onboarding"): Promise<{ authorizationUrl: string }> {
+  return apiFetch(`/projects/${projectId}/jira/oauth/start`, { method: "POST", ...(returnTo ? { body: JSON.stringify({ returnTo }) } : {}) });
 }
 
 export function getJiraOAuthSites(projectId: string): Promise<{ sites: JiraOAuthSite[] }> {

@@ -1,15 +1,20 @@
 .jenkins-download-page {
+  width: 100%;
+  max-width: none;
   min-height: 100%;
-  display: grid;
-  place-items: center;
-  padding-top: 48px;
-  padding-bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 22px 24px 24px;
   box-sizing: border-box;
 }
 
 .jenkins-download-card {
-  width: min(100%, 760px);
-  padding: 48px 32px 38px;
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  min-height: calc(100vh - 70px);
+  padding: 42px 40px 38px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -145,6 +150,39 @@
 .jenkins-connected-row .jenkins-connected-actions { flex-direction: row; align-items: center; gap: 4px; }
 .jenkins-text-button { padding: 7px 9px; border: 0; background: transparent; color: var(--color-blue); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .jenkins-text-button:disabled { opacity: .5; cursor: wait; }
+.jenkins-job-picker { position: relative; z-index: 2; width: 100%; margin-bottom: 14px; }
+.jenkins-job-picker:has(.jenkins-job-picker-menu) { z-index: 20; }
+.jenkins-job-picker-trigger { width: 100%; min-height: 46px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, background .15s ease; }
+.jenkins-job-picker-trigger:hover:not(:disabled) { border-color: var(--color-border-strong); background: var(--color-surface-subtle, #f7f8fa); }
+.jenkins-job-picker-trigger:focus-visible, .jenkins-job-picker-trigger--open { outline: none; border-color: var(--color-blue); box-shadow: 0 0 0 3px rgba(59, 130, 246, .14); }
+.jenkins-job-picker-trigger:disabled { opacity: .58; cursor: not-allowed; }
+.jenkins-job-picker-trigger > span:first-child { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.jenkins-job-picker-placeholder { color: var(--color-text-muted); font-weight: 500 !important; }
+.jenkins-job-picker-summary { flex-shrink: 0; padding: 4px 8px; border-radius: 999px; background: var(--color-fill); color: var(--color-text-muted); font-size: 10px; font-weight: 600; }
+.jenkins-job-picker-chevron { flex-shrink: 0; margin-left: auto; color: var(--color-text-muted); transition: transform .16s ease; }
+.jenkins-job-picker-chevron--open { transform: rotate(180deg); }
+.jenkins-job-picker-menu { position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 21; padding: 8px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: 0 16px 40px rgba(15, 23, 42, .16), 0 3px 8px rgba(15, 23, 42, .06); animation: jenkins-job-menu-in .14s ease-out; }
+.jenkins-job-picker-search-wrap { min-height: 38px; margin-bottom: 6px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text-faint); }
+.jenkins-browser-setup .jenkins-job-picker-search { width: 100%; min-height: 36px; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--color-text); font: inherit; font-size: 12px; }
+.jenkins-browser-setup .jenkins-job-picker-search:focus { outline: 0; border: 0; }
+.jenkins-job-picker-search::placeholder { color: var(--color-text-faint); }
+.jenkins-job-picker-options { max-height: min(320px, 45vh); overflow-y: auto; overscroll-behavior: contain; }
+.jenkins-job-picker-option { width: 100%; min-height: 48px; padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-radius: 9px; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.jenkins-job-picker-option:hover, .jenkins-job-picker-option--active { background: var(--color-fill); }
+.jenkins-job-picker-option--selected { color: var(--color-blue); }
+.jenkins-job-picker-option-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.jenkins-job-picker-option-name { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.jenkins-job-picker-option-type { color: var(--color-text-faint); font-size: 10px; }
+.jenkins-job-picker-option--selected .jenkins-job-picker-option-type { color: var(--color-blue); opacity: .75; }
+.jenkins-job-picker-empty { padding: 15px 10px; color: var(--color-text-muted); font-size: 12px; text-align: center; }
+@keyframes jenkins-job-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.jenkins-in-app-browser-toolbar { position: fixed; top: 0; right: 0; z-index: 10000; height: 64px; padding: 0 12px 0 18px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--color-border); border-left: 1px solid var(--color-border); background: var(--color-surface); box-shadow: 0 5px 16px rgba(15, 23, 42, .08); color: var(--color-text); }
+.jenkins-in-app-browser-heading { min-width: 0; display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 700; }
+.jenkins-in-app-browser-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #168b66; box-shadow: 0 0 0 3px rgba(22, 139, 102, .12); }
+.jenkins-in-app-browser-url { min-width: 0; margin-left: 4px; overflow: hidden; color: var(--color-text-faint); font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.jenkins-in-app-browser-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
+.jenkins-in-app-browser-controls button { width: 34px; height: 34px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--color-text-muted); font: 19px/1 var(--font-sans); cursor: pointer; }
+.jenkins-in-app-browser-controls button:hover { border-color: var(--color-border); background: var(--color-fill); color: var(--color-text); }
 .jenkins-job-actions { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .jenkins-job-actions .jenkins-download-cta { margin-top: 0; }
 .jenkins-run-status { margin-top: 18px; padding: 13px; display: flex; align-items: center; justify-content: center; gap: 5px; flex-wrap: wrap; border: 1px solid var(--color-border); border-radius: 10px; color: var(--color-text-subtle); font-size: 13px; }
@@ -161,7 +199,7 @@
 .jenkinsfile-setup-heading { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
 .jenkinsfile-setup-heading h2 { margin: 4px 0 0; color: var(--color-text); font-size: 18px; }
 .jenkinsfile-setup-eyebrow { color: var(--color-text-faint); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
-.jenkinsfile-code-view { max-height: 360px; margin: 15px 0 0; padding: 14px; overflow: auto; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text); font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; text-align: left; white-space: pre; }
+.jenkinsfile-code-view { max-height: 360px; margin: 15px 0 0; padding: 14px; overflow: auto; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text); font: 11px/1.55 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace; text-align: left; white-space: pre; }
 .jenkinsfile-proposal { margin-top: 15px; }
 .jenkinsfile-proposal-summary { color: var(--color-text-subtle); font-size: 13px; line-height: 1.6; }
 .jenkinsfile-detected-commands { margin: 12px 0; color: var(--color-text-subtle); font-size: 12px; }
@@ -171,7 +209,7 @@
 .jenkinsfile-detected-commands li code { display: block; color: var(--color-text); font-size: 11px; overflow-wrap: anywhere; }
 .jenkinsfile-detected-commands li span { display: block; margin-top: 2px; color: var(--color-text-faint); }
 .jenkinsfile-proposal label { display: block; margin: 14px 0 7px; color: var(--color-text-subtle); font-size: 13px; font-weight: 600; }
-.jenkinsfile-proposal textarea { width: 100%; min-height: 420px; box-sizing: border-box; padding: 14px; resize: vertical; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.jenkinsfile-proposal textarea { width: 100%; min-height: 420px; box-sizing: border-box; padding: 14px; resize: vertical; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); color: var(--color-text); font: 12px/1.55 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace; }
 .jenkinsfile-proposal textarea:focus { outline: 2px solid rgba(59, 130, 246, .25); border-color: var(--color-blue); }
 .jenkinsfile-assumptions { margin-top: 12px; padding: 12px 14px; border: 1px solid rgba(180, 120, 20, .22); border-radius: 10px; background: rgba(245, 158, 11, .06); color: var(--color-text-subtle); font-size: 12px; }
 .jenkinsfile-assumptions strong { font-size: 12px; }
