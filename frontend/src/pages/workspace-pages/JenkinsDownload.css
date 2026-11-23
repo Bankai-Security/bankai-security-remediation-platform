@@ -10,7 +10,7 @@
 }
 
 .jenkins-browser-open .jenkins-download-page {
-  padding-right: calc(var(--jenkins-in-app-browser-width) + 48px);
+  padding-right: var(--jenkins-in-app-browser-reserve, 48px);
 }
 
 .jenkins-download-card {
@@ -180,7 +180,7 @@
 .jenkins-job-picker-option--selected .jenkins-job-picker-option-type { color: var(--color-blue); opacity: .75; }
 .jenkins-job-picker-empty { padding: 15px 10px; color: var(--color-text-muted); font-size: 12px; text-align: center; }
 @keyframes jenkins-job-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
-.jenkins-in-app-browser-toolbar { position: fixed; top: 0; right: 24px; z-index: 10000; height: 56px; padding: 8px 9px 8px 17px; box-sizing: border-box; display: flex; align-items: center; gap: 9px; border: 1px solid var(--color-border); border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--color-surface); box-shadow: 0 8px 24px rgba(20, 30, 48, .11); color: var(--color-text); }
+.jenkins-in-app-browser-toolbar { position: fixed; top: 0; right: auto; z-index: 10000; height: 56px; padding: 8px 9px 8px 17px; box-sizing: border-box; display: flex; align-items: center; gap: 9px; border: 1px solid var(--color-border); border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--color-surface); box-shadow: 0 8px 24px rgba(20, 30, 48, .11); color: var(--color-text); }
 .jenkins-in-app-browser-resize { position: absolute; top: 7px; left: -7px; z-index: 1; width: 14px; height: 42px; border-radius: 999px; background: var(--color-border-strong, #cbd0d9); box-shadow: 0 1px 4px rgba(20, 30, 48, .18); cursor: col-resize; touch-action: none; transition: background .15s ease, height .15s ease; }
 .jenkins-in-app-browser-resize:hover, .jenkins-in-app-browser-resize:focus-visible { height: 48px; outline: none; background: var(--color-blue); }
 .jenkins-in-app-browser-omnibox { min-width: 0; height: 36px; padding: 0 12px; flex: 1 1 auto; display: flex; align-items: center; gap: 9px; overflow: hidden; border: 1px solid transparent; border-radius: 999px; background: var(--color-fill, #f1f2f5); color: var(--color-text-muted); font-size: 11px; font-weight: 500; text-align: left; }

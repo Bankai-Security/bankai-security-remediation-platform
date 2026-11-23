@@ -430,8 +430,9 @@ function setJenkinsBrowserBounds(bounds) {
   const x = Math.max(0, Math.min(Math.floor(Number(bounds?.x) || 0), content.width - width));
   const height = Math.max(Math.min(content.height, 120), Math.min(Math.floor(Number(bounds?.height) || 0), content.height));
   const y = Math.max(0, Math.min(Math.floor(Number(bounds?.y) || 0), content.height - height));
-  jenkinsBrowserView.setBounds({ x, y, width, height });
-  return { open: true };
+  const appliedBounds = { x, y, width, height };
+  jenkinsBrowserView.setBounds(appliedBounds);
+  return { open: true, bounds: appliedBounds };
 }
 async function openJenkinsBrowser(rawUrl, bounds) {
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Bankai window is not available.');
@@ -463,9 +464,9 @@ async function openJenkinsBrowser(rawUrl, bounds) {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('bankai:jenkins-browser-navigation', value);
     });
   }
-  setJenkinsBrowserBounds(bounds);
+  const applied = setJenkinsBrowserBounds(bounds);
   await jenkinsBrowserView.webContents.loadURL(target.toString());
-  return { open: true, url: target.toString() };
+  return { ...applied, url: target.toString() };
 }
 function closeJenkinsBrowser() {
   if (!jenkinsBrowserView) return { closed: true };

@@ -13,6 +13,7 @@ type JenkinsConnection = { connected: boolean; url?: string; username?: string }
 type JenkinsJobProgress = { state: 'queued' | 'running' | 'success' | 'failure' | 'aborted'; buildUrl?: string; number?: number; timestamp?: number | null; durationMs?: number | null; commitSha?: string | null; targetUrl?: string | null; jobUrl?: string };
 type JenkinsParameterDefinition = { name: string; type: string; description: string; defaultValue: string; choices: string[] };
 type JenkinsBrowserBounds = { x: number; y: number; width: number; height: number };
+type JenkinsBrowserBoundsResult = { open: boolean; bounds?: JenkinsBrowserBounds };
 
 function clampJenkinsBrowserWidth(width: number): number {
   const page = document.querySelector('.jenkins-download-page');
@@ -75,8 +76,8 @@ export default function JenkinsDownload() {
 declare global {
   interface Window {
     bankaiDesktop?: {
-      openJenkins: (url: string, bounds: JenkinsBrowserBounds) => Promise<{ open: boolean; url: string }>;
-      setJenkinsBrowserBounds: (bounds: JenkinsBrowserBounds) => Promise<{ open: boolean }>;
+      openJenkins: (url: string, bounds: JenkinsBrowserBounds) => Promise<{ open: boolean; url: string; bounds?: JenkinsBrowserBounds }>;
+      setJenkinsBrowserBounds: (bounds: JenkinsBrowserBounds) => Promise<JenkinsBrowserBoundsResult>;
       closeJenkinsBrowser: () => Promise<{ closed: boolean }>;
       onJenkinsBrowserNavigation: (callback: (url: string) => void) => () => void;
       openExternal: (url: string) => Promise<void>;
@@ -112,6 +113,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const [browserOpen, setBrowserOpen] = useState(false);
   const [browserExpanded, setBrowserExpanded] = useState(false);
   const [browserWidth, setBrowserWidth] = useState(() => clampJenkinsBrowserWidth(Math.round(window.innerWidth * .38)));
+  const [appliedBrowserBounds, setAppliedBrowserBounds] = useState<JenkinsBrowserBounds | null>(null);
   const [browserUrl, setBrowserUrl] = useState('');
   const browserWidthRef = useRef(browserWidth);
   const queueBrowserBoundsRef = useRef<() => void>(() => undefined);
@@ -151,7 +153,9 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       if (disposed || inFlight || !queued) return;
       queued = false;
       inFlight = true;
-      void api.setJenkinsBrowserBounds(jenkinsBrowserBounds(browserWidthRef.current)).catch(() => undefined).finally(() => {
+      void api.setJenkinsBrowserBounds(jenkinsBrowserBounds(browserWidthRef.current)).then((result) => {
+        if (result.open && result.bounds) setAppliedBrowserBounds(result.bounds);
+      }).catch(() => undefined).finally(() => {
         inFlight = false;
         if (queued && frame === null) frame = window.requestAnimationFrame(flushBounds);
       });
@@ -185,16 +189,18 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     const root = document.documentElement;
     if (browserOpen) {
       root.classList.add('jenkins-browser-open');
-      root.style.setProperty('--jenkins-in-app-browser-width', `${browserWidth}px`);
+      const pageRight = document.querySelector('.jenkins-download-page')?.getBoundingClientRect().right ?? window.innerWidth;
+      const paneX = appliedBrowserBounds?.x ?? jenkinsBrowserBounds(browserWidth).x;
+      root.style.setProperty('--jenkins-in-app-browser-reserve', `${Math.max(48, Math.round(pageRight - paneX + 24))}px`);
     } else {
       root.classList.remove('jenkins-browser-open');
-      root.style.removeProperty('--jenkins-in-app-browser-width');
+      root.style.removeProperty('--jenkins-in-app-browser-reserve');
     }
     return () => {
       root.classList.remove('jenkins-browser-open');
-      root.style.removeProperty('--jenkins-in-app-browser-width');
+      root.style.removeProperty('--jenkins-in-app-browser-reserve');
     };
-  }, [browserOpen, browserWidth]);
+  }, [browserOpen, browserWidth, appliedBrowserBounds]);
 
   useEffect(() => {
     if (!api) return;
@@ -327,10 +333,12 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     setBrowserExpanded(false);
     setBrowserOpen(true);
     try {
-      await api.openJenkins(targetUrl, jenkinsBrowserBounds(width));
+      const result = await api.openJenkins(targetUrl, jenkinsBrowserBounds(width));
+      if (result.bounds) setAppliedBrowserBounds(result.bounds);
       setError(null);
     } catch (reason) {
       setBrowserOpen(false);
+      setAppliedBrowserBounds(null);
       setError(errorMessage(reason));
     }
   };
@@ -338,6 +346,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     await api?.closeJenkinsBrowser().catch(() => undefined);
     setBrowserOpen(false);
     setBrowserExpanded(false);
+    setAppliedBrowserBounds(null);
   };
   const resizeJenkinsBrowser = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.type === 'pointerdown') {
@@ -386,6 +395,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     if (!connection.url) return;
     await openJenkinsInApp(connection.url);
   };
+  const browserPaneBounds = browserOpen ? appliedBrowserBounds ?? jenkinsBrowserBounds(browserWidth) : null;
 
   if (!canManage) return <p className="jenkins-download-note" role="status">Your project role is view only. Ask a project editor to configure or run Jenkins for this repository.</p>;
 
@@ -436,7 +446,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       )}
       {choice === 'skipped' && <p className="jenkins-download-note" role="status">Jenkins is skipped for this repository. Other Bankai features remain available.</p>}
       {choice === 'unset' && <p className="jenkins-download-note">No Jenkins jobs will run until you choose Use Jenkins.</p>}
-      {browserOpen && <div className="jenkins-in-app-browser-toolbar" style={{ width: browserWidth, top: jenkinsBrowserBounds(browserWidth).y - 56 }}>
+      {browserOpen && browserPaneBounds && <div className="jenkins-in-app-browser-toolbar" style={{ left: browserPaneBounds.x, top: browserPaneBounds.y - 56, width: browserPaneBounds.width }}>
         <div
           className="jenkins-in-app-browser-resize"
           role="separator"
