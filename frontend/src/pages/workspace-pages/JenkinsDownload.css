@@ -9,6 +9,11 @@
   box-sizing: border-box;
 }
 
+.jenkins-browser-open .jenkins-download-page {
+  padding-right: calc(var(--jenkins-in-app-browser-width) + 48px);
+  transition: padding-right .18s ease;
+}
+
 .jenkins-download-card {
   width: 100%;
   max-width: none;
@@ -176,11 +181,13 @@
 .jenkins-job-picker-option--selected .jenkins-job-picker-option-type { color: var(--color-blue); opacity: .75; }
 .jenkins-job-picker-empty { padding: 15px 10px; color: var(--color-text-muted); font-size: 12px; text-align: center; }
 @keyframes jenkins-job-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
-.jenkins-in-app-browser-toolbar { position: fixed; top: 0; right: 0; z-index: 10000; height: 64px; padding: 0 12px 0 18px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--color-border); border-left: 1px solid var(--color-border); background: var(--color-surface); box-shadow: 0 5px 16px rgba(15, 23, 42, .08); color: var(--color-text); }
-.jenkins-in-app-browser-heading { min-width: 0; display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 700; }
-.jenkins-in-app-browser-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #168b66; box-shadow: 0 0 0 3px rgba(22, 139, 102, .12); }
-.jenkins-in-app-browser-url { min-width: 0; margin-left: 4px; overflow: hidden; color: var(--color-text-faint); font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.jenkins-in-app-browser-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
+.jenkins-in-app-browser-toolbar { position: fixed; top: 0; right: 24px; z-index: 10000; height: 56px; padding: 8px 9px 8px 17px; box-sizing: border-box; display: flex; align-items: center; gap: 9px; border: 1px solid var(--color-border); border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--color-surface); box-shadow: 0 8px 24px rgba(20, 30, 48, .11); color: var(--color-text); }
+.jenkins-in-app-browser-resize { position: absolute; top: 7px; left: -7px; z-index: 1; width: 14px; height: 42px; border-radius: 999px; background: var(--color-border-strong, #cbd0d9); box-shadow: 0 1px 4px rgba(20, 30, 48, .18); cursor: col-resize; touch-action: none; transition: background .15s ease, height .15s ease; }
+.jenkins-in-app-browser-resize:hover, .jenkins-in-app-browser-resize:focus-visible { height: 48px; outline: none; background: var(--color-blue); }
+.jenkins-in-app-browser-omnibox { min-width: 0; height: 36px; padding: 0 12px; flex: 1 1 auto; display: flex; align-items: center; gap: 9px; overflow: hidden; border: 1px solid transparent; border-radius: 999px; background: var(--color-fill, #f1f2f5); color: var(--color-text-muted); font-size: 11px; font-weight: 500; text-align: left; }
+.jenkins-in-app-browser-omnibox svg { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .7; }
+.jenkins-in-app-browser-omnibox span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jenkins-in-app-browser-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 3px; }
 .jenkins-in-app-browser-controls button { width: 34px; height: 34px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--color-text-muted); font: 19px/1 var(--font-sans); cursor: pointer; }
 .jenkins-in-app-browser-controls button:hover { border-color: var(--color-border); background: var(--color-fill); color: var(--color-text); }
 .jenkins-job-actions { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
