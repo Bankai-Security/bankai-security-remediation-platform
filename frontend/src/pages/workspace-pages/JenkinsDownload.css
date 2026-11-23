@@ -94,7 +94,7 @@
 
 .jenkins-download-project {
   width: 100%;
-  margin-top: 32px;
+  margin-top: auto;
   padding-top: 17px;
   display: flex;
   align-items: center;
