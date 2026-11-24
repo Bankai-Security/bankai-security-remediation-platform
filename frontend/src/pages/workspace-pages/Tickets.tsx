@@ -531,7 +531,7 @@ export default function Tickets() {
                             className={`ws-icon-btn ws-icon-btn--github ws-icon-btn--sm ws-icon-btn--label${t.githubPrLowConfidence ? ' ws-icon-btn--low-confidence' : ''}`}
                             title={prBadgeTitle(t)}
                           >
-                            <BranchIcon size={11} />
+                            <GithubIcon size={11} />
                             <span>#{t.githubPrNumber}</span>
                           </a>
                         ) : t.githubBranchUrl ? (
@@ -542,7 +542,7 @@ export default function Tickets() {
                             className="ws-icon-btn ws-icon-btn--branch ws-icon-btn--sm"
                             title={`Open remediation branch ${t.githubBranchName}`}
                           >
-                            <GithubIcon size={11} />
+                            <BranchIcon size={11} />
                           </a>
                         ) : null}
 
