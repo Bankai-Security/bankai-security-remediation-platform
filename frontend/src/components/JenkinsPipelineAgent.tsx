@@ -116,11 +116,11 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
           }
         }
         const expectedNames = new Set([`pr-${run.pullRequestNumber}`.toLowerCase(), `pr_${run.pullRequestNumber}`.toLowerCase(), `pr/${run.pullRequestNumber}`.toLowerCase(), run.branch.toLowerCase()]);
-        let job: { name: string; url: string; color: string; supportsPullRequests?: boolean } | undefined;
+        let job: { name: string; url: string; color: string; supportsPullRequests?: boolean; pullRequestNumber?: number; branchName?: string } | undefined;
         for (let attempt = 0; attempt < 18 && !job; attempt += 1) {
           if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") break;
           const jobs = await desktop.listJenkinsJobs();
-          job = findPullRequestJob(jobs, scope, expectedNames);
+          job = findPullRequestJob(jobs, scope, expectedNames, run.pullRequestNumber);
           if (!job && attempt < 17) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
         }
         if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") {

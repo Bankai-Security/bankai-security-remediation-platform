@@ -44,5 +44,14 @@ describe("findPullRequestJob", () => {
     expect(findPullRequestJob(jobs, jobs[2].url, expectedNames)).toBe(jobs[1]);
     expect(findPullRequestJob(jobs, jobs[0].url + "view/change-requests/job/PR-3/", expectedNames)).toBe(jobs[1]);
   });
+
+  it("matches a PR by Jenkins branch metadata when its display name differs", () => {
+    const metadataJobs = [
+      { name: "bankai-scan-fixtures", url: "http://localhost:8080/job/bankai-scan-fixtures/", supportsPullRequests: true },
+      { name: "github-pr-4", url: "http://localhost:8080/job/bankai-scan-fixtures/job/github-pr-4/", supportsPullRequests: true, pullRequestNumber: 4, branchName: "remediation/security-fix" },
+    ];
+    expect(findPullRequestJob(metadataJobs, metadataJobs[0].url, new Set(["remediation/security-fix"]), 4)).toBe(metadataJobs[1]);
+    expect(findPullRequestJob(metadataJobs, metadataJobs[0].url, new Set(), 5)).toBeUndefined();
+  });
 });
 

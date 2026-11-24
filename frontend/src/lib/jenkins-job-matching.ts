@@ -1,4 +1,4 @@
-export type JenkinsJobCandidate = { name: string; url: string; supportsPullRequests?: boolean };
+export type JenkinsJobCandidate = { name: string; url: string; supportsPullRequests?: boolean; pullRequestNumber?: number; branchName?: string };
 
 function sameJobUrl(leftUrl: string, rightUrl: string): boolean {
   try {
@@ -24,13 +24,19 @@ export function isJobNestedUnder(parentUrl: string, candidateUrl: string): boole
   }
 }
 
-export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], selectedUrl: string, expectedNames: Set<string>): T | undefined {
+export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], selectedUrl: string, expectedNames: Set<string>, pullRequestNumber?: number): T | undefined {
+  const isExpectedPullRequest = (job: JenkinsJobCandidate) => job.supportsPullRequests
+    && (pullRequestNumber != null ? job.pullRequestNumber === pullRequestNumber : false);
+  const scope = resolveVerificationScope(jobs, selectedUrl);
+  const identifiedPr = jobs.find((job) => isExpectedPullRequest(job) && isJobNestedUnder(scope, job.url));
+  if (identifiedPr) return identifiedPr;
+
   const isExpectedName = (job: JenkinsJobCandidate) => expectedNames.has(job.name.toLowerCase());
   const selectedPrJob = jobs.find((job) => isExpectedName(job) && job.supportsPullRequests && sameJobUrl(job.url, selectedUrl));
   if (selectedPrJob) return selectedPrJob;
 
-  const scope = resolveVerificationScope(jobs, selectedUrl);
-  return jobs.find((job) => isExpectedName(job) && isJobNestedUnder(scope, job.url));
+  return jobs.find((job) => job.supportsPullRequests && isJobNestedUnder(scope, job.url)
+    && (isExpectedName(job) || (job.branchName != null && expectedNames.has(job.branchName.toLowerCase()))));
 }
 
 // A saved selection may point to main or to a PR that Jenkins has since pruned.
