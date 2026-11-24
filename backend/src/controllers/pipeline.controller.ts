@@ -52,7 +52,7 @@ export async function reportJenkinsSetupFailure(req: Request, res: Response): Pr
     if (!changed) continue;
     const run = (runs ?? []).find((item) => item.ticket_id === ticketId);
     await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: null, actorLabel: "Bankai Desktop", eventType: "pipeline",
-      summary: "could not start Jenkins verification for", linkLabel: run?.pull_request_number ? `PR #${run.pull_request_number}` : undefined,
+      summary: "could not start Jenkins verification for", linkLabel: run?.pull_request_number ? `PR #${run.pull_request_number}` : null,
       linkTo: "tickets", meta: safeMessage });
     await publishJenkinsEvidence(req.project!.id, ticketId);
   }
