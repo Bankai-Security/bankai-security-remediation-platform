@@ -35,6 +35,45 @@ const object = (v: unknown): JsonObject => v && typeof v === "object" && !Array.
 const str = (v: unknown): string | null => typeof v === "string" && v.trim() ? v.trim() : null;
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
 
+// pip-audit's JSON mode can share stdout with incidental pip/log output on
+// some environments. Extract a complete JSON object with the expected report
+// shape instead of failing the entire repository preflight on that prefix.
+function parsePipAuditOutput(output: string): unknown {
+  const text = output.trim();
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let end = start; end < text.length; end++) {
+      const character = text[end]!;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{" || character === "[") depth++;
+      else if (character === "}" || character === "]") depth--;
+      if (depth !== 0) continue;
+
+      try {
+        const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+        if (Array.isArray(object(parsed).dependencies)) return parsed;
+      } catch {
+        // Keep looking: a log line may itself contain braces before the
+        // actual report, or stdout may contain a non-JSON prefix.
+      }
+      break;
+    }
+  }
+
+  const excerpt = text.slice(0, 240).replace(/\s+/g, " ");
+  throw new Error(excerpt
+    ? `no JSON dependency report found; stdout began: ${excerpt}`
+    : "no JSON dependency report found; stdout was empty");
+}
+
 function severity(value: unknown): Severity {
   const s = String(value ?? "medium").toLowerCase();
   if (s === "critical" || s === "error") return "Critical";
@@ -150,15 +189,20 @@ async function version(command: string, args: string[]): Promise<string> {
 
 async function scanner<T>(name: string, command: string, args: string[], root: string, parse: (s: string) => T, allowFindings = false): Promise<{ value: T; run: ScannerRun }> {
   const result = await run(command, args, root, allowFindings);
-  let data: T; try { data = parse(result.stdout); } catch { throw new Error(`${name} returned invalid JSON.`); }
+  let data: T;
+  try { data = parse(result.stdout); }
+  catch (error) {
+    const detail = error instanceof Error ? error.message : "Could not parse scanner output.";
+    throw new Error(`${name} returned invalid JSON: ${detail}`);
+  }
   return { value: data, run: { scanner: name, version: await version(command, ["--version"]).catch(() => "version unavailable"), findings: 0, status: "complete" } };
 }
 
 async function scanDirectory(root: string, repo: string, sha: string): Promise<RepositoryScan> {
   const runs: ScannerRun[] = []; const findings: NormalizedFinding[] = [];
-  const invoke = async (name: string, command: string, args: string[], allowFindings = false, findingFilePath?: string) => {
+  const invoke = async (name: string, command: string, args: string[], allowFindings = false, findingFilePath?: string, parse: (value: string) => unknown = JSON.parse) => {
     try {
-      const result = await scanner(name, command, args, root, JSON.parse, allowFindings);
+      const result = await scanner(name, command, args, root, parse, allowFindings);
       const rows = normalizeScannerFindings(name, result.value, repo, sha, root);
       // pip-audit reports the vulnerable distribution name, not the
       // requirements file that caused it to be installed. Preserve the
@@ -196,7 +240,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
     }
   } else addSkipped("npm-audit", "No npm lockfile was found.");
   const reqFiles = names.filter(n => /(^|[\\/])requirements[^/\\]*\.txt$/i.test(n));
-  if (reqFiles.length) for (const req of reqFiles) await invoke("pip-audit", "pip-audit", ["--format", "json", "-r", resolve(root, req)], true, req);
+  if (reqFiles.length) for (const req of reqFiles) await invoke("pip-audit", "pip-audit", ["--format", "json", "-r", resolve(root, req)], true, req, parsePipAuditOutput);
   else addSkipped("pip-audit", "No supported requirements file was found.");
   const hasManifest = names.some(n => /(^|[\\/])(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|requirements[^/\\]*\.txt|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$/.test(n));
   if (hasManifest) await invoke("osv", "osv-scanner", ["scan", "source", "-r", root, "--format", "json"], true);
