@@ -16,6 +16,7 @@ test('discovers pull requests at their head revision for exact commit verificati
   const xml = pipelineConfigXml('owner', 'repo');
   assert.match(xml, /OriginPullRequestDiscoveryTrait><strategyId>2<\/strategyId>/);
   assert.match(xml, /<scriptPath>Jenkinsfile<\/scriptPath>/);
+  assert.doesNotMatch(xml, /<owner\b/);
 });
 
 test('rejects repository names that could escape the expected owner/repo shape', () => {
