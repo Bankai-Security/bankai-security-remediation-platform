@@ -288,6 +288,25 @@ async function getJenkinsCheckedOutCommit(credentials, buildUrl) {
   // If a pipeline checks out multiple different revisions, do not guess which one was tested.
   return revisions.size === 1 ? [...revisions][0] : null;
 }
+function getJenkinsBuildCommit(build) {
+  const actions = Array.isArray(build?.actions) ? build.actions : [];
+  // GitHub Branch Source can build a synthetic merge commit for a PR. The
+  // SCMRevisionAction retains the PR's actual source SHA as pullHash; that is
+  // the revision Bankai tracks on the remediation branch. Prefer it over the
+  // checked-out merge SHA and changelog entries (which may be older commits).
+  for (const action of actions) {
+    const revision = action?.revision;
+    const pullHash = revision?.pullHash;
+    if (typeof pullHash === 'string' && /^[0-9a-f]{40}$/i.test(pullHash)) return pullHash.toLowerCase();
+  }
+
+  // For ordinary branch jobs, Jenkins' Git plugin records the exact revision
+  // checked out for the build. Changelog commits are not a substitute: their
+  // first entry can predate the revision the build actually tested.
+  const checkedOut = actions.map((action) => action?.lastBuiltRevision?.SHA1).find((sha) => typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha));
+  if (checkedOut) return checkedOut.toLowerCase();
+  return null;
+}
 function progress(event, update) {
   if (!event.sender.isDestroyed()) event.sender.send('bankai:jenkins-job-progress', update);
 }
@@ -352,11 +371,13 @@ async function runJenkinsJob(event, jobUrl, parameters = {}) {
     const current = await response.json();
     if (!current.building && current.result) {
       const state = current.result === 'SUCCESS' ? 'success' : current.result === 'ABORTED' ? 'aborted' : 'failure';
-      const changeCommit = current.changeSet?.items?.find((item) => item.commitId)?.commitId;
-      const revisionCommit = current.actions?.map((action) => action.lastBuiltRevision?.SHA1).find(Boolean);
-      let commitSha = changeCommit || revisionCommit || null;
+      let commitSha = getJenkinsBuildCommit(current);
       if (!commitSha) {
         try { commitSha = await getJenkinsCheckedOutCommit(credentials, current.url || build.url); } catch { /* keep the build result; Bankai will request review if the SHA remains unknown */ }
+      }
+      if (!commitSha) {
+        const changedCommits = [...new Set((current.changeSet?.items || []).map((item) => item.commitId).filter((sha) => typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha)).map((sha) => sha.toLowerCase()))];
+        if (changedCommits.length === 1) commitSha = changedCommits[0];
       }
       const targetParameter = current.actions?.flatMap((action) => action.parameters || []).find((item) => /^(deployment_?url|deploy_?url|target_?url)$/i.test(String(item.name || '')) && typeof item.value === 'string');
       let targetUrl = null;
@@ -396,11 +417,13 @@ async function resumeJenkinsJob(event, jobUrl, existingBuildUrl) {
     const current = await response.json();
     if (!current.building && current.result) {
       const state = current.result === 'SUCCESS' ? 'success' : current.result === 'ABORTED' ? 'aborted' : 'failure';
-      const changeCommit = current.changeSet?.items?.find((item) => item.commitId)?.commitId;
-      const revisionCommit = current.actions?.map((action) => action.lastBuiltRevision?.SHA1).find(Boolean);
-      let commitSha = changeCommit || revisionCommit || null;
+      let commitSha = getJenkinsBuildCommit(current);
       if (!commitSha) {
         try { commitSha = await getJenkinsCheckedOutCommit(credentials, current.url || build.url); } catch { /* Bankai will request review if the SHA remains unknown */ }
+      }
+      if (!commitSha) {
+        const changedCommits = [...new Set((current.changeSet?.items || []).map((item) => item.commitId).filter((sha) => typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha)).map((sha) => sha.toLowerCase()))];
+        if (changedCommits.length === 1) commitSha = changedCommits[0];
       }
       const result = { state, buildUrl: current.url || build.url, number: current.number ?? build.number, timestamp: current.timestamp || null,
         durationMs: current.duration || null, commitSha, jobUrl };
