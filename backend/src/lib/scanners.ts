@@ -70,9 +70,21 @@ function parsePipAuditOutput(output: string, stderr = "", exitCode?: number): un
   }
 
   const excerpt = text.slice(0, 240).replace(/\s+/g, " ");
-  throw new Error(excerpt
-    ? `no JSON dependency report found; stdout began: ${excerpt}`
-    : "no JSON dependency report found; stdout was empty");
+  const diagnostic = stderr.trim().replace(/\s+/g, " ").slice(-1200);
+  throw new Error([
+    `pip-audit exited ${exitCode ?? "unknown"}`,
+    excerpt ? `no JSON dependency report found; stdout began: ${excerpt}` : "no JSON dependency report found; stdout was empty",
+    diagnostic ? `stderr: ${diagnostic}` : "stderr was empty",
+  ].join("; "));
+}
+
+function isPipAuditAdvisoryServiceFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  // Retry only failures that indicate an advisory feed/network problem. An
+  // empty or malformed report can instead mean pip-audit failed while
+  // resolving the requirements; switching advisory feeds cannot fix that.
+  return /vulnerability service|advisory service|pypi\.org|osv\.dev|connection (?:error|refused|reset)|timed? out|network is unreachable|temporary failure in name resolution|name or service not known|ssl|tls|http (?:429|5\d\d)/i.test(message);
 }
 
 function severity(value: unknown): Severity {
@@ -194,7 +206,7 @@ async function scanner<T>(name: string, command: string, args: string[], root: s
   try { data = parse(result.stdout, result.stderr, result.code); }
   catch (error) {
     const detail = error instanceof Error ? error.message : "Could not parse scanner output.";
-    throw new Error(`${name} returned invalid JSON: ${detail}`);
+    throw new Error(`${name} output could not be parsed: ${detail}`);
   }
   return { value: data, run: { scanner: name, version: await version(command, ["--version"]).catch(() => "version unavailable"), findings: 0, status: "complete" } };
 }
@@ -213,6 +225,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
         // when that service or request fails so a transient PyPI outage does
         // not block remediation verification when the alternate feed works.
         const primaryReason = primaryError instanceof Error ? primaryError.message : "Scanner failed.";
+        if (!isPipAuditAdvisoryServiceFailure(primaryError)) throw primaryError;
         logger.warn({ scanner: name, service: "pypi", reason: primaryReason }, "pip-audit primary advisory service failed; retrying with OSV");
         try {
           result = await scanner(name, command, ["--vulnerability-service", "osv", ...args], root, parse, allowFindings);
