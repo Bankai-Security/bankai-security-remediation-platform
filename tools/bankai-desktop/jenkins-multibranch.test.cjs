@@ -16,8 +16,9 @@ test('discovers pull requests at their head revision for exact commit verificati
   const xml = pipelineConfigXml('owner', 'repo');
   assert.match(xml, /OriginPullRequestDiscoveryTrait><strategyId>2<\/strategyId>/);
   assert.match(xml, /<scriptPath>Jenkinsfile<\/scriptPath>/);
-  assert.equal((xml.match(/<owner\b/g) || []).length, 2);
-  assert.equal((xml.match(/<owner class="org\.jenkinsci\.plugins\.workflow\.multibranch\.WorkflowMultiBranchProject" reference="\.\."\/>/g) || []).length, 2);
+  assert.equal((xml.match(/<owner\b/g) || []).length, 3);
+  assert.equal((xml.match(/<owner class="org\.jenkinsci\.plugins\.workflow\.multibranch\.WorkflowMultiBranchProject" reference="\.\.\/\.\."\/>/g) || []).length, 3);
+  assert.match(xml, /<folderViews class="jenkins\.branch\.MultiBranchProjectViewHolder"><owner[^>]+reference="\.\.\/\.\."\/><\/folderViews>/);
 });
 
 test('rejects repository names that could escape the expected owner/repo shape', () => {

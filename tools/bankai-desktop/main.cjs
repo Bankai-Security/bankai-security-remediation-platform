@@ -160,12 +160,12 @@ async function createRepositoryMultibranchPipeline(credentials, repo) {
     if (!config.ok) throw new Error(`Could not verify the existing Jenkins pipeline (HTTP ${config.status}).`);
     const xml = await config.text();
     if (!xml.includes(`<repoOwner>${owner}</repoOwner>`) || !xml.includes(`<repository>${repository}</repository>`)) throw new Error(`Jenkins job ${name} exists but is configured for a different GitHub repository.`);
-    const validOwnerReference = /<owner\s+class="org\.jenkinsci\.plugins\.workflow\.multibranch\.WorkflowMultiBranchProject"\s+reference="\.\."\s*\/>/g;
+    const validOwnerReference = /<owner\s+class="org\.jenkinsci\.plugins\.workflow\.multibranch\.WorkflowMultiBranchProject"\s+reference="\.\.\/\.\."\s*\/>/g;
     const references = xml.match(validOwnerReference) || [];
-    if (references.length !== 2) {
-      // Repair jobs created by older Bankai versions. A missing/non-reference
-      // owner leaves BranchSourceList.owner null and Jenkins fails to render
-      // the job page. Repost the minimal supported config with root references.
+    if (references.length !== 3 || !/<folderViews\b[^>]*>\s*<owner\b[^>]*reference="\.\.\/\.\."\s*\/>\s*<\/folderViews>/.test(xml)) {
+      // Repair jobs created by older Bankai versions. Missing owner references
+      // leave the multibranch view holder uninitialized and Jenkins fails to
+      // render the job page. Repost the Bankai-managed pipeline configuration.
       const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
       const crumb = crumbResponse.ok ? await crumbResponse.json() : null;
       const repair = await jenkinsFetch(credentials, configUrl.toString(), {
