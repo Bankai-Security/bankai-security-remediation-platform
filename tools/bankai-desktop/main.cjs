@@ -78,7 +78,17 @@ async function jenkinsFetch(credentials, url, options = {}) {
     if (response.status === 429) throw new Error('Jenkins is rate limiting requests. Wait briefly, then refresh jobs or retry the build.');
     if (response.status >= 500) {
       const method = (options.method || 'GET').toUpperCase();
-      throw new Error(`Jenkins returned HTTP ${response.status} for ${method} ${target.pathname}. Check the Jenkins controller log for this request, then retry from Bankai.`);
+      let detail = '';
+      try {
+        detail = (await response.clone().text())
+          .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/gi, ' ')
+          .replace(/(authorization|api[_-]?token|password|secret|crumb)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+          .replace(/\s+/g, ' ').trim().slice(0, 400);
+      } catch { /* Jenkins may not return a readable error body. */ }
+      throw new Error(`Jenkins returned HTTP ${response.status} for ${method} ${target.pathname}.${detail ? ` ${detail}` : ' Check the Jenkins controller log for this request.'}`);
     }
     if (response.status === 401 || response.status === 403) throw new Error('Jenkins rejected the saved credentials or permissions. Reconnect with a valid Jenkins API token.');
     return response;
@@ -156,7 +166,28 @@ async function createRepositoryMultibranchPipeline(credentials, repo) {
   const crumb = crumbResponse.ok ? await crumbResponse.json() : null;
   const xml = pipelineConfigXml(owner, repository);
   const target = new URL(jenkinsApiUrl(credentials.url, `createItem?name=${encodeURIComponent(name)}`));
-  const response = await jenkinsFetch(credentials, target.toString(), { method: 'POST', headers: { ...jenkinsCrumbHeaders(crumb), 'Content-Type': 'application/xml' }, body: xml });
+  let response;
+  try {
+    response = await jenkinsFetch(credentials, target.toString(), { method: 'POST', headers: { ...jenkinsCrumbHeaders(crumb), 'Content-Type': 'application/xml' }, body: xml });
+  } catch (error) {
+    // Jenkins can return an error after persisting an item (for example, if
+    // indexing fails during the create request). Confirm whether creation
+    // actually completed before reporting failure or encouraging another POST.
+    if (!/HTTP 500 for POST .*\/createItem\b/i.test(error instanceof Error ? error.message : String(error))) throw error;
+    try {
+      const refreshed = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'api/json?tree=jobs[name,url,_class]'));
+      const created = ((await refreshed.json()).jobs || []).find((job) => job.name === name
+        && String(job._class || '').toLowerCase().includes('multibranch'));
+      if (created?.url) {
+        const config = await jenkinsFetch(credentials, `${String(created.url).replace(/\/$/, '')}/config.xml`, { headers: { Accept: 'application/xml' } });
+        const savedXml = config.ok ? await config.text() : '';
+        if (savedXml.includes(`<repoOwner>${owner}</repoOwner>`) && savedXml.includes(`<repository>${repository}</repository>`)) {
+          return { name, url: created.url, created: true };
+        }
+      }
+    } catch { /* Keep the original HTTP 500 as the actionable failure. */ }
+    throw error;
+  }
   if (![200, 201, 302].includes(response.status)) throw new Error(response.status === 404 ? 'Jenkins could not create the pipeline. Install the Pipeline: Multibranch and GitHub Branch Source plugins.' : response.status === 400 ? 'Jenkins rejected the multibranch configuration. Check that Pipeline: Multibranch and GitHub Branch Source plugins are installed.' : `Jenkins could not create the multibranch pipeline (HTTP ${response.status}). Check that this account can create jobs.`);
   return { name, url: pipelineUrl(credentials.url, name), created: true };
 }
