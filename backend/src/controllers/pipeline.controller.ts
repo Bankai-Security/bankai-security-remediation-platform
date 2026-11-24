@@ -472,9 +472,22 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
     throw new HttpError(409, "Bankai cannot safely retry a run associated with a different pull request.");
   }
 
+  // The ticket and its last pipeline run can agree on a SHA that is no longer
+  // the live PR head (for example, when the PR advanced without a webhook).
+  // Always compare with GitHub before deciding whether a retry can reuse the
+  // stored run; otherwise Bankai repeats the same false commit-mismatch result.
+  const github = await loadGithubCreds(supabaseAdmin, req.project!.id);
+  if (!github) throw new HttpError(409, "Reconnect GitHub before retrying verification for the updated pull request.");
+  const pr = await getPullRequest(github.creds, ticket.github_pr_number!);
+  const headSha = await getBranchHeadSha(github.creds, ticket.github_branch_name);
+  if (!pr || pr.state !== "open" || pr.headRef !== ticket.github_branch_name || !pr.headSha || pr.headSha.toLowerCase() !== headSha.toLowerCase()) {
+    throw new HttpError(409, "The remediation pull request changed while Bankai was verifying it. Refresh the pull request and retry.");
+  }
+
   const now = new Date().toISOString();
   const matchesRecordedRun = !!run?.id && !!run.commit_sha && !!ticket.github_fix_commit_sha
-    && run.commit_sha.toLowerCase() === ticket.github_fix_commit_sha.toLowerCase();
+    && run.commit_sha.toLowerCase() === ticket.github_fix_commit_sha.toLowerCase()
+    && run.commit_sha.toLowerCase() === headSha.toLowerCase();
   if (matchesRecordedRun) {
     // If Bankai timed out while Jenkins was still alive, reuse the persisted
     // build URL on retry. Starting a second build would duplicate work and
@@ -499,13 +512,6 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
     // live PR and branch head with GitHub, then queue that exact commit so a
     // user can recover without pushing an artificial commit to trigger the
     // webhook again.
-    const github = await loadGithubCreds(supabaseAdmin, req.project!.id);
-    if (!github) throw new HttpError(409, "Reconnect GitHub before retrying verification for the updated pull request.");
-    const pr = await getPullRequest(github.creds, ticket.github_pr_number!);
-    const headSha = await getBranchHeadSha(github.creds, ticket.github_branch_name);
-    if (!pr || pr.state !== "open" || pr.headRef !== ticket.github_branch_name || !pr.headSha || pr.headSha.toLowerCase() !== headSha.toLowerCase()) {
-      throw new HttpError(409, "The remediation pull request changed while Bankai was verifying it. Refresh the pull request and retry.");
-    }
     const { error: queueError } = await supabaseAdmin.from("pipeline_runs").upsert({
       ticket_id: ticketId, project_id: req.project!.id, workflow_file: "Jenkinsfile", head_branch: ticket.github_branch_name,
       commit_sha: headSha, pull_request_number: ticket.github_pr_number, retry_count: 0, status: "queued", updated_at: now,
