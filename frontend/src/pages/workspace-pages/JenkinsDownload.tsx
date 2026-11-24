@@ -262,6 +262,8 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       const validSavedJob = result.jobs.find((job) => job.url === savedJob) || result.jobs.find((job) => job.url === result.pipeline.url);
       setSelectedJob(validSavedJob?.url ?? ''); setSelectedJobSupportsPr(Boolean(validSavedJob?.supportsPullRequests)); setRun(null);
       try {
+        if (validSavedJob) localStorage.setItem(`bankai-jenkins-job:${projectId}`, validSavedJob.url);
+        else localStorage.removeItem(`bankai-jenkins-job:${projectId}`);
         if (validSavedJob?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, validSavedJob.url);
         else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
       } catch { /* optional readiness hint */ }

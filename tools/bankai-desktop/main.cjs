@@ -408,7 +408,7 @@ function createMainWindow() {
   });
   hardenBankaiWindow(mainWindow);
   const projectId = startupProject;
-  const route = projectId && /^[\w-]+$/.test(projectId) ? `/workspace/${projectId}/jenkins` : '/projects';
+  const route = projectId && /^[\w-]+$/.test(projectId) ? `/workspace/${projectId}/jenkins` : '/login';
   mainWindow.loadURL(desktopPageUrl(route));
   mainWindow.on('closed', () => { closeJenkinsBrowser(); mainWindow = undefined; });
 }
@@ -512,9 +512,12 @@ ipcMain.handle('bankai:jenkins-connect', async (event, input) => {
   const response = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'api/json?tree=mode,nodeDescription'));
   if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected those credentials. Use your username and Jenkins API token.' : `Jenkins connection failed (HTTP ${response.status}).`);
   try { await response.json(); } catch { throw new Error('That address did not return the Jenkins API. Check the server address.'); }
-  await saveJenkinsCredentials(credentials);
   const pipeline = await createRepositoryMultibranchPipeline(credentials, input.repo);
   const jobs = await listJenkinsJobs(credentials);
+  // Persist the connection only after setup succeeds. Otherwise Jenkins can
+  // appear connected while the required repository pipeline was never made,
+  // and the UI hides the connect form needed to retry setup.
+  await saveJenkinsCredentials(credentials);
   return { connected: true, url: credentials.url, username: credentials.username, jobs, pipeline };
 });
 ipcMain.handle('bankai:jenkins-list-jobs', async (event) => {

@@ -1,6 +1,20 @@
 import { resolveApiOrigin } from './api-origin';
 
 const API_BASE_URL = resolveApiOrigin(window.__BANKAI_CONFIG__?.apiBaseUrl, import.meta.env.VITE_API_BASE_URL);
+let refreshingSession: Promise<boolean> | null = null;
+
+function refreshSessionCookie(): Promise<boolean> {
+  if (!refreshingSession) {
+    refreshingSession = fetch(`${API_BASE_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' })
+      .then((response) => {
+        if (response.status === 401) window.dispatchEvent(new Event('bankai:auth-expired'));
+        return response.ok;
+      })
+      .catch(() => false)
+      .finally(() => { refreshingSession = null; });
+  }
+  return refreshingSession;
+}
 
 export class ApiError extends Error {
   readonly status: number;
@@ -30,7 +44,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   // the browser sets one with the multipart boundary itself.
   const isFormData = options.body instanceof FormData;
 
-  const res = await fetch(`${API_BASE_URL}/api${path}`, {
+  const request = () => fetch(`${API_BASE_URL}/api${path}`, {
     ...options,
     credentials: "include",
     headers: {
@@ -38,6 +52,10 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
       ...options.headers,
     },
   });
+  let res = await request();
+  if (res.status === 401 && path !== '/auth/refresh' && path !== '/auth/login' && path !== '/auth/signup' && path !== '/auth/reset-password') {
+    if (await refreshSessionCookie()) res = await request();
+  }
 
   if (res.status === 204) {
     return undefined as T;

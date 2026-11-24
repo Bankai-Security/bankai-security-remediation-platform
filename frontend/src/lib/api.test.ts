@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, deleteOrg, listFindings, login, uploadScan } from './api';
+import { ApiError, deleteOrg, listFindings, listProjects, login, uploadScan } from './api';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -41,5 +41,16 @@ describe('API client', () => {
     const error = await deleteOrg('org-1').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).projectCount).toBe(3);
+  });
+
+  it('refreshes an expired access cookie and retries the original request', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(listProjects()).resolves.toEqual({ projects: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/auth/refresh');
   });
 });

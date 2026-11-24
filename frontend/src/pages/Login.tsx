@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import GithubIcon from '../components/GithubIcon';
@@ -10,7 +10,8 @@ import './AuthLayout.css';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { setUser } = useCurrentUser();
+  const { user, loading, setUser } = useCurrentUser();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,6 +19,10 @@ export default function Login() {
     searchParams.get('sso_error') ? 'Could not sign you in. Please try again.' : null,
   );
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!loading && user) navigate('/projects', { replace: true });
+  }, [loading, navigate, user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,7 +32,8 @@ export default function Login() {
     try {
       const result = await login({ email, password });
       setUser(result.user);
-      navigate('/projects');
+      const destination = (location.state as { from?: unknown } | null)?.from;
+      navigate(typeof destination === 'string' && destination.startsWith('/') && !destination.startsWith('//') ? destination : '/projects', { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.fieldErrors?.[0]?.message ?? err.message);

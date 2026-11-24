@@ -18,6 +18,7 @@ export default function RetryFixButton({ onClick, retrying, title, size = 22, cl
       }}
       disabled={retrying}
       title={title}
+      aria-label={title}
     >
       <svg
         width={size * 0.55}

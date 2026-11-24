@@ -15,6 +15,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    const expireSession = () => setUser(null);
+    window.addEventListener('bankai:auth-expired', expireSession);
 
     getSession()
       .then(({ user: sessionUser }) => {
@@ -29,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+      window.removeEventListener('bankai:auth-expired', expireSession);
     };
   }, []);
 

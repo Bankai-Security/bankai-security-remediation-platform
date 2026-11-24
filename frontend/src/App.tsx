@@ -22,6 +22,7 @@ import OrgRollup from './pages/OrgRollup';
 import OrgSettings from './pages/OrgSettings';
 import TeamSettings from './pages/TeamSettings';
 import Workspace from './pages/Workspace';
+import RequireAuth from './components/RequireAuth';
 import {
   RemediationWorkflow,
   Overview,
@@ -67,31 +68,33 @@ export default function App() {
       <Route path="/signup" element={<SignUp />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/onboarding" element={<Onboarding />} />
-      <Route path="/projects" element={<Projects />} />
-      <Route path="/projects/new" element={<NewProject />} />
-      <Route path="/orgs/new" element={<CreateOrg />} />
-      <Route path="/orgs/:orgId" element={<OrgRollup />} />
-      <Route path="/orgs/:orgId/settings" element={<OrgSettings />} />
-      <Route path="/orgs/:orgId/teams/:teamId" element={<TeamSettings />} />
-      <Route path="/settings" element={<AccountSettings />} />
       <Route path="/invites/:token" element={<InviteAccept />} />
       <Route path="/org-invites/:token" element={<OrgInviteAccept />} />
       <Route path="/team-invites/:token" element={<TeamInviteAccept />} />
 
-      <Route path="/workspace/:projectId" element={<Workspace />}>
-        <Route index element={<Navigate to="workflow" replace />} />
-        <Route path="workflow" element={<RemediationWorkflow />} />
-        <Route path="workflow/intake-triage" element={<IntakeDetail />} />
-        <Route path="workflow/defect-generation" element={<DefectGenerationDetail />} />
-        <Route path="workflow/jira-tickets" element={<JiraTicketsDetail />} />
-        <Route path="overview" element={<Overview />} />
-        <Route path="intake" element={<ReportIntake />} />
-        <Route path="triage" element={<AITriage />} />
-        <Route path="tickets" element={<Tickets />} />
-        <Route path="activity" element={<Activity />} />
-        <Route path="jenkins" element={<JenkinsDownload />} />
-        <Route path="settings" element={<Settings />} />
+      <Route element={<RequireAuth />}>
+        <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/new" element={<NewProject />} />
+        <Route path="/orgs/new" element={<CreateOrg />} />
+        <Route path="/orgs/:orgId" element={<OrgRollup />} />
+        <Route path="/orgs/:orgId/settings" element={<OrgSettings />} />
+        <Route path="/orgs/:orgId/teams/:teamId" element={<TeamSettings />} />
+        <Route path="/settings" element={<AccountSettings />} />
+        <Route path="/workspace/:projectId" element={<Workspace />}>
+          <Route index element={<Navigate to="workflow" replace />} />
+          <Route path="workflow" element={<RemediationWorkflow />} />
+          <Route path="workflow/intake-triage" element={<IntakeDetail />} />
+          <Route path="workflow/defect-generation" element={<DefectGenerationDetail />} />
+          <Route path="workflow/jira-tickets" element={<JiraTicketsDetail />} />
+          <Route path="overview" element={<Overview />} />
+          <Route path="intake" element={<ReportIntake />} />
+          <Route path="triage" element={<AITriage />} />
+          <Route path="tickets" element={<Tickets />} />
+          <Route path="activity" element={<Activity />} />
+          <Route path="jenkins" element={<JenkinsDownload />} />
+          <Route path="settings" element={<Settings />} />
+        </Route>
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />

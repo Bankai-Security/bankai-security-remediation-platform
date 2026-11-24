@@ -129,6 +129,22 @@
   margin-top: 8px;
 }
 
+.markdown-text > :first-child { margin-top: 0; }
+.markdown-text > :last-child { margin-bottom: 0; }
+.tickets-kanban-card-title p { margin: 0 0 6px; }
+.tickets-kanban-card-title h1,
+.tickets-kanban-card-title h2,
+.tickets-kanban-card-title h3,
+.tickets-kanban-card-title h4,
+.tickets-kanban-card-title h5,
+.tickets-kanban-card-title h6 { margin: 0 0 6px; font-size: 1em; line-height: 1.35; }
+.tickets-kanban-card-title ul,
+.tickets-kanban-card-title ol { margin: 4px 0 6px; padding-left: 20px; }
+.tickets-kanban-card-title pre { overflow-x: auto; padding: 7px; border-radius: 6px; background: var(--color-fill); font-size: 11px; }
+.tickets-kanban-card-title blockquote { margin: 4px 0; padding-left: 9px; border-left: 2px solid var(--color-border-strong); color: var(--color-text-subtle); }
+.tickets-kanban-card-title code,
+.tickets-table-title-markdown code { padding: 1px 3px; border-radius: 3px; background: var(--color-fill); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+
 .tickets-remediation-progress {
   display: flex;
   align-items: flex-start;
@@ -201,6 +217,11 @@
   color: var(--color-text-muted);
   font-size: 11px;
 }
+.tickets-pipeline-status--result { display: inline-flex; align-items: center; gap: 5px; }
+.tickets-ci-icon { flex: 0 0 auto; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tickets-ci-icon--passed { color: #16A34A; }
+.tickets-ci-icon--failed { color: #DC2626; }
+.tickets-ci-retry { display: inline-flex !important; margin-left: 2px; vertical-align: middle; }
 .tickets-pipeline-status a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   .tickets-pipeline-review-hint { display: block; margin-top: 3px; color: var(--color-text-faint); font-size: 11px; }
 .tickets-deployment-target { margin-left: 8px; }
@@ -271,6 +292,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.tickets-table-title-markdown { display: inline; }
+.tickets-table-title-markdown > * { display: inline; margin: 0; font-size: inherit; font-weight: inherit; }
+.tickets-table-title-markdown ul,
+.tickets-table-title-markdown ol,
+.tickets-table-title-markdown pre,
+.tickets-table-title-markdown blockquote { display: none; }
 
 .tickets-table-service {
   font-size: 12.5px;

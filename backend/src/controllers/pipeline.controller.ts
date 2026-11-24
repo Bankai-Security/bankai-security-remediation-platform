@@ -377,7 +377,7 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
     .eq("id", ticketId).eq("project_id", req.project!.id).maybeSingle();
   if (ticketError) throw new HttpError(500, "Could not load the remediation pull request.");
   if (!ticket) throw new HttpError(404, "Ticket not found.");
-  if (ticket.ci_status !== "needs_review") throw new HttpError(409, "Only a Jenkins run marked needs review can be retried.");
+  if (ticket.ci_status !== "needs_review" && ticket.ci_status !== "failed") throw new HttpError(409, "Only a failed Jenkins verification can be retried.");
   if (ticket.github_pr_state !== "open" || !ticket.github_pr_number) throw new HttpError(409, "The remediation pull request must still be open to retry verification.");
 
   const { data: active, error: activeError } = await supabaseAdmin.from("pipeline_runs").select("id")
@@ -404,7 +404,7 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
 
   const { error: updateTicketError } = await supabaseAdmin.from("tickets").update({ ci_status: "queued", ci_error: null, ci_run_url: null })
-    .eq("id", ticketId).eq("project_id", req.project!.id).eq("ci_status", "needs_review");
+    .eq("id", ticketId).eq("project_id", req.project!.id).in("ci_status", ["needs_review", "failed"]);
   if (updateTicketError) throw new HttpError(500, "The Jenkins retry was queued, but the ticket status could not be updated.");
   await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: req.user!.id, actorLabel: req.user!.email ?? "Bankai user",
     eventType: "pipeline", summary: "queued a manual Jenkins verification retry for", linkLabel: `PR #${ticket.github_pr_number}`, linkTo: "tickets" });
