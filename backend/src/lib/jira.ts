@@ -525,6 +525,7 @@ export interface JiraIssueSummary {
   // null if the issue's description has no parseable "Fingerprint: <value>"
   // line — e.g. a manually created issue, or one predating this feature.
   fingerprint: string | null;
+  externalId?: string | null;
   // Originating project's github_repo from the "Repo: …" Technical Details
   // line. null for legacy issues written before that marker existed —
   // reconcile keeps fingerprint-only matching for those (with a warning).
@@ -550,6 +551,10 @@ export interface JiraIssueSummary {
   description?: string | null;
   fixAvailable?: string | null;
   sourceUrl?: string | null;
+  affectedPackages?: string | null;
+  currentVersions?: string | null;
+  fixedVersions?: string | null;
+  recommendations?: string | null;
 }
 
 const FINGERPRINT_LINE = /^Fingerprint:\s*(\S+)/m;
@@ -590,6 +595,7 @@ function parseSectionBody(text: string, header: string): string | null {
 const VALID_SEVERITIES: readonly string[] = ["Critical", "High", "Medium", "Low"];
 
 interface ParsedFindingFields {
+  externalId: string | null;
   title: string | null;
   severity: Severity | null;
   cvssScore: number | null;
@@ -602,6 +608,10 @@ interface ParsedFindingFields {
   description: string | null;
   fixAvailable: string | null;
   sourceUrl: string | null;
+  affectedPackages: string | null;
+  currentVersions: string | null;
+  fixedVersions: string | null;
+  recommendations: string | null;
 }
 
 function parseFindingFieldsFromDescription(text: string): ParsedFindingFields {
@@ -610,6 +620,7 @@ function parseFindingFieldsFromDescription(text: string): ParsedFindingFields {
   const cvssParsed = cvssRaw ? Number(cvssRaw) : NaN;
 
   return {
+    externalId: parseLabelLine(text, "ID"),
     title: parseLabelLine(text, "Title"),
     severity: severityRaw && VALID_SEVERITIES.includes(severityRaw) ? (severityRaw as Severity) : null,
     cvssScore: Number.isFinite(cvssParsed) ? cvssParsed : null,
@@ -622,6 +633,10 @@ function parseFindingFieldsFromDescription(text: string): ParsedFindingFields {
     description: parseSectionBody(text, "Description"),
     fixAvailable: parseLabelLine(text, "Fix Available"),
     sourceUrl: parseLabelLine(text, "GitHub"),
+    affectedPackages: parseSectionBody(text, "Affected Packages"),
+    currentVersions: parseSectionBody(text, "Current Versions"),
+    fixedVersions: parseSectionBody(text, "Fixed Versions"),
+    recommendations: parseSectionBody(text, "Recommendations"),
   };
 }
 
@@ -707,6 +722,7 @@ export async function searchIssuesInProject(creds: JiraCredentials, projectKey: 
           key: issue.key,
           url,
           fingerprint,
+          externalId: fields.externalId,
           // "Repo:" is the machine marker (not Overview's "Repository:") —
           // parseLabelLine("Repo") won't match "Repository:" because the
           // label must be followed immediately by ":".
@@ -724,6 +740,10 @@ export async function searchIssuesInProject(creds: JiraCredentials, projectKey: 
           description: fields.description,
           fixAvailable: fields.fixAvailable,
           sourceUrl: fields.sourceUrl,
+          affectedPackages: fields.affectedPackages,
+          currentVersions: fields.currentVersions,
+          fixedVersions: fields.fixedVersions,
+          recommendations: fields.recommendations,
         });
       }
       if (body.isLast || !body.nextPageToken) return results;

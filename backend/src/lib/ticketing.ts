@@ -816,6 +816,11 @@ interface ReconcileCandidateFinding {
   id: string;
   fingerprint: string;
   title: string;
+  source: "csv" | "github_ai" | "jira_import";
+  external_id: string | null;
+  component: string | null;
+  file_path: string | null;
+  finding_type: string | null;
   service: string | null;
   severity: Severity;
   sla_due_date: string | null;
@@ -852,7 +857,7 @@ export async function reconcileJiraTickets(
   const { projectId, jira, actor, rpcName, slaPolicyDays } = input;
 
   const [{ data: findings, error }, { data: projectRow }] = await Promise.all([
-    supabase.from("findings").select("id, fingerprint, title, service, severity, sla_due_date, bucket, tickets ( id )").eq("project_id", projectId),
+    supabase.from("findings").select("id, fingerprint, title, source, external_id, component, file_path, finding_type, service, severity, sla_due_date, bucket, tickets ( id )").eq("project_id", projectId),
     supabase.from("projects").select("github_repo").eq("id", projectId).single(),
   ]);
 
@@ -890,6 +895,34 @@ export async function reconcileJiraTickets(
 
     if (!issueByFingerprint.has(issue.fingerprint)) {
       issueByFingerprint.set(issue.fingerprint, issue);
+    }
+  }
+
+  // Jira-imported findings are only a local cache of the linked issue's
+  // scanner details. Refresh those fields on sync so old records (for
+  // example, a pip-audit package name stored as file_path) inherit corrected
+  // source paths and stable advisory IDs from the current Jira description.
+  for (const [fingerprint, issue] of issueByFingerprint) {
+    const existing = allFindings.find((finding) => finding.fingerprint === fingerprint && finding.source === "jira_import");
+    if (!existing) continue;
+    const { error: refreshError } = await supabase.from("findings").update({
+      external_id: issue.externalId ?? existing.external_id,
+      component: issue.component ?? existing.component,
+      file_path: issue.filePath ?? existing.file_path,
+      finding_type: issue.findingType ?? existing.finding_type,
+      source_status: issue.sourceStatus ?? null,
+      date_found: issue.dateFound ?? null,
+      description: issue.description ?? null,
+      fix_available: issue.fixAvailable ?? null,
+      source_url: issue.sourceUrl ?? null,
+      affected_packages: issue.affectedPackages ?? issue.component ?? null,
+      current_versions: issue.currentVersions ?? null,
+      fixed_versions: issue.fixedVersions ?? null,
+      recommendations: issue.recommendations ?? null,
+      remediation_guidance: issue.recommendations ?? null,
+    }).eq("id", existing.id).eq("project_id", projectId);
+    if (refreshError) {
+      logger.error({ err: refreshError, findingId: existing.id, issueKey: issue.key }, "Could not refresh Jira-imported finding details");
     }
   }
   if (issueByFingerprint.size === 0) return { reconciled: 0, imported: 0 };
@@ -948,7 +981,7 @@ export async function reconcileJiraTickets(
       project_id: projectId,
       scan_id: null,
       fingerprint,
-      external_id: null,
+      external_id: issue.externalId ?? null,
       title: issue.title || `Untitled finding imported from Jira issue ${issue.key}`,
       severity,
       cvss_score: issue.cvssScore ?? null,
@@ -964,10 +997,10 @@ export async function reconcileJiraTickets(
       service: issue.service ?? null,
       environment: null,
       cves: null,
-      affected_packages: null,
-      current_versions: null,
-      fixed_versions: null,
-      recommendations: null,
+      affected_packages: issue.affectedPackages ?? issue.component ?? null,
+      current_versions: issue.currentVersions ?? null,
+      fixed_versions: issue.fixedVersions ?? null,
+      recommendations: issue.recommendations ?? null,
       bucket: "New Delta",
       confidence: 80,
       rationale: `Imported from Jira issue ${issue.key} — created by a different Bankai project sharing this Jira connection.`,

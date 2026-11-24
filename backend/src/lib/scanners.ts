@@ -156,10 +156,23 @@ async function scanner<T>(name: string, command: string, args: string[], root: s
 
 async function scanDirectory(root: string, repo: string, sha: string): Promise<RepositoryScan> {
   const runs: ScannerRun[] = []; const findings: NormalizedFinding[] = [];
-  const invoke = async (name: string, command: string, args: string[], allowFindings = false) => {
+  const invoke = async (name: string, command: string, args: string[], allowFindings = false, findingFilePath?: string) => {
     try {
       const result = await scanner(name, command, args, root, JSON.parse, allowFindings);
-      const rows = normalizeScannerFindings(name, result.value, repo, sha, root); result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
+      const rows = normalizeScannerFindings(name, result.value, repo, sha, root);
+      // pip-audit reports the vulnerable distribution name, not the
+      // requirements file that caused it to be installed. Preserve the
+      // manifest context so remediation targets a real repository file.
+      if (name === "pip-audit" && findingFilePath) {
+        const manifestPath = findingFilePath.replaceAll("\\", "/");
+        for (const row of rows) {
+          row.filePath = manifestPath;
+          if (row.sourceUrl?.includes(`/blob/${sha}/`)) {
+            row.sourceUrl = `https://github.com/${repo}/blob/${sha}/${manifestPath}`;
+          }
+        }
+      }
+      result.run.findings = rows.length; runs.push(result.run); findings.push(...rows);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Scanner failed.";
       logger.warn({ scanner: name, reason }, "Repository scanner failed");
@@ -183,7 +196,7 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
     }
   } else addSkipped("npm-audit", "No npm lockfile was found.");
   const reqFiles = names.filter(n => /(^|[\\/])requirements[^/\\]*\.txt$/i.test(n));
-  if (reqFiles.length) for (const req of reqFiles) await invoke("pip-audit", "pip-audit", ["--format", "json", "-r", resolve(root, req)], true);
+  if (reqFiles.length) for (const req of reqFiles) await invoke("pip-audit", "pip-audit", ["--format", "json", "-r", resolve(root, req)], true, req);
   else addSkipped("pip-audit", "No supported requirements file was found.");
   const hasManifest = names.some(n => /(^|[\\/])(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|requirements[^/\\]*\.txt|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$/.test(n));
   if (hasManifest) await invoke("osv", "osv-scanner", ["scan", "source", "-r", root, "--format", "json"], true);

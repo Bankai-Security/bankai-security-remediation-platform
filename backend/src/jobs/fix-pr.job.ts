@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { recordActivity } from "../lib/activity.js";
-import { tryApplyDependencyVersionFix } from "../lib/dependency-fix.js";
+import { loadPythonDependencyContext, tryApplyDependencyVersionFix } from "../lib/dependency-fix.js";
 import { generateFix, generatedFixPathsAreInScope, isSafePatchPath, normalizeRepositoryFilePath, type FixFindingInput } from "../lib/gemini-fix.js";
 import { gatherRepoContext } from "../lib/repo-context.js";
 import {
@@ -16,6 +16,7 @@ import { transitionIssue, type JiraCredentials } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { env } from "../env.js";
 import type { FixPrJobData } from "../lib/queue.js";
+import { scanRepository } from "../lib/scanners.js";
 import { attemptBranchCreation, loadGithubCreds, loadJiraCreds } from "../lib/ticketing.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
@@ -38,6 +39,7 @@ interface FixPrFindingRow {
   title: string;
   severity: string;
   source: "csv" | "github_ai" | "jira_import";
+  component: string | null;
   cwe: string | null;
   file_path: string | null;
   line_start: number | null;
@@ -45,6 +47,7 @@ interface FixPrFindingRow {
   description: string | null;
   rationale: string | null;
   remediation_guidance: string | null;
+  fix_available: string | null;
   finding_type: string | null;
   cves: string | null;
   affected_packages: string | null;
@@ -53,7 +56,7 @@ interface FixPrFindingRow {
 }
 
 const SELECT_FIX_PR_TICKET =
-  "id, key, status, github_branch_name, github_pr_number, github_pr_low_confidence, github_fix_commit_sha, jira_issue_key, finding_id, findings ( fingerprint, external_id, title, severity, source, cwe, file_path, line_start, line_end, description, rationale, remediation_guidance, finding_type, cves, affected_packages, current_versions, fixed_versions )";
+  "id, key, status, github_branch_name, github_pr_number, github_pr_low_confidence, github_fix_commit_sha, jira_issue_key, finding_id, findings ( fingerprint, external_id, title, severity, source, component, cwe, file_path, line_start, line_end, description, rationale, remediation_guidance, fix_available, finding_type, cves, affected_packages, current_versions, fixed_versions )";
 
 async function setTicketError(ticketId: string, message: string): Promise<void> {
   await supabaseAdmin.from("tickets").update({ status: "In Progress", github_pr_error: message }).eq("id", ticketId);
@@ -70,7 +73,7 @@ function buildFindingEvidence(finding: FixPrFindingRow): string {
     finding.description ?? finding.rationale ?? "",
     finding.finding_type ? `Finding type: ${finding.finding_type}` : null,
     finding.cves ? `CVEs: ${finding.cves}` : null,
-    finding.affected_packages ? `Affected packages: ${finding.affected_packages}` : null,
+    finding.affected_packages || finding.component ? `Affected packages: ${finding.affected_packages ?? finding.component}` : null,
     finding.current_versions ? `Current versions: ${finding.current_versions}` : null,
     finding.fixed_versions ? `Fixed versions: ${finding.fixed_versions}` : null,
   ]
@@ -81,11 +84,61 @@ function buildFindingEvidence(finding: FixPrFindingRow): string {
 function buildRemediationGuidance(finding: FixPrFindingRow): string {
   return [
     finding.remediation_guidance ?? "",
-    finding.fixed_versions ? `Use fixed version ${finding.fixed_versions}.` : null,
+    finding.fixed_versions || finding.fix_available ? `Use fixed version ${finding.fixed_versions ?? finding.fix_available}.` : null,
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join("\n\n");
 }
+
+function normalizeFindingIdentity(value: string | null | undefined): string {
+  return value?.trim().toLowerCase().replaceAll("\\", "/").replace(/\s+/g, " ") ?? "";
+}
+
+function findingStillPresent(finding: FixPrFindingRow, scanFindings: RescannedFinding[]): boolean {
+  const scanner = normalizeFindingIdentity(finding.finding_type);
+  const component = normalizeFindingIdentity(finding.component);
+  const externalId = normalizeFindingIdentity(finding.external_id);
+  const filePath = normalizeFindingIdentity(finding.file_path);
+  const title = normalizeFindingIdentity(finding.title);
+
+  return scanFindings.some((current) => {
+    if (current.fingerprint === finding.fingerprint) return true;
+    if (normalizeFindingIdentity(current.findingType) !== scanner) return false;
+
+    const currentComponent = normalizeFindingIdentity(current.component);
+    const currentId = normalizeFindingIdentity(current.externalId);
+    const currentPath = normalizeFindingIdentity(current.filePath);
+    if (externalId && currentId === externalId && (!component || currentComponent === component)) {
+      // Rule/advisory identity is enough for dependency findings, whose
+      // manifest location can legitimately move between scans. Code findings
+      // also require the same path so a match in another file cannot revive a
+      // stale ticket.
+      return scanner === "pip-audit" || !filePath || currentPath === filePath;
+    }
+
+    if (scanner === "pip-audit" && component && currentComponent === component) {
+      // Backfill-style Jira imports predate persisted external IDs. Match the
+      // old truncated summary against the scanner's full advisory text so a
+      // different vulnerability in the same package does not count as found.
+      const titleAnchor = title.replace(/…|\.\.\.$/, "").slice(0, 100);
+      const currentTitle = normalizeFindingIdentity(current.title);
+      const currentDescription = normalizeFindingIdentity(current.description);
+      return titleAnchor.length >= 40 && (currentTitle.includes(titleAnchor) || currentDescription.includes(titleAnchor));
+    }
+
+    return false;
+  });
+}
+
+type RescannedFinding = {
+  fingerprint: string;
+  externalId: string | null;
+  title: string;
+  component: string | null;
+  filePath: string | null;
+  findingType: string | null;
+  description: string | null;
+};
 
 function compactMultiline(value: string | null | undefined, maxLength = 1600): string | null {
   const trimmed = value?.trim();
@@ -98,6 +151,7 @@ function buildRemediationEvidenceMarkdown(input: {
   ticket: FixPrTicketRow;
   finding: FixPrFindingRow;
   branch: string;
+  targetFilePath: string;
   engine: "Bankai DeepSeek" | "Bankai Gemini";
   fixSummary: string | null;
   lowConfidence?: boolean;
@@ -116,7 +170,7 @@ function buildRemediationEvidenceMarkdown(input: {
     finding.external_id ? `- Rule: ${finding.external_id}` : null,
     finding.cwe ? `- CWE: ${finding.cwe}` : null,
     `- Severity: ${finding.severity}`,
-    `- File: \`${finding.file_path ?? "unknown"}\``,
+    `- File: \`${input.targetFilePath}\``,
     finding.line_start != null ? `- Location: line ${finding.line_start}${finding.line_end && finding.line_end !== finding.line_start ? `-${finding.line_end}` : ""}` : null,
     `- Branch: \`${input.branch}\``,
     input.lowConfidence ? "- Confidence: low; human review required before merge" : "- Confidence: normal; human review still required before merge",
@@ -202,7 +256,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     );
     return;
   }
-  const targetFilePath = normalizeRepositoryFilePath(finding.file_path);
+  let targetFilePath = normalizeRepositoryFilePath(finding.file_path);
   if (!isSafePatchPath(targetFilePath)) {
     await setTicketError(ticketId, "The finding target is not a safe repository-relative path; no remediation was attempted.");
     return;
@@ -225,6 +279,59 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       "GitHub is not connected for this project, so remediation cannot start.",
     );
     return;
+  }
+
+  // Findings can go stale between the original scan and a queued remediation
+  // run. Re-run the configured scanner set against the current default branch
+  // before creating or modifying a remediation branch. This shared preflight
+  // applies to every language/scanner Bankai runs, not just dependency audits.
+  let currentBranchSha: string;
+  try {
+    currentBranchSha = await getBranchHeadSha(github.creds, github.defaultBranch);
+  } catch (err) {
+    logger.error({ err, ticketId, projectId }, "Could not read the current default branch before remediation");
+    await setTicketError(ticketId, "Could not read the current default branch. No remediation changes were made; retry after GitHub is available.");
+    return;
+  }
+  const scannerName = finding.finding_type?.trim().toLowerCase();
+  const configuredScanners = new Set(["trivy", "semgrep", "gitleaks", "bandit", "npm-audit", "pip-audit", "osv"]);
+  if (scannerName && configuredScanners.has(scannerName)) {
+    let currentScan: Awaited<ReturnType<typeof scanRepository>>;
+    try {
+      currentScan = await scanRepository(github.creds, currentBranchSha);
+    } catch (err) {
+      logger.error({ err, ticketId, projectId }, "Could not revalidate the finding against the current default branch");
+      await setTicketError(ticketId, "Could not verify this finding against the current default branch. No remediation changes were made; retry after the repository scan is available.");
+      return;
+    }
+    const scannerRun = currentScan.scanners.find((run) => run.scanner.toLowerCase() === scannerName);
+    if (!scannerRun || scannerRun.status === "failed") {
+      await setTicketError(ticketId, scannerRun?.reason
+        ? `Could not verify this finding because ${scannerRun.scanner} failed: ${scannerRun.reason}`
+        : `Could not verify this finding because scanner "${finding.finding_type}" did not run. No remediation changes were made.`);
+      return;
+    }
+    if (!findingStillPresent(finding, currentScan.findings)) {
+      await setTicketError(
+        ticketId,
+        `This finding was not detected by ${scannerRun.scanner} on the current default branch (${currentBranchSha.slice(0, 8)}). No remediation changes were made; rescan and review the ticket before retrying.`,
+      );
+      return;
+    }
+  } else {
+    // Manual/CSV findings and imported scanner types without an executable
+    // scanner still need a valid current-branch file target.
+    try {
+      const tree = await getTree(github.creds, currentBranchSha);
+      if (!tree.some((entry) => entry.type === "blob" && entry.path === targetFilePath)) {
+        await setTicketError(ticketId, `The finding target "${targetFilePath}" is not present on the current default branch. No remediation changes were made; rescan or update the finding location before retrying.`);
+        return;
+      }
+    } catch (err) {
+      logger.error({ err, ticketId, projectId }, "Could not validate the finding target against the current default branch");
+      await setTicketError(ticketId, "Could not validate the finding target against the current default branch. No remediation changes were made; retry after GitHub is available.");
+      return;
+    }
   }
 
   let jira: Awaited<ReturnType<typeof loadJiraCreds>> = null;
@@ -311,9 +418,26 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       // observed before generation; the mutable branch name is not a baseline.
       const baseSha = headSha;
       const tree = await getTree(github.creds, baseSha);
-      const entry = tree.find((e) => e.path === targetFilePath);
+      let entry = tree.find((e) => e.path === targetFilePath);
+      // Older pip-audit findings used the package name (for example,
+      // "idna") as file_path. Resolve those legacy records to the source
+      // requirements manifest before giving up on remediation.
+      if (!entry && finding.finding_type === "pip-audit") {
+        const requirementFiles = tree
+          .filter((item) => item.type === "blob" && /(^|\/)requirements(?:[-\w]*)?\.txt$/i.test(item.path))
+          .map((item) => item.path);
+        const preferred = requirementFiles.includes("requirements.txt")
+          ? "requirements.txt"
+          : requirementFiles.length === 1 ? requirementFiles[0] : null;
+        if (preferred) {
+          targetFilePath = preferred;
+          entry = tree.find((item) => item.path === preferred);
+        }
+      }
       if (!entry) {
-        await setTicketError(ticketId, `"${targetFilePath}" no longer exists on this branch.`);
+        await setTicketError(ticketId, finding.finding_type === "pip-audit"
+          ? `Could not identify the requirements file for package finding "${finding.file_path}" on this branch.`
+          : `"${targetFilePath}" no longer exists on this branch.`);
         return;
       }
       const fileContent = await getBlob(github.creds, entry.sha);
@@ -324,17 +448,25 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
         targetFilePath,
         vulnerableFileContent: fileContent,
       });
+      const dependencyContext = finding.finding_type === "pip-audit"
+        ? await loadPythonDependencyContext({
+            filePath: targetFilePath,
+            fileContent,
+            title: finding.title,
+            affectedPackages: finding.affected_packages ?? finding.component,
+          })
+        : "";
 
       const deterministicFix = tryApplyDependencyVersionFix({
         filePath: targetFilePath,
         fileContent,
         title: finding.title,
-        affectedPackages: finding.affected_packages,
-        fixedVersions: finding.fixed_versions,
+        affectedPackages: finding.affected_packages ?? finding.component,
+        fixedVersions: finding.fixed_versions ?? finding.fix_available,
       });
       const fix = deterministicFix
         ? { confident: true, fixedContent: deterministicFix.fixedContent, summary: deterministicFix.summary, filesToUpdate: undefined }
-        : await generateFix(findingInput, fileContent, repoContext.formattedPromptContext);
+        : await generateFix(findingInput, fileContent, `${repoContext.formattedPromptContext}${dependencyContext}`);
       if (!fix || fix.fixedContent === fileContent) {
         await setTicketError(ticketId, "Could not generate an automatic fix for this finding.");
         return;
@@ -383,6 +515,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       ticket,
       finding,
       branch,
+      targetFilePath,
       engine: env.AI_PROVIDER === "openrouter" ? "Bankai DeepSeek" : "Bankai Gemini",
       fixSummary: alreadyCommitted ? "A previous Bankai run already committed this fix; this run resumed at pull-request creation." : fixSummary,
       lowConfidence,

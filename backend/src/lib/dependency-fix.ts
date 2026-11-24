@@ -108,9 +108,10 @@ export function tryApplyDependencyVersionFix(input: DependencyVersionFixInput): 
     nextLines.push(line);
   }
 
-  if (!replaced) {
-    nextLines.push(replacement);
-  }
+  // A pip-audit finding may be transitive. Adding a direct pin can conflict
+  // with the parent package's constraints (for example, old requests pins
+  // idna below 2.8). Let the AI fixer upgrade the responsible parent instead.
+  if (!replaced) return null;
 
   const fixedContent = `${nextLines.join(lineEnding)}${hasTrailingNewline ? lineEnding : ""}`;
   if (fixedContent === input.fileContent) return null;
