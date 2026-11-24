@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('bankaiDesktop', Object.freeze({
   openExternal: (url) => ipcRenderer.invoke('bankai:open-external', url),
   getJenkinsConnection: () => ipcRenderer.invoke('bankai:jenkins-get-connection'),
   connectJenkins: (input) => ipcRenderer.invoke('bankai:jenkins-connect', input),
+  ensureJenkinsPipeline: (repo) => ipcRenderer.invoke('bankai:jenkins-ensure-pipeline', repo),
+  scanJenkinsMultibranch: (jobUrl) => ipcRenderer.invoke('bankai:jenkins-scan-multibranch', jobUrl),
   listJenkinsJobs: () => ipcRenderer.invoke('bankai:jenkins-list-jobs'),
   disconnectJenkins: () => ipcRenderer.invoke('bankai:jenkins-disconnect'),
   runJenkinsJob: (url, parameters) => ipcRenderer.invoke('bankai:jenkins-run-job', url, parameters),

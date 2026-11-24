@@ -65,6 +65,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         const run = await claimJenkinsPipeline(projectId, { deviceId: desktopId(), jobUrl: scope });
         if (!run) return;
         activeRun = run;
+        if (!run.manualRetry && desktop.scanJenkinsMultibranch) await desktop.scanJenkinsMultibranch(scope);
         const expectedNames = new Set([`pr-${run.pullRequestNumber}`.toLowerCase(), `pr_${run.pullRequestNumber}`.toLowerCase(), `pr/${run.pullRequestNumber}`.toLowerCase(), run.branch.toLowerCase()]);
         let job: { name: string; url: string; color: string; supportsPullRequests?: boolean } | undefined;
         for (let attempt = 0; attempt < 18 && !job; attempt += 1) {
@@ -89,7 +90,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
           // that build a short window to appear before requesting another one.
           // A desktop app can have a newer preload than main process during an
           // in-place rollout; fall back when that process lacks this IPC route.
-          for (let attempt = 0; attempt < 6 && !existingBuild; attempt += 1) {
+          for (let attempt = 0; attempt < 18 && !existingBuild; attempt += 1) {
             try {
               existingBuild = await desktop.findRecentJenkinsBuild(job.url, run.buildSearchSince);
             } catch (reason) {
@@ -97,7 +98,7 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
               if (/No handler registered for ['"]?bankai:jenkins-find-recent-build['"]?/i.test(message)) break;
               throw reason;
             }
-            if (!existingBuild && attempt < 5) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+            if (!existingBuild && attempt < 17) await new Promise((resolve) => window.setTimeout(resolve, 5_000));
           }
         }
         if (!run.manualRetry && !existingBuild && !run.buildUrl) {

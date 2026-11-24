@@ -83,6 +83,8 @@ declare global {
       openExternal: (url: string) => Promise<void>;
       getJenkinsConnection: () => Promise<JenkinsConnection>;
       connectJenkins: (input: { url: string; username: string; apiToken: string; repo: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
+      ensureJenkinsPipeline: (repo: string) => Promise<{ jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
+      scanJenkinsMultibranch: (jobUrl: string) => Promise<void>;
       listJenkinsJobs: () => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
       runJenkinsJob: (url: string, parameters?: Record<string, string>) => Promise<JenkinsJobProgress>;
@@ -218,24 +220,41 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       if (saved.connected) {
         setUrl(saved.url || '');
         setUsername(saved.username || '');
-        const discovered = await api.listJenkinsJobs();
+        let discovered: JenkinsJob[];
+        let pipelineUrl: string | null = null;
+        if (choice === 'enabled') {
+          setBusy(true);
+          const github = await getGithubConnection(projectId);
+          if (github.connected && github.repo) {
+            const setup = await api.ensureJenkinsPipeline(github.repo);
+            discovered = setup.jobs;
+            pipelineUrl = setup.pipeline.url;
+            if (active) setMessage(`${setup.pipeline.created ? 'Created' : 'Verified'} multibranch pipeline ${setup.pipeline.name} for ${github.repo}.`);
+          } else {
+            discovered = await api.listJenkinsJobs();
+          }
+        } else {
+          discovered = await api.listJenkinsJobs();
+        }
         if (active) {
           setJobs(discovered);
           try {
             const savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || '';
-            setSelectedJob(discovered.some((job) => job.url === savedJob) ? savedJob : '');
-            setSelectedJobSupportsPr(Boolean(discovered.find((job) => job.url === savedJob)?.supportsPullRequests));
+            const selected = discovered.find((job) => job.url === pipelineUrl) ?? discovered.find((job) => job.url === savedJob);
+            setSelectedJob(selected?.url ?? '');
+            setSelectedJobSupportsPr(Boolean(selected?.supportsPullRequests));
             try {
-              if (discovered.find((job) => job.url === savedJob)?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, savedJob);
+              if (selected) localStorage.setItem(`bankai-jenkins-job:${projectId}`, selected.url);
+              if (selected?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, selected.url);
               else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
             } catch { /* optional readiness hint */ }
           } catch { /* optional convenience */ }
         }
       }
-    }).catch((reason) => { if (active) setError(errorMessage(reason)); });
+    }).catch((reason) => { if (active) setError(errorMessage(reason)); }).finally(() => { if (active) setBusy(false); });
     const unsubscribe = api.onJenkinsJobProgress((progress) => setRun(progress));
     return () => { active = false; unsubscribe(); };
-  }, [api, projectId, canManage]);
+  }, [api, projectId, canManage, choice]);
 
   const saveChoice = async (next: 'enabled' | 'skipped') => {
     setBusy(true); setError(null); setMessage(null);

@@ -2,6 +2,7 @@ const { app, BrowserWindow, WebContentsView, Menu, shell, ipcMain, safeStorage }
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs');
+const { repositoryName, pipelineUrl, pipelineConfigXml } = require('./jenkins-multibranch.cjs');
 
 // Bankai uses in-window controls and has no native menu commands. Remove
 // Electron's default File/Edit/View/Window/Help menu on Windows.
@@ -134,10 +135,7 @@ function jenkinsCrumbHeaders(crumb) {
   return crumb?.crumbRequestField && crumb?.crumb ? { [crumb.crumbRequestField]: crumb.crumb } : {};
 }
 async function createRepositoryMultibranchPipeline(credentials, repo) {
-  if (typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error('Connect a GitHub repository to this Bankai project before setting up Jenkins.');
-  const [owner, repository] = repo.split('/');
-  const name = `bankai-${owner}-${repository}`.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 100);
-  const root = new URL(credentials.url);
+  const { owner, repository, name } = repositoryName(repo);
   const jobsResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'api/json?tree=jobs[name,url,_class]'));
   if (!jobsResponse.ok) throw new Error(`Could not inspect Jenkins jobs (HTTP ${jobsResponse.status}).`);
   const jobs = (await jobsResponse.json()).jobs || [];
@@ -153,11 +151,39 @@ async function createRepositoryMultibranchPipeline(credentials, repo) {
   }
   const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
   const crumb = crumbResponse.ok ? await crumbResponse.json() : null;
-  const xml = `<?xml version="1.1" encoding="UTF-8"?>\n<org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject plugin="workflow-multibranch"><actions/><description>Created by Bankai for ${owner}/${repository}</description><properties/><folderViews class="jenkins.branch.MultiBranchProjectViewHolder"/><healthMetrics/><icon class="jenkins.branch.MetadataActionFolderIcon"/><orphanedItemStrategy class="com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy"><pruneDeadBranches>true</pruneDeadBranches><daysToKeep>-1</daysToKeep><numToKeep>-1</numToKeep><abortBuilds>true</abortBuilds></orphanedItemStrategy><triggers/><sources class="jenkins.branch.MultiBranchProject$BranchSourceList"><data><jenkins.branch.BranchSource><source class="org.jenkinsci.plugins.github_branch_source.GitHubSCMSource"><id>bankai-${owner}-${repository}</id><repoOwner>${owner}</repoOwner><repository>${repository}</repository><traits><org.jenkinsci.plugins.github__branch__source.BranchDiscoveryTrait><strategyId>3</strategyId></org.jenkinsci.plugins.github__branch__source.BranchDiscoveryTrait><org.jenkinsci.plugins.github__branch__source.OriginPullRequestDiscoveryTrait><strategyId>1</strategyId></org.jenkinsci.plugins.github__branch__source.OriginPullRequestDiscoveryTrait><org.jenkinsci.plugins.github__branch__source.ForkPullRequestDiscoveryTrait><strategyId>1</strategyId><trust class="org.jenkinsci.plugins.github_branch_source.ForkPullRequestDiscoveryTrait$TrustPermission"/></org.jenkinsci.plugins.github__branch__source.ForkPullRequestDiscoveryTrait></traits></source><strategy class="jenkins.branch.DefaultBranchPropertyStrategy"><properties class="empty-list"/></strategy></jenkins.branch.BranchSource></data><owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject"/></sources><factory class="org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory"><owner class="org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject"/><scriptPath>Jenkinsfile</scriptPath></factory></org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>`;
+  const xml = pipelineConfigXml(owner, repository);
   const target = new URL(jenkinsApiUrl(credentials.url, `createItem?name=${encodeURIComponent(name)}`));
   const response = await jenkinsFetch(credentials, target.toString(), { method: 'POST', headers: { ...jenkinsCrumbHeaders(crumb), 'Content-Type': 'application/xml' }, body: xml });
   if (![200, 201, 302].includes(response.status)) throw new Error(response.status === 404 ? 'Jenkins could not create the pipeline. Install the Pipeline: Multibranch and GitHub Branch Source plugins.' : response.status === 400 ? 'Jenkins rejected the multibranch configuration. Check that Pipeline: Multibranch and GitHub Branch Source plugins are installed.' : `Jenkins could not create the multibranch pipeline (HTTP ${response.status}). Check that this account can create jobs.`);
-  return { name, url: new URL(`job/${encodeURIComponent(name)}/`, root).toString(), created: true };
+  return { name, url: pipelineUrl(credentials.url, name), created: true };
+}
+async function scanJenkinsMultibranchPipeline(credentials, jobUrl) {
+  const target = validateJenkinsResourceUrl(credentials, jobUrl);
+  const detail = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/api/json?tree=_class`);
+  if (!detail.ok) throw new Error(`Could not inspect the Jenkins multibranch job (HTTP ${detail.status}).`);
+  const job = await detail.json();
+  if (!String(job._class || '').toLowerCase().includes('multibranch')) throw new Error('Select a Jenkins multibranch pipeline for this repository.');
+  const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
+  const crumb = crumbResponse.ok ? await crumbResponse.json() : null;
+  // Jenkins exposes the multibranch "Scan Now" action at the build endpoint.
+  // For a computed folder this schedules branch indexing (and PR builds).
+  const response = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/build`, {
+    method: 'POST', headers: jenkinsCrumbHeaders(crumb),
+  });
+  if (![200, 201, 202, 204, 302, 303].includes(response.status)) {
+    throw new Error(response.status === 404
+      ? 'Jenkins could not scan the repository. Check that Pipeline: Multibranch and GitHub Branch Source plugins are installed.'
+      : `Jenkins could not start branch discovery (HTTP ${response.status}). Check this account can build and scan the multibranch job.`);
+  }
+}
+async function setupRepositoryMultibranchPipeline(credentials, repo) {
+  const pipeline = await createRepositoryMultibranchPipeline(credentials, repo);
+  await scanJenkinsMultibranchPipeline(credentials, pipeline.url);
+  const jobs = await listJenkinsJobs(credentials);
+  if (!jobs.some((job) => job.url.replace(/\/$/, '') === pipeline.url.replace(/\/$/, ''))) {
+    jobs.unshift({ name: pipeline.name, url: pipeline.url, color: 'notbuilt', supportsPullRequests: true });
+  }
+  return { pipeline, jobs };
 }
 async function getJenkinsCheckedOutCommit(credentials, buildUrl) {
   const target = validateJenkinsResourceUrl(credentials, buildUrl);
@@ -512,13 +538,25 @@ ipcMain.handle('bankai:jenkins-connect', async (event, input) => {
   const response = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'api/json?tree=mode,nodeDescription'));
   if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected those credentials. Use your username and Jenkins API token.' : `Jenkins connection failed (HTTP ${response.status}).`);
   try { await response.json(); } catch { throw new Error('That address did not return the Jenkins API. Check the server address.'); }
-  const pipeline = await createRepositoryMultibranchPipeline(credentials, input.repo);
-  const jobs = await listJenkinsJobs(credentials);
+  const { pipeline, jobs } = await setupRepositoryMultibranchPipeline(credentials, input.repo);
   // Persist the connection only after setup succeeds. Otherwise Jenkins can
   // appear connected while the required repository pipeline was never made,
   // and the UI hides the connect form needed to retry setup.
   await saveJenkinsCredentials(credentials);
   return { connected: true, url: credentials.url, username: credentials.username, jobs, pipeline };
+});
+ipcMain.handle('bankai:jenkins-ensure-pipeline', async (event, repo) => {
+  assertBankaiSender(event);
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins first.');
+  const { pipeline, jobs } = await setupRepositoryMultibranchPipeline(credentials, repo);
+  return { pipeline, jobs };
+});
+ipcMain.handle('bankai:jenkins-scan-multibranch', async (event, jobUrl) => {
+  assertBankaiSender(event);
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins first.');
+  return scanJenkinsMultibranchPipeline(credentials, jobUrl);
 });
 ipcMain.handle('bankai:jenkins-list-jobs', async (event) => {
   assertBankaiSender(event);
