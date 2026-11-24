@@ -308,7 +308,7 @@
 }
 
 .ws-icon-btn--github {
-  background: var(--color-inverse-text, #171717);
+  background: #24292f;
   color: #fff;
 }
 
