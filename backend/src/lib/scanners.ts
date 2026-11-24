@@ -202,7 +202,25 @@ async function scanDirectory(root: string, repo: string, sha: string): Promise<R
   const runs: ScannerRun[] = []; const findings: NormalizedFinding[] = [];
   const invoke = async (name: string, command: string, args: string[], allowFindings = false, findingFilePath?: string, parse: (value: string) => unknown = JSON.parse) => {
     try {
-      const result = await scanner(name, command, args, root, parse, allowFindings);
+      let result: Awaited<ReturnType<typeof scanner>>;
+      try {
+        result = await scanner(name, command, args, root, parse, allowFindings);
+      } catch (primaryError) {
+        if (name !== "pip-audit") throw primaryError;
+
+        // pip-audit defaults to the PyPI advisory service. Retry against OSV
+        // when that service or request fails so a transient PyPI outage does
+        // not block remediation verification when the alternate feed works.
+        const primaryReason = primaryError instanceof Error ? primaryError.message : "Scanner failed.";
+        logger.warn({ scanner: name, service: "pypi", reason: primaryReason }, "pip-audit primary advisory service failed; retrying with OSV");
+        try {
+          result = await scanner(name, command, ["--vulnerability-service", "osv", ...args], root, parse, allowFindings);
+          result.run.version = `${result.run.version} (OSV fallback)`;
+        } catch (fallbackError) {
+          const fallbackReason = fallbackError instanceof Error ? fallbackError.message : "Scanner failed.";
+          throw new Error(`PyPI audit failed: ${primaryReason}; OSV fallback failed: ${fallbackReason}`);
+        }
+      }
       const rows = normalizeScannerFindings(name, result.value, repo, sha, root);
       // pip-audit reports the vulnerable distribution name, not the
       // requirements file that caused it to be installed. Preserve the
