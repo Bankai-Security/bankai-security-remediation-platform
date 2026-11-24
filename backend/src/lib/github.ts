@@ -435,7 +435,7 @@ export interface CreatedPullRequest {
   // GitHub's own distinction: a PR's `state` becomes "closed" both when
   // merged and when closed unmerged — `merged` is the only field that tells
   // those apart. Always false for createPullRequest (a PR is never merged
-  // the instant it's created), meaningful for getPullRequest below.
+  // the instant it's created), meaningful for lookups after a 422.
   merged: boolean;
 }
 
@@ -477,35 +477,35 @@ export async function createPullRequest(
   }
 
   if (res.status === 422) {
-    const errBody = (await res.json().catch(() => ({}))) as { message?: string; errors?: { message?: string }[] };
-    const alreadyExists =
-      errBody.message?.includes("already exists") ||
-      errBody.errors?.some((e) => e.message?.includes("already exists"));
-    if (alreadyExists) {
-      const owner = creds.repo.split("/")[0];
-      const existingRes = await githubFetch(
-        creds,
-        `/repos/${creds.repo}/pulls?head=${encodeURIComponent(`${owner}:${input.head}`)}&base=${encodeURIComponent(input.base)}&state=all`,
-      );
-      if (existingRes.ok) {
-        const existing = (await existingRes.json()) as GithubPullRequestApiBody[];
-        const match = existing[0];
-        // The list endpoint doesn't include `merged` (only the single-PR
-        // endpoint does) — a freshly-looked-up "already exists" match is by
-        // definition still open (a merged/closed PR can't 422 as "already
-        // exists" for a new one), so false is correct here, not a guess.
-        if (match) {
-          return {
-            number: match.number,
-            url: match.html_url,
-            state: match.state === "closed" ? "closed" : "open",
-            headRef: match.head?.ref ?? null,
-            headSha: match.head?.sha ?? null,
-            merged: false,
-          };
-        }
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+      errors?: { message?: string; resource?: string; field?: string; code?: string }[];
+    };
+    const owner = creds.repo.split("/")[0];
+    const existingRes = await githubFetch(
+      creds,
+      `/repos/${creds.repo}/pulls?head=${encodeURIComponent(`${owner}:${input.head}`)}&base=${encodeURIComponent(input.base)}&state=all`,
+    ).catch(() => null);
+    if (existingRes?.ok) {
+      const existing = (await existingRes.json()) as GithubPullRequestApiBody[];
+      const open = existing.find((pr) => pr.state === "open");
+      if (open) return toCreatedPullRequest(open);
+
+      // A closed PR cannot be returned as if it were a newly opened one. Keep
+      // GitHub's original validation response and attach the prior PR state so
+      // callers can resolve stale branch state explicitly.
+      if (existing[0]) {
+        const prior = existing[0];
+        const state = prior.merged ? "merged" : "closed";
+        const errors = errBody.errors?.map((e) => e.message || [e.resource, e.field, e.code].filter(Boolean).join(" ")).filter(Boolean);
+        const detail = [errBody.message, ...(errors ?? [])].filter(Boolean).join(": ");
+        throw new GithubApiError(`GitHub rejected the pull request because prior PR #${prior.number} for this branch is ${state}${detail ? ` (${detail})` : ""}.`, 422);
       }
     }
+
+    const errors = errBody.errors?.map((e) => e.message || [e.resource, e.field, e.code].filter(Boolean).join(" ")).filter(Boolean);
+    const detail = [errBody.message, ...(errors ?? [])].filter(Boolean).join(": ");
+    throw new GithubApiError(detail || "GitHub rejected the pull request because its head or base branch is invalid (status 422).", 422);
   }
 
   const body = (await res.json().catch(() => ({}))) as { message?: string };

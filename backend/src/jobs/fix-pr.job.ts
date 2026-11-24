@@ -521,10 +521,21 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       lowConfidence,
     });
 
+    // Finding titles may contain the full advisory text (some feed entries
+    // are several paragraphs long). GitHub rejects PR titles over its limit;
+    // keep the title concise while preserving the complete finding in the PR
+    // body above.
+    const titlePrefix = lowConfidence ? "Fix (low confidence): " : "Fix: ";
+    const fullPrTitle = `${titlePrefix}${finding.title}`;
+    const titleCharacters = Array.from(fullPrTitle);
+    const prTitle = titleCharacters.length > 240
+      ? `${titleCharacters.slice(0, 239).join("").trimEnd()}…`
+      : fullPrTitle;
+
     const pr = await createPullRequest(github.creds, {
       head: branch,
       base: github.defaultBranch,
-      title: `${lowConfidence ? "Fix (low confidence)" : "Fix"}: ${finding.title}`,
+      title: prTitle,
       body: `Automatically generated fix for a Bankai finding (${finding.cwe ?? "no CWE"}) in \`${targetFilePath}\`.\n\nA human must review and merge this pull request — Bankai never merges automatically.${lowConfidenceWarning}\n\n${evidenceBody}`,
     });
 
