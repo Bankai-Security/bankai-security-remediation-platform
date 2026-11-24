@@ -428,10 +428,15 @@ function setJenkinsBrowserBounds(bounds) {
   const content = mainWindow.getContentBounds();
   const width = Math.max(Math.min(content.width, 280), Math.min(Math.floor(Number(bounds?.width) || 0), content.width));
   const x = Math.max(0, Math.min(Math.floor(Number(bounds?.x) || 0), content.width - width));
-  const height = Math.max(Math.min(content.height, 120), Math.min(Math.floor(Number(bounds?.height) || 0), content.height));
+  const height = Math.max(Math.min(content.height, 300), Math.min(Math.floor(Number(bounds?.height) || 0), content.height));
   const y = Math.max(0, Math.min(Math.floor(Number(bounds?.y) || 0), content.height - height));
   const appliedBounds = { x, y, width, height };
-  jenkinsBrowserView.setBounds(appliedBounds);
+  jenkinsBrowserView.setBounds({
+    x: x + 1,
+    y: y + 56,
+    width: Math.max(1, width - 2),
+    height: Math.max(120, height - 57),
+  });
   return { open: true, bounds: appliedBounds };
 }
 async function openJenkinsBrowser(rawUrl, bounds) {
@@ -443,7 +448,7 @@ async function openJenkinsBrowser(rawUrl, bounds) {
     jenkinsBrowserView = new WebContentsView({
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false, partition: 'persist:bankai-jenkins' },
     });
-    jenkinsBrowserView.setBorderRadius(16);
+    jenkinsBrowserView.setBorderRadius(15);
     jenkinsBrowserView.setBackgroundColor('#ffffff');
     mainWindow.contentView.addChildView(jenkinsBrowserView);
     const base = new URL(credentials.url);

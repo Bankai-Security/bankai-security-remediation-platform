@@ -30,9 +30,9 @@ function jenkinsBrowserBounds(width: number): JenkinsBrowserBounds {
   const top = Math.max(16, Math.round(cardBounds?.top ?? 64));
   return {
     x: Math.max(0, Math.round((pageBounds?.right ?? window.innerWidth) - paneWidth - 24)),
-    y: top + 56,
+    y: top,
     width: paneWidth,
-    height: Math.max(220, Math.round(window.innerHeight - top - 76)),
+    height: Math.max(300, Math.round(window.innerHeight - top - 20)),
   };
 }
 
@@ -446,31 +446,33 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       )}
       {choice === 'skipped' && <p className="jenkins-download-note" role="status">Jenkins is skipped for this repository. Other Bankai features remain available.</p>}
       {choice === 'unset' && <p className="jenkins-download-note">No Jenkins jobs will run until you choose Use Jenkins.</p>}
-      {browserOpen && browserPaneBounds && <div className="jenkins-in-app-browser-toolbar" style={{ left: browserPaneBounds.x, top: browserPaneBounds.y - 56, width: browserPaneBounds.width }}>
-        <div
-          className="jenkins-in-app-browser-resize"
-          role="separator"
-          aria-label="Resize Jenkins pane"
-          aria-orientation="vertical"
-          aria-valuenow={browserWidth}
-          aria-valuemin={280}
-          aria-valuemax={Math.max(280, (document.querySelector('.jenkins-download-page')?.getBoundingClientRect().width ?? window.innerWidth) - 520)}
-          tabIndex={0}
-          onPointerDown={resizeJenkinsBrowser}
-          onPointerMove={resizeJenkinsBrowser}
-          onPointerUp={stopResizingJenkinsBrowser}
-          onPointerCancel={stopResizingJenkinsBrowser}
-          onLostPointerCapture={() => { browserResizeStart.current = null; }}
-          onKeyDown={handleJenkinsBrowserResizeKey}
-          title="Drag to resize"
-        />
-        <div className="jenkins-in-app-browser-omnibox" title={browserUrl}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M3.5 10h13M10 3c2 2 3 4.4 3 7s-1 5-3 7c-2-2-3-4.4-3-7s1-5 3-7Z" /></svg>
-          <span>{browserUrl}</span>
-        </div>
-        <div className="jenkins-in-app-browser-controls">
-          <button type="button" aria-label={browserExpanded ? 'Restore Jenkins browser size' : 'Expand Jenkins browser'} title={browserExpanded ? 'Restore size' : 'Expand'} onClick={toggleJenkinsBrowserSize}>{browserExpanded ? '↙' : '↗'}</button>
-          <button type="button" aria-label="Close Jenkins browser" title="Close" onClick={() => void closeJenkinsInApp()}>×</button>
+      {browserOpen && browserPaneBounds && <div className="jenkins-in-app-browser-shell" style={{ left: browserPaneBounds.x, top: browserPaneBounds.y, width: browserPaneBounds.width, height: browserPaneBounds.height }}>
+        <div className="jenkins-in-app-browser-toolbar">
+          <div
+            className="jenkins-in-app-browser-resize"
+            role="separator"
+            aria-label="Resize Jenkins pane"
+            aria-orientation="vertical"
+            aria-valuenow={browserWidth}
+            aria-valuemin={280}
+            aria-valuemax={Math.max(280, (document.querySelector('.jenkins-download-page')?.getBoundingClientRect().width ?? window.innerWidth) - 520)}
+            tabIndex={0}
+            onPointerDown={resizeJenkinsBrowser}
+            onPointerMove={resizeJenkinsBrowser}
+            onPointerUp={stopResizingJenkinsBrowser}
+            onPointerCancel={stopResizingJenkinsBrowser}
+            onLostPointerCapture={() => { browserResizeStart.current = null; }}
+            onKeyDown={handleJenkinsBrowserResizeKey}
+            title="Drag to resize"
+          />
+          <div className="jenkins-in-app-browser-omnibox" title={browserUrl}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M3.5 10h13M10 3c2 2 3 4.4 3 7s-1 5-3 7c-2-2-3-4.4-3-7s1-5 3-7Z" /></svg>
+            <span>{browserUrl}</span>
+          </div>
+          <div className="jenkins-in-app-browser-controls">
+            <button type="button" aria-label={browserExpanded ? 'Restore Jenkins browser size' : 'Expand Jenkins browser'} title={browserExpanded ? 'Restore size' : 'Expand'} onClick={toggleJenkinsBrowserSize}>{browserExpanded ? '↙' : '↗'}</button>
+            <button type="button" aria-label="Close Jenkins browser" title="Close" onClick={() => void closeJenkinsInApp()}>×</button>
+          </div>
         </div>
       </div>}
     </>

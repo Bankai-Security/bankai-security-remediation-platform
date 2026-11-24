@@ -1,6 +1,6 @@
 {
   "name": "bankai-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Bankai Desktop shell for local Jenkins workflows",
   "main": "main.cjs",
@@ -12,15 +12,43 @@
     "package:mac": "electron-builder --mac dmg",
     "package:linux": "electron-builder --linux AppImage"
   },
-  "devDependencies": { "electron": "^37.0.0", "cross-env": "^7.0.3", "electron-builder": "^26.0.12" },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "cross-env": "^7.0.3",
+    "electron-builder": "^26.0.12"
+  },
   "build": {
     "appId": "security.bankai.desktop",
     "productName": "Bankai",
-    "protocols": [{ "name": "Bankai Desktop", "schemes": ["bankai"] }],
-    "directories": { "output": "../../release/bankai-desktop" },
-    "files": ["main.cjs", "jenkins-build-request.cjs", "preload.cjs", "package.json", "build/**/*"],
-    "win": { "target": "nsis", "icon": "build/icon.ico" },
-    "mac": { "target": "dmg", "icon": "build/icon.icns" },
-    "linux": { "target": "AppImage", "icon": "build/icon.png" }
+    "protocols": [
+      {
+        "name": "Bankai Desktop",
+        "schemes": [
+          "bankai"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "../../release/bankai-desktop"
+    },
+    "files": [
+      "main.cjs",
+      "jenkins-build-request.cjs",
+      "preload.cjs",
+      "package.json",
+      "build/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    }
   }
 }
