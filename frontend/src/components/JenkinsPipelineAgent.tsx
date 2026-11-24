@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { claimJenkinsPipeline, finishJenkinsPipeline, reportJenkinsDeployment, reportJenkinsPipelineProgress } from "../lib/api";
+import { claimJenkinsPipeline, finishJenkinsPipeline, getGithubConnection, reportJenkinsDeployment, reportJenkinsPipelineProgress } from "../lib/api";
 import { findPullRequestJob, resolveVerificationScope } from "../lib/jenkins-job-matching";
 
 function desktopId(): string {
@@ -61,11 +61,57 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
       try {
         const connection = await desktop.getJenkinsConnection();
         if (!connection.connected) return;
-        const scope = resolveVerificationScope(await desktop.listJenkinsJobs(), selectedJob);
+        const github = await getGithubConnection(projectId);
+        if (!github.connected || !github.repo) return;
+        const jobs = await desktop.listJenkinsJobs();
+        const scope = resolveVerificationScope(jobs, selectedJob);
+        const expectedPipelineName = `bankai-${github.repo.replace('/', '-')}`.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 100);
+        if (!jobs.some((job) => job.url === scope && job.name === expectedPipelineName && job.supportsPullRequests)) return;
         const run = await claimJenkinsPipeline(projectId, { deviceId: desktopId(), jobUrl: scope });
         if (!run) return;
         activeRun = run;
-        if (!run.manualRetry && desktop.scanJenkinsMultibranch) await desktop.scanJenkinsMultibranch(scope);
+        let indexingSupported = false;
+        let indexingResult: string | null = null;
+        let indexingSummary: { rateLimitDelay: string | null; result: string | null } | null = null;
+        if (!run.manualRetry && desktop.scanJenkinsMultibranch) {
+          const scan = await desktop.scanJenkinsMultibranch(scope);
+          if (desktop.getJenkinsMultibranchIndexingStatus) {
+            const indexingDeadline = Date.now() + 15 * 60_000;
+            let sawActiveIndexing = false;
+            while (!stopped && Date.now() < indexingDeadline) {
+              const indexing = await desktop.getJenkinsMultibranchIndexingStatus(scope, scan);
+              if (!indexing.supported) break;
+              indexingSupported = true;
+              const isThisScan = indexing.current || indexing.building;
+              if (indexing.building) sawActiveIndexing = true;
+              if (indexing.summary) indexingSummary = indexing.summary;
+              if (isThisScan && !indexing.building && indexing.result) {
+                indexingResult = indexing.result;
+                break;
+              }
+              if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") break;
+              await new Promise((resolve) => window.setTimeout(resolve, sawActiveIndexing ? 5_000 : 10_000));
+            }
+            if (stopped || localStorage.getItem(`bankai-jenkins-choice:${projectId}`) !== "enabled") {
+              await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "cancelled", buildUrl: selectedJob });
+              return;
+            }
+            if (indexingSupported && !indexingResult) {
+              if (!indexingSummary) indexingSummary = (await desktop.getJenkinsMultibranchIndexingStatus(scope, scan, true).catch(() => null))?.summary ?? null;
+              const delay = indexingSummary?.rateLimitDelay;
+              await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
+                failureLog: delay
+                  ? `Jenkins has not completed pull request discovery. Its GitHub API limiter delayed requests by ${delay}. Bankai waited 15 minutes and found no PR build. Check the indexing log in Jenkins; adding GitHub API credentials to the Jenkins GitHub Branch Source can prevent anonymous API throttling.`
+                  : "Jenkins has not completed pull request discovery. Bankai waited 15 minutes without seeing this scan finish. Check the multibranch indexing log in Jenkins for source permissions, API throttling, or a missing pull request discovery trait, then retry verification." });
+              return;
+            }
+            if (indexingResult && indexingResult !== "SUCCESS") {
+              await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
+                failureLog: `Jenkins branch discovery finished with ${indexingResult}. Bankai did not start a build. Review the indexing log and Jenkins source configuration, then retry verification.` });
+              return;
+            }
+          }
+        }
         const expectedNames = new Set([`pr-${run.pullRequestNumber}`.toLowerCase(), `pr_${run.pullRequestNumber}`.toLowerCase(), `pr/${run.pullRequestNumber}`.toLowerCase(), run.branch.toLowerCase()]);
         let job: { name: string; url: string; color: string; supportsPullRequests?: boolean } | undefined;
         for (let attempt = 0; attempt < 18 && !job; attempt += 1) {
@@ -80,7 +126,9 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         }
         if (!job) {
           await finishJenkinsPipeline(projectId, run.runId, { deviceId: desktopId(), state: "needs_review",
-            failureLog: `Jenkins did not start a build because no job was found for PR #${run.pullRequestNumber}. Bankai checked the selected job and its multibranch parent. Ensure pull request branch discovery is enabled in Jenkins, scan the repository, then refresh jobs in Bankai and retry verification.` });
+            failureLog: indexingSummary?.rateLimitDelay
+              ? `Jenkins completed branch discovery, but did not expose a PR job for PR #${run.pullRequestNumber}. Its GitHub API limiter delayed requests by ${indexingSummary.rateLimitDelay}. Check the indexing log and Jenkins GitHub Branch Source credentials; Bankai did not start a build.`
+              : `Jenkins completed branch discovery but did not expose a job for PR #${run.pullRequestNumber}. Bankai checked the selected multibranch job. Check its indexing log for GitHub API throttling or source configuration errors; Bankai did not start a build.` });
           return;
         }
         activeRunJobUrl = job.url;

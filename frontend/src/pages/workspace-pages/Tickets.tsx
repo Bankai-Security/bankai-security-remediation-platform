@@ -69,21 +69,25 @@ function PipelineStatus({ ticket, onCancel, onRetry, retrying = false }: { ticke
   if (!ticket.ciStatus) return null;
   const label = ticket.ciStatus === 'pending_setup' ? 'CI setup pending' : ticket.ciStatus === 'passed' ? 'CI passed' : ticket.ciStatus === 'failed' ? 'CI failed'
     : ticket.ciStatus === 'retrying' ? 'AI retrying' : ticket.ciStatus === 'needs_review' ? 'CI needs review'
-      : ticket.ciStatus === 'running' ? 'CI running' : ticket.ciStatus === 'queued' ? 'CI queued' : 'CI cancelled';
+      : ticket.ciStatus === 'running' ? (!ticket.ciRunUrl ? 'Discovering PR in Jenkins' : 'CI running') : ticket.ciStatus === 'queued' ? 'Waiting for Jenkins' : 'CI cancelled';
   const reviewHint = ticket.githubPrState === 'open' && ticket.ciStatus === 'passed'
     ? 'Review the PR; merging stays with you.'
     : ticket.githubPrState === 'open' && ['failed', 'needs_review', 'cancelled'].includes(ticket.ciStatus)
       ? 'Review the PR before merging.' : null;
   const icon = ticket.ciStatus === 'passed' ? <svg className="tickets-ci-icon tickets-ci-icon--passed" aria-label="Passed" role="img" viewBox="0 0 16 16"><path d="m3 8.2 3.1 3.1L13 4.5" /></svg>
     : ['failed', 'needs_review'].includes(ticket.ciStatus) ? <svg className="tickets-ci-icon tickets-ci-icon--failed" aria-label="Failed" role="img" viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8" /></svg> : null;
-  return <span className={`tickets-pipeline-status${icon ? ' tickets-pipeline-status--result' : ''}`} title={ticket.ciError ?? label}>
-    {icon}
-    {ticket.ciRunUrl ? <a href={ticket.ciRunUrl} target="_blank" rel="noreferrer">{label}</a> : label}
+  return <div className={`tickets-pipeline-status${icon ? ' tickets-pipeline-status--result' : ''}`} title={ticket.ciError ?? label}>
+    <div className="tickets-pipeline-status-heading">
+      {icon}
+      {ticket.ciRunUrl ? <a className="tickets-pipeline-status-label" href={ticket.ciRunUrl} target="_blank" rel="noreferrer">{label}</a> : <span className="tickets-pipeline-status-label">{label}</span>}
+      <span className="tickets-pipeline-status-actions">
+        {canRetryJenkinsVerification(ticket) && onRetry && <RetryFixButton className="tickets-ci-retry" onClick={onRetry} retrying={retrying} title="Retry CI verification" size={19} />}
+        {(ticket.ciStatus === 'queued' || (ticket.ciStatus === 'running' && Boolean(ticket.ciRunUrl)) || ticket.ciStatus === 'retrying') && onCancel && <button className="tickets-pipeline-cancel" type="button" onClick={onCancel}>{ticket.ciStatus === 'queued' ? 'Cancel queued run' : ticket.ciStatus === 'running' ? 'Stop CI run' : 'Cancel AI retry'}</button>}
+      </span>
+    </div>
     {reviewHint && <span className="tickets-pipeline-review-hint">{reviewHint}</span>}
-    {(ticket.ciStatus === 'queued' || ticket.ciStatus === 'running' || ticket.ciStatus === 'retrying') && onCancel && <button className="tickets-pipeline-cancel" type="button" onClick={onCancel}>{ticket.ciStatus === 'queued' ? 'Cancel queued run' : ticket.ciStatus === 'running' ? 'Stop CI run' : 'Cancel AI retry'}</button>}
-    {canRetryJenkinsVerification(ticket) && onRetry && <RetryFixButton className="tickets-ci-retry" onClick={onRetry} retrying={retrying} title="Retry CI verification" size={19} />}
     {ticket.ciError && <span className="tickets-pipeline-error">{ticket.ciError}</span>}
-  </span>;
+  </div>;
 }
 
 function DeploymentStatus({ ticket, projectId, onCancel }: { ticket: Ticket; projectId: string; onCancel?: () => void }) {
@@ -398,7 +402,7 @@ export default function Tickets() {
                         </div>
                         <MarkdownText className="tickets-kanban-card-title" >{t.title}</MarkdownText>
                         <RemediationProgress ticket={t} />
-                        <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
+                        <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(t.ciRunUrl && window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
                           onRetry={editable && verificationProvider === 'jenkins' && canRetryJenkinsVerification(t) ? () => void handleRetryJenkins(t.id) : undefined} retrying={retryingPipelineId === t.id} />
                         <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
                         <div className="tickets-kanban-card-meta">
@@ -489,7 +493,7 @@ export default function Tickets() {
                     <span className="tickets-table-title">
                       <MarkdownText className="tickets-table-title-markdown">{t.title}</MarkdownText>
                       <RemediationProgress ticket={t} compact />
-                            <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
+                            <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(t.ciRunUrl && window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
                               onRetry={editable && verificationProvider === 'jenkins' && canRetryJenkinsVerification(t) ? () => void handleRetryJenkins(t.id) : undefined} retrying={retryingPipelineId === t.id} />
                       <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
                       <span className="tickets-table-actions">

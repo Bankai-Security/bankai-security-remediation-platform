@@ -1,11 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { pipelineConfigXml, pipelineUrl, repositoryName } = require('./jenkins-multibranch.cjs');
+const { pipelineConfigXml, pipelineUrl, repositoryName, jobsForRepository } = require('./jenkins-multibranch.cjs');
 
 test('names a multibranch job for the connected repository', () => {
   assert.deepEqual(repositoryName('anubhavgpta/bankai-test-jenkins'), {
     owner: 'anubhavgpta', repository: 'bankai-test-jenkins', name: 'bankai-anubhavgpta-bankai-test-jenkins',
   });
+});
+
+test('lists only the selected repository multibranch job and its child jobs', () => {
+  const jobs = [
+    { name: 'bankai-owner-repo', url: 'http://jenkins/job/bankai-owner-repo/' },
+    { name: 'PR-12', url: 'http://jenkins/job/bankai-owner-repo/job/PR-12/' },
+    { name: 'main', url: 'http://jenkins/job/bankai-owner-repo/job/main/' },
+    { name: 'bankai-owner-other', url: 'http://jenkins/job/bankai-owner-other/' },
+    { name: 'PR-1', url: 'http://jenkins/job/bankai-owner-other/job/PR-1/' },
+    { name: 'bankai-owner-repo-extra', url: 'http://jenkins/job/bankai-owner-repo-extra/' },
+  ];
+  assert.deepEqual(jobsForRepository(jobs, 'http://jenkins', 'owner/repo'), jobs.slice(0, 3));
 });
 
 test('keeps Jenkins context paths in the generated job URL', () => {

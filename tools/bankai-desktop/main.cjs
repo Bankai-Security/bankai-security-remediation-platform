@@ -2,7 +2,8 @@ const { app, BrowserWindow, WebContentsView, Menu, shell, ipcMain, safeStorage }
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs');
-const { repositoryName, pipelineUrl, pipelineConfigXml } = require('./jenkins-multibranch.cjs');
+const { repositoryName, pipelineUrl, pipelineConfigXml, jobsForRepository } = require('./jenkins-multibranch.cjs');
+const { isCurrentIndexing, indexingFinished, summarizeIndexingLog } = require('./jenkins-indexing.cjs');
 
 // Bankai uses in-window controls and has no native menu commands. Remove
 // Electron's default File/Edit/View/Window/Help menu on Windows.
@@ -125,7 +126,7 @@ async function getJenkinsJobParameters(credentials, jobUrl) {
   })).filter((item) => item.name && item.name.length <= 100);
   return { supported: true, reason: null, parameters };
 }
-async function listJenkinsJobs(credentials) {
+async function listJenkinsJobs(credentials, repo = null) {
   const jobs = [];
   const visit = async (url, depth = 0, underMultibranch = false) => {
     if (depth > 8 || jobs.length >= 300) return;
@@ -142,7 +143,7 @@ async function listJenkinsJobs(credentials) {
     }
   };
   await visit(credentials.url);
-  return jobs;
+  return typeof repo === 'string' ? jobsForRepository(jobs, credentials.url, repo) : jobs;
 }
 function jenkinsCrumbHeaders(crumb) {
   return crumb?.crumbRequestField && crumb?.crumb ? { [crumb.crumbRequestField]: crumb.crumb } : {};
@@ -207,11 +208,17 @@ async function createRepositoryMultibranchPipeline(credentials, repo) {
   return { name, url: pipelineUrl(credentials.url, name), created: true };
 }
 async function scanJenkinsMultibranchPipeline(credentials, jobUrl) {
+  const startedAt = Date.now();
   const target = validateJenkinsResourceUrl(credentials, jobUrl);
   const detail = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/api/json?tree=_class`);
   if (!detail.ok) throw new Error(`Could not inspect the Jenkins multibranch job (HTTP ${detail.status}).`);
   const job = await detail.json();
   if (!String(job._class || '').toLowerCase().includes('multibranch')) throw new Error('Select a Jenkins multibranch pipeline for this repository.');
+  const beforeResponse = await jenkinsFetch(credentials, `${target.toString().replace(/\/$/, '')}/indexing/api/json?tree=building,result,timestamp`);
+  let previousTimestamp = null;
+  if (beforeResponse.ok) {
+    try { previousTimestamp = (await beforeResponse.json()).timestamp ?? null; } catch { /* Continue if this Jenkins version returns a different API shape. */ }
+  }
   const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
   const crumb = crumbResponse.ok ? await crumbResponse.json() : null;
   // Jenkins exposes the multibranch "Scan Now" action at the build endpoint.
@@ -224,11 +231,35 @@ async function scanJenkinsMultibranchPipeline(credentials, jobUrl) {
       ? 'Jenkins could not scan the repository. Check that Pipeline: Multibranch and GitHub Branch Source plugins are installed.'
       : `Jenkins could not start branch discovery (HTTP ${response.status}). Check this account can build and scan the multibranch job.`);
   }
+  return { startedAt, previousTimestamp };
+}
+async function getJenkinsMultibranchIndexingStatus(credentials, jobUrl, scan = {}, includeLog = false) {
+  const target = validateJenkinsResourceUrl(credentials, jobUrl);
+  const indexingUrl = `${target.toString().replace(/\/$/, '')}/indexing`;
+  const response = await jenkinsFetch(credentials, `${indexingUrl}/api/json?tree=building,result,timestamp`);
+  if (response.status === 404) return { supported: false, building: false, result: null, timestamp: null, summary: null };
+  if (!response.ok) throw new Error(`Could not inspect Jenkins branch discovery (HTTP ${response.status}).`);
+  const indexing = await response.json();
+  const timestamp = indexing.timestamp ?? null;
+  const isCurrentScan = isCurrentIndexing({ ...indexing, timestamp }, scan);
+  const status = {
+    supported: true,
+    current: isCurrentScan,
+    building: indexing.building === true,
+    result: typeof indexing.result === 'string' ? indexing.result : null,
+    timestamp,
+    summary: null,
+  };
+  if (isCurrentScan && (indexingFinished(status, isCurrentScan) || includeLog)) {
+    const log = await jenkinsFetch(credentials, `${indexingUrl}/consoleText`, { headers: { Accept: 'text/plain' } });
+    if (log.ok) status.summary = summarizeIndexingLog(await log.text());
+  }
+  return status;
 }
 async function setupRepositoryMultibranchPipeline(credentials, repo) {
   const pipeline = await createRepositoryMultibranchPipeline(credentials, repo);
   await scanJenkinsMultibranchPipeline(credentials, pipeline.url);
-  const jobs = await listJenkinsJobs(credentials);
+  const jobs = await listJenkinsJobs(credentials, repo);
   if (!jobs.some((job) => job.url.replace(/\/$/, '') === pipeline.url.replace(/\/$/, ''))) {
     jobs.unshift({ name: pipeline.name, url: pipeline.url, color: 'notbuilt', supportsPullRequests: true });
   }
@@ -607,11 +638,17 @@ ipcMain.handle('bankai:jenkins-scan-multibranch', async (event, jobUrl) => {
   if (!credentials) throw new Error('Connect to Jenkins first.');
   return scanJenkinsMultibranchPipeline(credentials, jobUrl);
 });
-ipcMain.handle('bankai:jenkins-list-jobs', async (event) => {
+ipcMain.handle('bankai:jenkins-indexing-status', async (event, jobUrl, scan, includeLog) => {
   assertBankaiSender(event);
   const credentials = await readJenkinsCredentials();
   if (!credentials) throw new Error('Connect to Jenkins first.');
-  return listJenkinsJobs(credentials);
+  return getJenkinsMultibranchIndexingStatus(credentials, jobUrl, scan, includeLog === true);
+});
+ipcMain.handle('bankai:jenkins-list-jobs', async (event, repo) => {
+  assertBankaiSender(event);
+  const credentials = await readJenkinsCredentials();
+  if (!credentials) throw new Error('Connect to Jenkins first.');
+  return listJenkinsJobs(credentials, typeof repo === 'string' ? repo : null);
 });
 ipcMain.handle('bankai:jenkins-disconnect', async (event) => {
   assertBankaiSender(event);

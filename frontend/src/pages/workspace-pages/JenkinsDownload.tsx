@@ -84,8 +84,9 @@ declare global {
       getJenkinsConnection: () => Promise<JenkinsConnection>;
       connectJenkins: (input: { url: string; username: string; apiToken: string; repo: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
       ensureJenkinsPipeline: (repo: string) => Promise<{ jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
-      scanJenkinsMultibranch: (jobUrl: string) => Promise<void>;
-      listJenkinsJobs: () => Promise<JenkinsJob[]>;
+      scanJenkinsMultibranch: (jobUrl: string) => Promise<{ startedAt: number; previousTimestamp: number | string | null }>;
+      getJenkinsMultibranchIndexingStatus: (jobUrl: string, scan: { startedAt: number; previousTimestamp: number | string | null }, includeLog?: boolean) => Promise<{ supported: boolean; current: boolean; building: boolean; result: string | null; timestamp: number | string | null; summary: { rateLimitDelay: string | null; result: string | null } | null }>;
+      listJenkinsJobs: (repo?: string) => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
       runJenkinsJob: (url: string, parameters?: Record<string, string>) => Promise<JenkinsJobProgress>;
       resumeJenkinsJob: (jobUrl: string, buildUrl?: string | null) => Promise<JenkinsJobProgress>;
@@ -106,6 +107,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
   const [username, setUsername] = useState('');
   const [apiToken, setApiToken] = useState('');
   const [jobs, setJobs] = useState<JenkinsJob[]>([]);
+  const [deploymentJobs, setDeploymentJobs] = useState<JenkinsJob[]>([]);
   const [selectedJob, setSelectedJob] = useState('');
   const [selectedJobSupportsPr, setSelectedJobSupportsPr] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -222,22 +224,25 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
         setUsername(saved.username || '');
         let discovered: JenkinsJob[];
         let pipelineUrl: string | null = null;
-        if (choice === 'enabled') {
+        const github = await getGithubConnection(projectId);
+        if (!github.connected || !github.repo) {
+          discovered = [];
+          if (choice === 'enabled') setError('Connect a GitHub repository to this project to show its Jenkins jobs.');
+        } else if (choice === 'enabled') {
           setBusy(true);
-          const github = await getGithubConnection(projectId);
-          if (github.connected && github.repo) {
             const setup = await api.ensureJenkinsPipeline(github.repo);
             discovered = setup.jobs;
             pipelineUrl = setup.pipeline.url;
             if (active) setMessage(`${setup.pipeline.created ? 'Created' : 'Verified'} multibranch pipeline ${setup.pipeline.name} for ${github.repo}.`);
-          } else {
-            discovered = await api.listJenkinsJobs();
-          }
         } else {
-          discovered = await api.listJenkinsJobs();
+          discovered = await api.listJenkinsJobs(github.repo);
         }
+        const availableDeploymentJobs = github.connected && github.repo
+          ? (await api.listJenkinsJobs()).filter((job) => !job.supportsPullRequests)
+          : [];
         if (active) {
           setJobs(discovered);
+          setDeploymentJobs(availableDeploymentJobs);
           try {
             const savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || '';
             const selected = discovered.find((job) => job.url === pipelineUrl) ?? discovered.find((job) => job.url === savedJob);
@@ -245,6 +250,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
             setSelectedJobSupportsPr(Boolean(selected?.supportsPullRequests));
             try {
               if (selected) localStorage.setItem(`bankai-jenkins-job:${projectId}`, selected.url);
+              else localStorage.removeItem(`bankai-jenkins-job:${projectId}`);
               if (selected?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, selected.url);
               else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
             } catch { /* optional readiness hint */ }
@@ -280,7 +286,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       if (!github.connected || !github.repo) throw new Error('Connect a GitHub repository in project settings before connecting Jenkins.');
       const result = await api.connectJenkins({ url, username, apiToken, repo: github.repo });
       void recordJenkinsAuditAction(projectId, 'connected').catch(() => undefined);
-      setConnection(result); setJobs(result.jobs); setApiToken('');
+      setConnection(result); setJobs(result.jobs); setDeploymentJobs((await api.listJenkinsJobs()).filter((job) => !job.supportsPullRequests)); setApiToken('');
       let savedJob = '';
       try { savedJob = localStorage.getItem(`bankai-jenkins-job:${projectId}`) || ''; } catch { /* optional convenience */ }
       const validSavedJob = result.jobs.find((job) => job.url === savedJob) || result.jobs.find((job) => job.url === result.pipeline.url);
@@ -299,15 +305,22 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
     if (!api) return;
     setBusy(true); setError(null);
     try {
-      const discovered = await api.listJenkinsJobs();
+      const github = await getGithubConnection(projectId);
+      if (!github.connected || !github.repo) throw new Error('Connect a GitHub repository to this project to show its Jenkins jobs.');
+      const discovered = await api.listJenkinsJobs(github.repo);
+      const availableDeploymentJobs = (await api.listJenkinsJobs()).filter((job) => !job.supportsPullRequests);
       setJobs(discovered);
+      setDeploymentJobs(availableDeploymentJobs);
       const selected = discovered.find((job) => job.url === selectedJob);
+      setSelectedJob(selected?.url ?? '');
       setSelectedJobSupportsPr(Boolean(selected?.supportsPullRequests));
       try {
+        if (selected) localStorage.setItem(`bankai-jenkins-job:${projectId}`, selected.url);
+        else localStorage.removeItem(`bankai-jenkins-job:${projectId}`);
         if (selected?.supportsPullRequests) localStorage.setItem(`bankai-jenkins-pr-job:${projectId}`, selected.url);
         else localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`);
       } catch { /* optional readiness hint */ }
-      setMessage(`Found ${discovered.length} Jenkins job${discovered.length === 1 ? '' : 's'}.`);
+      setMessage(`Found ${discovered.length} Jenkins job${discovered.length === 1 ? '' : 's'} for ${github.repo}.`);
     }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
@@ -320,7 +333,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
       await api.closeJenkinsBrowser();
       setBrowserOpen(false); setBrowserExpanded(false);
       void recordJenkinsAuditAction(projectId, 'disconnected').catch(() => undefined);
-      setConnection({ connected: false }); setJobs([]); setSelectedJob(''); setSelectedJobSupportsPr(false); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
+      setConnection({ connected: false }); setJobs([]); setDeploymentJobs([]); setSelectedJob(''); setSelectedJobSupportsPr(false); setApiToken(''); setRun(null); setMessage('Jenkins disconnected.');
       try { localStorage.removeItem(`bankai-jenkins-choice:${projectId}`); } catch { /* optional preference */ }
       try { localStorage.removeItem(`bankai-jenkins-job:${projectId}`); } catch { /* optional preference */ }
       try { localStorage.removeItem(`bankai-jenkins-pr-job:${projectId}`); } catch { /* optional preference */ }
@@ -466,7 +479,7 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
           {error && <p className="jenkins-browser-error" role="alert">{error}</p>}
           {message && <p className="jenkins-browser-status" role="status">{message}</p>}
         </section>
-        <JenkinsDeploymentSetup projectId={projectId} jobs={jobs} />
+        <JenkinsDeploymentSetup projectId={projectId} jobs={deploymentJobs} />
         <JenkinsfileSetup projectId={projectId} onOpenJenkins={openJenkinsInApp} />
         </>
       )}

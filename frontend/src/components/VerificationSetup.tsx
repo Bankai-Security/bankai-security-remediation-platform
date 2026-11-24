@@ -4,6 +4,7 @@ import {
   ApiError,
   createHostedCiSetupPullRequest,
   generateHostedCiProposal,
+  getGithubConnection,
   getVerificationSettings,
   setVerificationProvider,
   type HostedCiProposal,
@@ -29,11 +30,14 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
     try {
       const connection = await desktop.getJenkinsConnection();
       if (!connection.connected) { setJenkinsStatus("Connect Jenkins"); return; }
+      const github = await getGithubConnection(projectId);
+      if (!github.connected || !github.repo) { setJenkinsStatus("Connect a repository"); return; }
       const selected = localStorage.getItem(`bankai-jenkins-job:${projectId}`);
       if (!selected) { setJenkinsStatus("Choose a multibranch job"); return; }
-      const jobs = await desktop.listJenkinsJobs();
+      const jobs = await desktop.listJenkinsJobs(github.repo);
       const scope = resolveVerificationScope(jobs, selected);
-      setJenkinsStatus(jobs.some(job => job.url === scope && job.supportsPullRequests)
+      const expectedPipelineName = `bankai-${github.repo.replace('/', '-')}`.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 100);
+      setJenkinsStatus(jobs.some(job => job.url === scope && job.name === expectedPipelineName && job.supportsPullRequests)
         ? "Ready" : "Choose a multibranch job");
     } catch {
       setJenkinsStatus("Could not check Jenkins");

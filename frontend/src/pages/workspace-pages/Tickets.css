@@ -212,21 +212,26 @@
 }
 
 .tickets-pipeline-status {
-  display: inline-block;
-  margin-top: 6px;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 9px;
   color: var(--color-text-muted);
   font-size: 11px;
 }
-.tickets-pipeline-status--result { display: inline-flex; align-items: center; gap: 5px; }
+.tickets-pipeline-status-heading { display: flex; align-items: center; gap: 7px; min-height: 20px; min-width: 0; }
+.tickets-pipeline-status-label { min-width: 0; font-weight: 600; line-height: 1.35; }
+.tickets-pipeline-status-actions { display: inline-flex; align-items: center; gap: 7px; margin-left: auto; }
+.tickets-pipeline-status--result .tickets-pipeline-status-label { color: var(--color-text); }
 .tickets-ci-icon { flex: 0 0 auto; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .tickets-ci-icon--passed { color: #16A34A; }
 .tickets-ci-icon--failed { color: #DC2626; }
-.tickets-ci-retry { display: inline-flex !important; margin-left: 2px; vertical-align: middle; }
+.tickets-ci-retry { display: inline-flex !important; margin: 0; vertical-align: middle; }
 .tickets-pipeline-status a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-  .tickets-pipeline-review-hint { display: block; margin-top: 3px; color: var(--color-text-faint); font-size: 11px; }
+.tickets-pipeline-review-hint { display: block; margin: 4px 0 0 22px; color: var(--color-text-faint); font-size: 11px; line-height: 1.4; }
 .tickets-deployment-target { margin-left: 8px; }
-.tickets-pipeline-cancel { margin-left: 8px; border: 0; padding: 0; background: none; color: var(--color-text-subtle); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.tickets-pipeline-error { display: block; max-width: 300px; margin-top: 3px; color: var(--color-text-subtle); white-space: normal; }
+.tickets-pipeline-cancel { border: 0; padding: 2px 0; background: none; color: var(--color-text-subtle); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.tickets-pipeline-error { display: block; margin: 7px 0 0 22px; padding: 7px 9px; border-left: 2px solid #F59E0B; border-radius: 0 6px 6px 0; background: var(--color-fill); color: var(--color-text-subtle); line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
 
 .tickets-kanban-card-cvit {
   font-size: 11.5px;
