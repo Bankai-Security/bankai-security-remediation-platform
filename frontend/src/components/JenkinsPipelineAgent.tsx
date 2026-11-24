@@ -73,7 +73,10 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         let indexingSupported = false;
         let indexingResult: string | null = null;
         let indexingSummary: { rateLimitDelay: string | null; result: string | null } | null = null;
-        if (!run.manualRetry && desktop.scanJenkinsMultibranch) {
+        // When a retry is resuming a persisted build, do not run multibranch
+        // indexing first. Indexing can block on the same GitHub API limiter
+        // and delay reconciliation of a result Jenkins already produced.
+        if (!run.manualRetry && !run.buildUrl && desktop.scanJenkinsMultibranch) {
           const scan = await desktop.scanJenkinsMultibranch(scope);
           if (desktop.getJenkinsMultibranchIndexingStatus) {
             const indexingDeadline = Date.now() + 15 * 60_000;

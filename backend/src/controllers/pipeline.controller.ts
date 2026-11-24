@@ -9,6 +9,7 @@ import { getBranchHeadSha, getPullRequest } from "../lib/github.js";
 import { loadGithubCreds } from "../lib/ticketing.js";
 
 const MAX_RETRIES = 2;
+const JENKINS_RUN_STALE_MS = 75 * 60_000;
 const JENKINS_AUDIT_ACTIONS = {
   connected: "connected Jenkins credentials on Bankai Desktop",
   disconnected: "disconnected Jenkins from Bankai Desktop",
@@ -131,7 +132,7 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     .select("verification_provider").eq("id", req.project!.id).maybeSingle();
   if (settingsError) throw new HttpError(500, "Could not load the selected CI provider.");
   if (verificationSettings?.verification_provider !== "jenkins") { res.status(204).end(); return; }
-  const staleBefore = new Date(Date.now() - 30 * 60_000).toISOString();
+  const staleBefore = new Date(Date.now() - JENKINS_RUN_STALE_MS).toISOString();
   const { data: staleRuns } = await supabaseAdmin.from("pipeline_runs").update({ status: "needs_review", conclusion: "desktop_disconnected",
     failure_summary: "Bankai Desktop stopped reporting before this build finished. Check Jenkins before retrying.", completed_at: new Date().toISOString() })
     .eq("project_id", req.project!.id).eq("status", "in_progress").lt("claimed_at", staleBefore).select("ticket_id");
@@ -201,7 +202,7 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     summary: "started Jenkins verification for", linkLabel: `PR #${claimed.pull_request_number}`, linkTo: "tickets", meta: `commit ${claimed.commit_sha}` });
   res.status(200).json({ runId: claimed.id, ticketId: claimed.ticket_id, commitSha: claimed.commit_sha, branch: claimed.head_branch,
     pullRequestNumber: claimed.pull_request_number, retryCount: claimed.retry_count, jobUrl: selectedJobUrl,
-    manualRetry: queued.manual_retry_requested === true,
+    manualRetry: queued.manual_retry_requested === true, buildUrl: claimed.jenkins_build_url ?? null, buildNumber: claimed.jenkins_build_number ?? null,
     buildSearchSince: queued.manual_retry_requested === true ? undefined : queued.updated_at ?? queued.created_at });
 }
 
@@ -461,7 +462,8 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   if (activeError) throw new HttpError(500, "Could not check for an active Jenkins run.");
   if (active) throw new HttpError(409, "A Jenkins verification is already queued or running for this ticket.");
 
-  const { data: run, error: runError } = await supabaseAdmin.from("pipeline_runs").select("id,commit_sha,pull_request_number")
+  const { data: run, error: runError } = await supabaseAdmin.from("pipeline_runs")
+    .select("id,commit_sha,pull_request_number,jenkins_build_url,jenkins_build_number,failure_summary,status")
     .eq("ticket_id", ticketId).eq("project_id", req.project!.id).in("status", ["needs_review", "completed"])
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (runError) throw new HttpError(500, "Could not load the Jenkins run for retry.");
@@ -474,14 +476,22 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   const matchesRecordedRun = !!run?.id && !!run.commit_sha && !!ticket.github_fix_commit_sha
     && run.commit_sha.toLowerCase() === ticket.github_fix_commit_sha.toLowerCase();
   if (matchesRecordedRun) {
+    // If Bankai timed out while Jenkins was still alive, reuse the persisted
+    // build URL on retry. Starting a second build would duplicate work and
+    // leave the already-finished result disconnected from the ticket.
+    const resumeTimedOutBuild = run!.status === "needs_review" && !!run!.jenkins_build_url
+      && /could not confirm whether the Jenkins build finished|Jenkins build is still running|existing Jenkins build is still running/i.test(run!.failure_summary ?? "");
     const { data: queued, error: queueError } = await supabaseAdmin.from("pipeline_runs").update({
       status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
-      jenkins_job_url: null, html_url: null, jenkins_build_url: null, jenkins_build_number: null, failure_summary: null, updated_at: now,
-      manual_retry_requested: true,
+      jenkins_job_url: null, html_url: resumeTimedOutBuild ? run!.jenkins_build_url : null,
+      jenkins_build_url: resumeTimedOutBuild ? run!.jenkins_build_url : null,
+      jenkins_build_number: resumeTimedOutBuild ? run!.jenkins_build_number : null,
+      failure_summary: null, updated_at: now, manual_retry_requested: !resumeTimedOutBuild,
     }).eq("id", run!.id).in("status", ["needs_review", "completed"]).select("id").maybeSingle();
     if (queueError) throw new HttpError(500, "Could not queue the Jenkins verification retry.");
     if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
-    const { error: updateTicketError } = await supabaseAdmin.from("tickets").update({ ci_status: "queued", ci_error: null, ci_run_url: null })
+    const { error: updateTicketError } = await supabaseAdmin.from("tickets").update({ ci_status: "queued", ci_error: null,
+      ci_run_url: resumeTimedOutBuild ? run!.jenkins_build_url : null })
       .eq("id", ticketId).eq("project_id", req.project!.id).eq("github_fix_commit_sha", ticket.github_fix_commit_sha).in("ci_status", ["needs_review", "failed"]);
     if (updateTicketError) throw new HttpError(500, "The Jenkins retry was queued, but the ticket status could not be updated.");
   } else {

@@ -5,6 +5,11 @@ const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs'
 const { repositoryName, pipelineUrl, pipelineConfigXml, jobsForRepository } = require('./jenkins-multibranch.cjs');
 const { isCurrentIndexing, indexingFinished, summarizeIndexingLog } = require('./jenkins-indexing.cjs');
 
+// GitHub Branch Source can pause PR builds for many minutes while anonymous
+// GitHub API requests are rate limited. Keep observing the same Jenkins build
+// long enough for that delay instead of reporting a false timeout.
+const JENKINS_BUILD_TIMEOUT_MS = 60 * 60_000;
+
 // Bankai uses in-window controls and has no native menu commands. Remove
 // Electron's default File/Edit/View/Window/Help menu on Windows.
 if (process.platform === 'win32') Menu.setApplicationMenu(null);
@@ -364,7 +369,8 @@ async function runJenkinsJob(event, jobUrl, parameters = {}) {
   }
   if (!build?.url) throw new Error('The build is still queued. Open Jenkins to check its status.');
   progress(event, { state: 'running', buildUrl: build.url, number: build.number, jobUrl });
-  for (let i = 0; i < 180; i += 1) {
+  const buildDeadline = Date.now() + JENKINS_BUILD_TIMEOUT_MS;
+  while (Date.now() < buildDeadline) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     const response = await jenkinsFetch(credentials, `${build.url.replace(/\/$/, '')}/api/json`);
     if (!response.ok) throw new Error(`Could not read Jenkins build status (HTTP ${response.status}).`);
@@ -411,7 +417,8 @@ async function resumeJenkinsJob(event, jobUrl, existingBuildUrl) {
   if (validatedBuild.origin !== job.origin || !validatedBuild.pathname.startsWith(`${job.pathname.replace(/\/$/, '')}/`)) throw new Error('The recorded build is outside the selected Jenkins job.');
   const build = { url: validatedBuild.toString(), number: null };
   progress(event, { state: 'running', buildUrl: build.url, jobUrl });
-  for (let i = 0; i < 180; i += 1) {
+  const buildDeadline = Date.now() + JENKINS_BUILD_TIMEOUT_MS;
+  while (Date.now() < buildDeadline) {
     const response = await jenkinsFetch(credentials, `${build.url.replace(/\/$/, '')}/api/json`);
     if (!response.ok) throw new Error(`Could not read Jenkins build status (HTTP ${response.status}).`);
     const current = await response.json();
