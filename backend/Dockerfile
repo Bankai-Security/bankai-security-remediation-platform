@@ -3,6 +3,7 @@ FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb
 WORKDIR /app
 RUN apk add --no-cache python3 py3-pip
 RUN python3 -m venv /opt/bankai-scanners \
+    && /opt/bankai-scanners/bin/pip install --no-cache-dir --upgrade "pip>=25.3,<27" \
     && /opt/bankai-scanners/bin/pip install --no-cache-dir semgrep==1.186.0 bandit==1.9.4 pip-audit==2.10.1
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -35,7 +36,12 @@ RUN apk add --no-cache ca-certificates curl tar python3 libffi libstdc++ \
 ENV PATH="/opt/bankai-scanners/bin:${PATH}" \
     HOME="/home/bankai" \
     XDG_CACHE_HOME="/home/bankai/.cache" \
+    PIP_BUILD_CONSTRAINT="/opt/bankai-pip-build-constraints.txt" \
     TRIVY_CACHE_DIR=/tmp/trivy-cache
+
+# Older Python distributions can fail under Cython 3 while pip-audit resolves
+# requirements from source. Keep isolated build environments on Cython 0.29.
+RUN printf 'Cython<3\n' > /opt/bankai-pip-build-constraints.txt
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund \
