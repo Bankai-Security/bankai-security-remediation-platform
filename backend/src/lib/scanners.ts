@@ -35,12 +35,12 @@ const object = (v: unknown): JsonObject => v && typeof v === "object" && !Array.
 const str = (v: unknown): string | null => typeof v === "string" && v.trim() ? v.trim() : null;
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
 
-// pip-audit writes its clean-audit summary to stderr and emits no JSON when it
-// finds no vulnerabilities. For non-empty reports, tolerate incidental output
-// before the JSON object while requiring the expected dependency report shape.
-function parsePipAuditOutput(output: string, stderr = ""): unknown {
+// pip-audit emits no JSON when an audit is clean; it reports the result via
+// stderr and exit code instead. For non-empty reports, tolerate incidental
+// output before the JSON object while requiring the expected report shape.
+function parsePipAuditOutput(output: string, stderr = "", exitCode?: number): unknown {
   const text = output.trim();
-  if (!text && /No known vulnerabilities found/i.test(stderr)) return { dependencies: [] };
+  if (!text && (exitCode === 0 || /No known vulnerabilities found/i.test(stderr))) return { dependencies: [] };
   for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
     let depth = 0;
     let inString = false;
@@ -188,10 +188,10 @@ async function version(command: string, args: string[]): Promise<string> {
   const result = await run(command, args, process.cwd()); return result.stdout.trim().split(/\r?\n/)[0] || result.stderr.trim().split(/\r?\n/)[0] || "unknown";
 }
 
-async function scanner<T>(name: string, command: string, args: string[], root: string, parse: (stdout: string, stderr?: string) => T, allowFindings = false): Promise<{ value: T; run: ScannerRun }> {
+async function scanner<T>(name: string, command: string, args: string[], root: string, parse: (stdout: string, stderr?: string, exitCode?: number) => T, allowFindings = false): Promise<{ value: T; run: ScannerRun }> {
   const result = await run(command, args, root, allowFindings);
   let data: T;
-  try { data = parse(result.stdout, result.stderr); }
+  try { data = parse(result.stdout, result.stderr, result.code); }
   catch (error) {
     const detail = error instanceof Error ? error.message : "Could not parse scanner output.";
     throw new Error(`${name} returned invalid JSON: ${detail}`);
@@ -201,7 +201,7 @@ async function scanner<T>(name: string, command: string, args: string[], root: s
 
 async function scanDirectory(root: string, repo: string, sha: string): Promise<RepositoryScan> {
   const runs: ScannerRun[] = []; const findings: NormalizedFinding[] = [];
-  const invoke = async (name: string, command: string, args: string[], allowFindings = false, findingFilePath?: string, parse: (stdout: string, stderr?: string) => unknown = (stdout) => JSON.parse(stdout)) => {
+  const invoke = async (name: string, command: string, args: string[], allowFindings = false, findingFilePath?: string, parse: (stdout: string, stderr?: string, exitCode?: number) => unknown = (stdout) => JSON.parse(stdout)) => {
     try {
       let result: Awaited<ReturnType<typeof scanner>>;
       try {
