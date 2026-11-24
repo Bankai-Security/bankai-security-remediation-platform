@@ -244,6 +244,11 @@
   margin-top: 10px;
 }
 
+.tickets-branch-icon {
+  display: block;
+  flex: 0 0 auto;
+}
+
 .tickets-table-actions {
   display: inline-flex;
   align-items: center;

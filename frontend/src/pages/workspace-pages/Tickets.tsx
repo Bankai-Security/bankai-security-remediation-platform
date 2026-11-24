@@ -61,6 +61,18 @@ function prBadgeTitle(t: Ticket): string {
   return `Open pull request #${t.githubPrNumber}${state}${lowConfidence}`;
 }
 
+function BranchIcon({ size }: { size: number }) {
+  return (
+    <svg className="tickets-branch-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="4" r="2" />
+      <circle cx="18" cy="20" r="2" />
+      <circle cx="6" cy="20" r="2" />
+      <path d="M6 6v12" />
+      <path d="M18 18v-2a4 4 0 0 0-4-4H10a4 4 0 0 1-4-4V6" />
+    </svg>
+  );
+}
+
 function canRetryJenkinsVerification(ticket: Ticket): boolean {
   return ['failed', 'needs_review'].includes(ticket.ciStatus ?? '') && ticket.githubPrState === 'open';
 }
@@ -447,10 +459,10 @@ export default function Tickets() {
                               href={t.githubBranchUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="ws-icon-btn ws-icon-btn--github"
+                              className="ws-icon-btn ws-icon-btn--github ws-icon-btn--branch"
                               title={`Open remediation branch ${t.githubBranchName}`}
                             >
-                              <GithubIcon size={14} />
+                              <BranchIcon size={14} />
                             </a>
                           ) : null}
 
@@ -519,7 +531,7 @@ export default function Tickets() {
                             className={`ws-icon-btn ws-icon-btn--github ws-icon-btn--sm ws-icon-btn--label${t.githubPrLowConfidence ? ' ws-icon-btn--low-confidence' : ''}`}
                             title={prBadgeTitle(t)}
                           >
-                            <GithubIcon size={11} />
+                            <BranchIcon size={11} />
                             <span>#{t.githubPrNumber}</span>
                           </a>
                         ) : t.githubBranchUrl ? (
@@ -527,7 +539,7 @@ export default function Tickets() {
                             href={t.githubBranchUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="ws-icon-btn ws-icon-btn--github ws-icon-btn--sm"
+                            className="ws-icon-btn ws-icon-btn--branch ws-icon-btn--sm"
                             title={`Open remediation branch ${t.githubBranchName}`}
                           >
                             <GithubIcon size={11} />

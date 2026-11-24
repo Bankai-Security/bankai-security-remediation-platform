@@ -317,6 +317,23 @@
   color: #fff;
 }
 
+.ws-icon-btn--branch {
+  background: var(--color-fill);
+  color: var(--color-text-subtle);
+  border: 1px solid var(--color-border-strong);
+  box-sizing: border-box;
+}
+
+.ws-icon-btn--branch:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.ws-icon-btn--sm.ws-icon-btn--branch {
+  width: 26px;
+  height: 26px;
+}
+
 .ws-icon-btn--retry {
   background: var(--color-fill);
   color: var(--color-text-subtle);

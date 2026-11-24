@@ -46,7 +46,7 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M2.5 10h3.2l2.1-5 3.9 10 2.1-5h3.7" />
     </svg>
   ),
-  jenkins: <img src={jenkinsLogo} alt="" width="18" height="18" />,
+  jenkins: <img src={jenkinsLogo} alt="" width="18" height="18" className="sidebar-jenkins-icon" />,
 };
 
 const NAV_ITEMS = [

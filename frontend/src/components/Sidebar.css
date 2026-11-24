@@ -121,6 +121,18 @@
   flex-shrink: 0;
 }
 
+.sidebar-jenkins-icon {
+  display: block;
+  flex: 0 0 auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sidebar-jenkins-icon,
+  .jenkins-download-mark {
+    filter: brightness(0) invert(1);
+  }
+}
+
 .sidebar-nav-label-text {
   overflow: hidden;
   text-overflow: ellipsis;
