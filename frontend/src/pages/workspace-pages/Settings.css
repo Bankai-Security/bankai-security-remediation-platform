@@ -55,8 +55,8 @@
 
 .settings-role-badge {
   display: inline-flex;
-  border: 1.5px solid #93C5FD;
-  color: #1D4ED8;
+  border: 1.5px solid var(--color-blue-border);
+  color: var(--color-blue-text);
   border-radius: 999px;
   padding: 5px 13px;
   font-size: 12px;

@@ -28,8 +28,8 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  background: var(--color-text);
-  color: #fff;
+  background: var(--color-inverse-surface, var(--color-text));
+  color: var(--color-inverse-text, #fff);
   border-radius: 14px;
   padding: 10px 16px;
   margin-bottom: 14px;
@@ -51,7 +51,7 @@
 }
 
 .triage-bulk-clear:hover {
-  color: #fff;
+  color: var(--color-inverse-text, #fff);
 }
 
 .triage-bulk-create {
@@ -120,7 +120,7 @@
 .triage-drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(28, 28, 30, 0.18);
+  background: rgba(0, 0, 0, 0.42);
   z-index: 40;
 }
 
@@ -215,7 +215,7 @@
 }
 
 .triage-drawer-close:hover {
-  background: #DEDEE1;
+  background: var(--color-fill);
 }
 
 .triage-drawer-body {
@@ -227,7 +227,7 @@
   flex-direction: column;
   gap: 18px;
   scrollbar-width: auto;
-  scrollbar-color: #8A8A8E #F1F1F3;
+  scrollbar-color: #8A8A8E var(--color-divider);
 }
 
 .triage-drawer-body::-webkit-scrollbar {
@@ -235,19 +235,19 @@
 }
 
 .triage-drawer-body::-webkit-scrollbar-track {
-  background: #F1F1F3;
+  background: var(--color-divider);
   border-radius: 999px;
 }
 
 .triage-drawer-body::-webkit-scrollbar-thumb {
   min-height: 56px;
-  border: 3px solid #F1F1F3;
+  border: 3px solid var(--color-divider);
   border-radius: 999px;
-  background: #8A8A8E;
+  background: var(--color-border-strong);
 }
 
 .triage-drawer-body::-webkit-scrollbar-thumb:hover {
-  background: #636366;
+  background: var(--color-text-muted);
 }
 
 .triage-drawer-label {
@@ -288,10 +288,10 @@
   align-items: flex-start;
   gap: 11px;
   padding: 13px 14px;
-  border: 1px solid #BFDBFE;
+  border: 1px solid var(--color-border-strong);
   border-radius: 12px;
-  background: #EFF6FF;
-  color: #1E3A8A;
+  background: var(--color-blue-bg);
+  color: var(--color-text);
 }
 
 .triage-scan-notice-icon {
@@ -302,8 +302,8 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #DBEAFE;
-  color: #1D4ED8;
+  background: var(--color-fill);
+  color: var(--color-blue);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
@@ -315,7 +315,7 @@
 
 .triage-scan-notice-label {
   margin-bottom: 5px;
-  color: #1D4ED8;
+  color: var(--color-blue);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 10px;
   font-weight: 700;
@@ -324,7 +324,7 @@
 
 .triage-scan-notice-text {
   margin: 0;
-  color: #1E3A8A;
+  color: var(--color-text-subtle);
   font-family: var(--font-sans) !important;
   font-size: 11px;
   line-height: 1.65;
@@ -332,11 +332,11 @@
 }
 
 .triage-drawer-rationale {
-  background: #EFF6FF;
+  background: var(--color-blue-bg);
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 12.5px;
-  color: #1E40AF;
+  color: var(--color-blue);
   line-height: 1.55;
   overflow-wrap: break-word;
   word-break: break-word;

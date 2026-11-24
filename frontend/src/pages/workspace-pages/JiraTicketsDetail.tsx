@@ -76,7 +76,7 @@ export default function JiraTicketsDetail() {
               {eligible.length === 0 ? 'No eligible rows right now' : `${eligible.length} row(s) ready to send to Jira`}
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--color-text-muted)', marginTop: 3 }}>
-              Tickets are only created from <strong style={{ color: '#DB2777' }}>New Delta</strong> rows — mark them for Jira from{' '}
+              Tickets are only created from <strong style={{ color: 'var(--color-pink-text, #DB2777)' }}>New Delta</strong> rows — mark them for Jira from{' '}
               <Link to={`/workspace/${project?.id}/triage`}>AI Triage</Link>.
             </div>
           </div>
@@ -94,7 +94,7 @@ export default function JiraTicketsDetail() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {lastBatch.map((t) => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--color-bg)', borderRadius: 12, padding: '12px 16px' }}>
-                  <span style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--color-green)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flexShrink: 0 }}>✓</span>
+                  <span style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--color-green)', color: 'var(--color-inverse-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flexShrink: 0 }}>✓</span>
                   <a href={t.jiraIssueUrl ?? undefined} target="_blank" rel="noreferrer" className="ws-mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-blue)', width: 90 }}>
                     {t.jiraIssueKey}
                   </a>
@@ -117,12 +117,12 @@ export default function JiraTicketsDetail() {
             </div>
           )}
           {syncErrors.length > 0 && (
-            <div className="step-footnote" style={{ color: '#B91C1C' }}>
+            <div className="step-footnote" style={{ color: 'var(--color-red-text)' }}>
               {syncErrors.length} ticket(s) could not sync to Jira — see the Tickets board for details.
             </div>
           )}
           {branchErrors.length > 0 && (
-            <div className="step-footnote" style={{ color: '#B91C1C' }}>
+            <div className="step-footnote" style={{ color: 'var(--color-red-text)' }}>
               {branchErrors.length} ticket(s) could not get a remediation branch — see the Tickets board for details.
             </div>
           )}

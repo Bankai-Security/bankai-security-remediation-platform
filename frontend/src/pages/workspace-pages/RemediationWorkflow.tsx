@@ -12,9 +12,9 @@ function buildDonutSegments(missed: number, approaching: number, onTrack: number
   const approachingLen = (approaching / total) * CIRCUMFERENCE;
   const onTrackLen = (onTrack / total) * CIRCUMFERENCE;
   return [
-    { color: '#EF4444', dasharray: `${missedLen} ${CIRCUMFERENCE}`, dashoffset: '0' },
-    { color: '#EAB308', dasharray: `${approachingLen} ${CIRCUMFERENCE}`, dashoffset: `${-missedLen}` },
-    { color: '#22C55E', dasharray: `${onTrackLen} ${CIRCUMFERENCE}`, dashoffset: `${-(missedLen + approachingLen)}` },
+    { color: 'var(--color-critical)', dasharray: `${missedLen} ${CIRCUMFERENCE}`, dashoffset: '0' },
+    { color: 'var(--color-warning-dot)', dasharray: `${approachingLen} ${CIRCUMFERENCE}`, dashoffset: `${-missedLen}` },
+    { color: 'var(--color-green)', dasharray: `${onTrackLen} ${CIRCUMFERENCE}`, dashoffset: `${-(missedLen + approachingLen)}` },
   ];
 }
 
@@ -133,17 +133,17 @@ export default function RemediationWorkflow() {
                       </div>
                       <div className="workflow-donut-legend">
                         <div className="workflow-donut-legend-row">
-                          <span className="ws-dot" style={{ background: '#EF4444' }} />
+                          <span className="ws-dot" style={{ background: 'var(--color-critical)' }} />
                           <span className="workflow-donut-legend-label">Missed SLA</span>
                           <span className="workflow-donut-legend-value">{d.missed}</span>
                         </div>
                         <div className="workflow-donut-legend-row">
-                          <span className="ws-dot" style={{ background: '#EAB308' }} />
+                          <span className="ws-dot" style={{ background: 'var(--color-warning-dot)' }} />
                           <span className="workflow-donut-legend-label">Approaching Target</span>
                           <span className="workflow-donut-legend-value">{d.approaching}</span>
                         </div>
                         <div className="workflow-donut-legend-row">
-                          <span className="ws-dot" style={{ background: '#22C55E' }} />
+                          <span className="ws-dot" style={{ background: 'var(--color-green)' }} />
                           <span className="workflow-donut-legend-label">Total CVITs</span>
                           <span className="workflow-donut-legend-value">{d.total}</span>
                         </div>

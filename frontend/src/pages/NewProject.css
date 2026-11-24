@@ -220,7 +220,7 @@ select.new-project-input {
 }
 
 .new-project-chip-remove:hover {
-  background: #B8B8BD;
+  background: var(--color-border-strong);
 }
 
 .new-project-add-row {
@@ -331,6 +331,7 @@ select.new-project-input {
 .new-project-create-btn {
   display: inline-flex;
   align-items: center;
+  gap: 9px;
   background: var(--color-blue);
   color: #fff;
   border: none;

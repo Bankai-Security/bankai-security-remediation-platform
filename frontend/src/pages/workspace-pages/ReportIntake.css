@@ -152,7 +152,7 @@
 }
 
 .intake-error {
-  border: 1px solid #FCA5A5;
+  border: 1px solid var(--color-red);
   background: var(--color-red-bg);
   display: flex;
   align-items: flex-start;
@@ -181,12 +181,12 @@
 .intake-error-title {
   font-size: 15px;
   font-weight: 700;
-  color: #991B1B;
+  color: var(--color-danger-text);
 }
 
 .intake-error-text {
   font-size: 13px;
-  color: #B91C1C;
+  color: var(--color-red);
   margin-top: 4px;
 }
 
@@ -200,11 +200,11 @@
 .intake-error-log-link {
   font-size: 13px;
   font-weight: 600;
-  color: #991B1B;
+  color: var(--color-danger-text);
 }
 
 .intake-error-log-link:hover {
-  color: #7F1D1D;
+  color: var(--color-danger-text);
 }
 
 .intake-history-head {

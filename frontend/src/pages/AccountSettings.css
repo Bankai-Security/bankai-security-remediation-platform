@@ -57,8 +57,8 @@
 }
 
 .account-settings-success {
-  background: #DCFCE7;
-  color: #15803D;
+  background: var(--color-green-bg);
+  color: var(--color-green-dark);
   border-radius: var(--radius-md);
   padding: 10px 13px;
   font-size: 12.5px;

@@ -110,8 +110,8 @@
 .workflow-pink-badge {
   display: inline-flex;
   align-items: center;
-  border: 1.5px solid #EC4899;
-  color: #DB2777;
+  border: 1.5px solid var(--color-pink-text);
+  color: var(--color-pink-text);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 13px;

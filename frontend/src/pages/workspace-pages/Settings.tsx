@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import GithubIcon from '../../components/GithubIcon';
+import JiraIcon from '../../components/JiraIcon';
 import RepoPicker from '../../components/RepoPicker';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
 import VerificationSetup from '../../components/VerificationSetup';
@@ -64,10 +65,10 @@ const NOTIF_DEFS = [
 ];
 
 const ROLE_STYLE: Record<MemberRole, { border: string; color: string; access: string }> = {
-  owner: { border: '#93C5FD', color: '#1D4ED8', access: 'Full access' },
-  admin: { border: '#93C5FD', color: '#1D4ED8', access: 'Full access' },
-  editor: { border: '#86EFAC', color: '#15803D', access: 'Triage + tickets' },
-  viewer: { border: '#D1D1D6', color: '#3A3A3C', access: 'Read only' },
+  owner: { border: 'var(--color-blue-border)', color: 'var(--color-blue-text)', access: 'Full access' },
+  admin: { border: 'var(--color-blue-border)', color: 'var(--color-blue-text)', access: 'Full access' },
+  editor: { border: 'var(--color-green-text)', color: 'var(--color-green-text)', access: 'Triage + tickets' },
+  viewer: { border: 'var(--color-border-strong)', color: 'var(--color-text-subtle)', access: 'Read only' },
 };
 
 const AVATAR_COLORS = ['#22C55E', '#2563EB', '#7C3AED', '#EA580C', '#DB2777', '#0D9488', '#CA8A04'];
@@ -675,8 +676,8 @@ export default function Settings() {
             <h2 className="settings-h2">Jira</h2>
           </div>
           {jira && (
-            <span className="ws-dot-status" style={{ color: jira.connected ? '#15803D' : '#B91C1C' }}>
-              <span className="ws-dot" style={{ background: jira.connected ? '#22C55E' : '#EF4444' }} />
+            <span className="ws-dot-status" style={{ color: jira.connected ? 'var(--color-success)' : 'var(--color-red-text)' }}>
+              <span className="ws-dot" style={{ background: jira.connected ? 'var(--color-green)' : 'var(--color-critical)' }} />
               {jira.connected ? 'Connected' : 'Disconnected'}
             </span>
           )}
@@ -742,6 +743,7 @@ export default function Settings() {
               <div className="ws-card-hint" style={{ marginBottom: 16 }}>Authorize Bankai with Atlassian, then select one of your accessible Jira sites and projects. You can continue using Bankai tickets if you skip Jira.</div>
               <div className="settings-jira-actions">
                 <button type="button" className="ws-btn ws-btn-primary" onClick={() => void handleStartJiraOAuth()} disabled={jiraOAuthBusy}>
+                  <JiraIcon size={16} />
                   {jiraOAuthBusy ? 'Opening Atlassian…' : 'Connect Jira with Atlassian'}
                 </button>
                 <button type="button" className="settings-jira-toggle-link" onClick={() => setManualJiraFallback(true)}>Use API-token setup instead</button>
@@ -828,8 +830,8 @@ export default function Settings() {
             </h2>
           </div>
           {github && (
-            <span className="ws-dot-status" style={{ color: github.connected ? '#15803D' : '#B91C1C' }}>
-              <span className="ws-dot" style={{ background: github.connected ? '#22C55E' : '#EF4444' }} />
+            <span className="ws-dot-status" style={{ color: github.connected ? 'var(--color-success)' : 'var(--color-red-text)' }}>
+              <span className="ws-dot" style={{ background: github.connected ? 'var(--color-green)' : 'var(--color-critical)' }} />
               {github.connected ? 'Connected' : 'Disconnected'}
             </span>
           )}
@@ -851,18 +853,18 @@ export default function Settings() {
             {github.webhookRegistered ? (
               <>
                 <div className="ws-card-hint" style={{ marginTop: 12 }}>
-                  <span className="ws-dot" style={{ background: '#22C55E', marginRight: 6 }} />
+                  <span className="ws-dot" style={{ background: 'var(--color-green)', marginRight: 6 }} />
                   Repository automation is enabled — pushes to {github.defaultBranch} and pull request updates are scanned
                   against their exact commit. Merging an AI fix's pull request automatically moves its ticket to Done.
                 </div>
                 {!github.workflowRunReporting && (
-                  <div className="settings-jira-error" style={{ marginTop: 10, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
+                  <div className="settings-jira-error" style={{ marginTop: 10, background: 'var(--color-warning-bg)', borderColor: 'var(--color-warning-border)', color: 'var(--color-warning-text)' }}>
                     This GitHub webhook does not report hosted CI results yet. Reconnect GitHub to update it, or add the <code>workflow_run</code> event to its event subscriptions.
                   </div>
                 )}
               </>
             ) : github.webhookUrl ? (
-              <div className="settings-jira-error" style={{ marginTop: 12, background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
+              <div className="settings-jira-error" style={{ marginTop: 12, background: 'var(--color-warning-bg)', borderColor: 'var(--color-warning-border)', color: 'var(--color-warning-text)' }}>
                 Auto-rescan on push and PR-merge ticket updates aren't set up — this token couldn't create a webhook
                 automatically. Add one manually in the repo's Settings → Webhooks: payload URL <code>{github.webhookUrl}</code>,
                 content type <code>application/json</code>, events <code>push</code>, <code>pull_request</code>, and <code>workflow_run</code>

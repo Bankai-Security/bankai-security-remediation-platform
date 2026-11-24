@@ -19,19 +19,19 @@ const TABS: { key: EventType | 'all'; label: string }[] = [
 function eventIcon(type: EventType): { bg: string; icon: ReactElement } {
   const stroke = { fill: 'none', strokeWidth: 1.6, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   if (type === 'upload') return { bg: 'var(--color-fill)', icon: (
-    <svg width="15" height="15" viewBox="0 0 16 16" stroke="#3A3A3C" {...stroke}><path d="M8 11V3.5" /><path d="M5 6 8 3l3 3" /><path d="M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1" /></svg>
+    <svg width="15" height="15" viewBox="0 0 16 16" stroke="var(--color-text-subtle)" {...stroke}><path d="M8 11V3.5" /><path d="M5 6 8 3l3 3" /><path d="M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1" /></svg>
   ) };
-  if (type === 'triage') return { bg: '#DCFCE7', icon: (
-    <svg width="15" height="15" viewBox="0 0 16 16" stroke="#15803D" {...stroke}><path d="M3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
+  if (type === 'triage') return { bg: 'var(--color-green-bg)', icon: (
+    <svg width="15" height="15" viewBox="0 0 16 16" stroke="var(--color-green-text)" {...stroke}><path d="M3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
   ) };
-  if (type === 'ticket') return { bg: '#DBEAFE', icon: (
-    <svg width="15" height="15" viewBox="0 0 16 16" stroke="#1D4ED8" {...stroke}><path d="M2.5 6v-1A1 1 0 0 1 3.5 4h9a1 1 0 0 1 1 1v1a2 2 0 0 0 0 4v1a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-1a2 2 0 0 0 0-4Z" /></svg>
+  if (type === 'ticket') return { bg: 'var(--color-blue-bg)', icon: (
+    <svg width="15" height="15" viewBox="0 0 16 16" stroke="var(--color-blue-text)" {...stroke}><path d="M2.5 6v-1A1 1 0 0 1 3.5 4h9a1 1 0 0 1 1 1v1a2 2 0 0 0 0 4v1a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-1a2 2 0 0 0 0-4Z" /></svg>
   ) };
-  if (type === 'pipeline') return { bg: '#EDE9FE', icon: (
-    <svg width="15" height="15" viewBox="0 0 16 16" stroke="#6D28D9" {...stroke}><path d="M3 4.5h10" /><path d="M3 8h10" /><path d="M3 11.5h6" /><path d="M12.5 10 14 11.5 12.5 13" /></svg>
+  if (type === 'pipeline') return { bg: 'var(--color-purple-bg)', icon: (
+    <svg width="15" height="15" viewBox="0 0 16 16" stroke="var(--color-purple-text)" {...stroke}><path d="M3 4.5h10" /><path d="M3 8h10" /><path d="M3 11.5h6" /><path d="M12.5 10 14 11.5 12.5 13" /></svg>
   ) };
-  return { bg: '#FEE2E2', icon: (
-    <svg width="15" height="15" viewBox="0 0 16 16" stroke="#B91C1C" {...stroke}><path d="M8 5v4" /><circle cx="8" cy="11.5" r="0.4" fill="#B91C1C" /><path d="M7.1 2.3 1.8 12a1 1 0 0 0 .9 1.5h10.6a1 1 0 0 0 .9-1.5L8.9 2.3a1 1 0 0 0-1.8 0Z" /></svg>
+  return { bg: 'var(--color-red-bg)', icon: (
+    <svg width="15" height="15" viewBox="0 0 16 16" stroke="var(--color-red-text)" {...stroke}><path d="M8 5v4" /><circle cx="8" cy="11.5" r="0.4" fill="var(--color-red-text)" /><path d="M7.1 2.3 1.8 12a1 1 0 0 0 .9 1.5h10.6a1 1 0 0 0 .9-1.5L8.9 2.3a1 1 0 0 0-1.8 0Z" /></svg>
   ) };
 }
 

@@ -43,7 +43,7 @@ export default function App() {
       <Route
         path="/"
         element={
-          <Suspense fallback={<div style={{ minHeight: '100vh', background: '#f4f4f5' }} />}>
+          <Suspense fallback={<div style={{ minHeight: '100vh', background: 'var(--color-bg)' }} />}>
             <Landing />
           </Suspense>
         }
@@ -51,7 +51,7 @@ export default function App() {
       <Route
         path="/terms"
         element={
-          <Suspense fallback={<div style={{ minHeight: '100vh', background: '#f4f4f5' }} />}>
+          <Suspense fallback={<div style={{ minHeight: '100vh', background: 'var(--color-bg)' }} />}>
             <Terms />
           </Suspense>
         }
@@ -59,7 +59,7 @@ export default function App() {
       <Route
         path="/privacy"
         element={
-          <Suspense fallback={<div style={{ minHeight: '100vh', background: '#f4f4f5' }} />}>
+          <Suspense fallback={<div style={{ minHeight: '100vh', background: 'var(--color-bg)' }} />}>
             <Privacy />
           </Suspense>
         }

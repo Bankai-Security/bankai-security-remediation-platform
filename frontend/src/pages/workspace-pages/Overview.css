@@ -125,17 +125,17 @@
 }
 
 .overview-service-missed {
-  color: #DC2626;
+  color: var(--color-error);
   font-weight: 600;
 }
 
 .overview-service-approaching {
-  color: #B45309;
+  color: var(--color-caution);
   font-weight: 600;
 }
 
 .overview-service-ontrack {
-  color: #16A34A;
+  color: var(--color-positive);
   font-weight: 600;
 }
 

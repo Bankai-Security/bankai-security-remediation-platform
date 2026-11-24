@@ -234,13 +234,13 @@
 }
 
 .ws-btn-outline-blue:hover:not(:disabled) {
-  background: #EFF6FF;
+  background: var(--color-blue-bg);
 }
 
 .ws-btn-danger-outline {
   background: var(--color-surface);
-  color: #B91C1C;
-  border: 1px solid #FCA5A5;
+  color: var(--color-red);
+  border: 1px solid var(--color-red);
 }
 
 .ws-btn-danger-outline:hover:not(:disabled) {
@@ -308,7 +308,7 @@
 }
 
 .ws-icon-btn--github {
-  background: #171717;
+  background: var(--color-inverse-text, #171717);
   color: #fff;
 }
 
@@ -333,7 +333,7 @@
 
 .ws-icon-btn--warn {
   background: var(--color-red-bg);
-  color: #B91C1C;
+  color: var(--color-red-text);
   cursor: default;
   font-size: 12px;
   font-weight: 700;
@@ -342,13 +342,13 @@
 /* PR opened from a low-confidence AI fix — amber instead of the usual
    black GitHub badge, so reviewers know to scrutinize before merging. */
 .ws-icon-btn--github.ws-icon-btn--low-confidence {
-  background: #FFEDD5;
-  color: #C2410C;
+  background: var(--color-orange-bg);
+  color: var(--color-orange-text);
 }
 
 .ws-icon-btn--github.ws-icon-btn--low-confidence:hover {
   opacity: 0.8;
-  color: #C2410C;
+  color: var(--color-orange-text);
 }
 
 @keyframes ws-spin {
@@ -400,19 +400,19 @@
   background: transparent;
 }
 
-.ws-badge--critical { background: #FEE2E2; color: #B91C1C; }
-.ws-badge--high { background: #FFEDD5; color: #C2410C; }
-.ws-badge--medium { background: #FEF9C3; color: #A16207; }
+.ws-badge--critical { background: var(--color-red-bg); color: var(--color-red); }
+.ws-badge--high { background: var(--color-orange-bg); color: var(--color-orange-text); }
+.ws-badge--medium { background: var(--color-yellow-bg); color: var(--color-yellow-text); }
 .ws-badge--low { background: var(--color-fill); color: var(--color-text-subtle); }
 
-.ws-badge--bucket-new { border-color: #EC4899; color: #DB2777; }
-.ws-badge--bucket-progress { border-color: #93C5FD; color: #1D4ED8; }
-.ws-badge--bucket-changed { border-color: #FCD34D; color: #A16207; }
-.ws-badge--bucket-resolved { border-color: #86EFAC; color: #15803D; }
+.ws-badge--bucket-new { border-color: var(--color-pink-text); color: var(--color-pink-text); }
+.ws-badge--bucket-progress { border-color: var(--color-blue-border); color: var(--color-blue-text); }
+.ws-badge--bucket-changed { border-color: var(--color-yellow-border); color: var(--color-yellow-text); }
+.ws-badge--bucket-resolved { border-color: var(--color-green-text); color: var(--color-green-text); }
 
-.ws-badge--pill-green { background: #DCFCE7; color: #15803D; }
-.ws-badge--pill-red { background: #FEE2E2; color: #B91C1C; }
-.ws-badge--pill-blue { background: #DBEAFE; color: #1D4ED8; }
+.ws-badge--pill-green { background: var(--color-green-bg); color: var(--color-green-dark); }
+.ws-badge--pill-red { background: var(--color-red-bg); color: var(--color-red); }
+.ws-badge--pill-blue { background: var(--color-blue-bg); color: var(--color-blue); }
 .ws-badge--pill-neutral { background: var(--color-fill); color: var(--color-text-subtle); }
 
 .ws-dot-status {
@@ -459,7 +459,7 @@
   gap: 0 10px;
   align-items: center;
   padding: 12px 20px;
-  border-bottom: 1px solid #F1F1F3;
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .ws-table-row:last-child {
@@ -554,7 +554,7 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-surface-alt);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
   transition: left 0.15s ease;
 }

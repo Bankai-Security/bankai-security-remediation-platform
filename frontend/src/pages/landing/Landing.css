@@ -1,6 +1,5 @@
 /* ============================================================
-   Bankai landing page — light theme (dark mode deferred until the
-   whole app ships dark mode).
+   Bankai landing page — system-aware light and dark themes.
    Every value traces to design-system/bankai/MASTER.md.
    Scoped under .landing so the app tokens stay untouched.
    ============================================================ */
@@ -22,6 +21,10 @@
   --ldg-red: #dc2626;
   --ldg-orange: #c2410c;
   --ldg-yellow: #a16207;
+  --ldg-hover: rgba(28, 28, 30, 0.04);
+  --ldg-nav-surface: rgba(244, 244, 245, 0.94);
+
+  color-scheme: light dark;
 
   /* Type */
   --ldg-font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -49,6 +52,29 @@
   line-height: 1.6;
   min-height: 100dvh;
   overflow-x: clip;
+}
+
+@media (prefers-color-scheme: dark) {
+  .landing {
+    --ldg-bg: #111214;
+    --ldg-surface: #1b1c20;
+    --ldg-surface-alt: #22242a;
+    --ldg-border: #34363d;
+    --ldg-border-strong: #484b54;
+    --ldg-text: #f4f4f5;
+    --ldg-text-muted: #b4b4bc;
+    --ldg-text-faint: #92929c;
+    --ldg-code-bg: #151619;
+    --ldg-blue: #60a5fa;
+    --ldg-blue-dark: #93c5fd;
+    --ldg-green: #4ade80;
+    --ldg-red: #f87171;
+    --ldg-orange: #fb923c;
+    --ldg-yellow: #facc15;
+    --ldg-hover: rgba(244, 244, 245, 0.08);
+    --ldg-nav-surface: rgba(17, 18, 20, 0.94);
+  }
+
 }
 
 .landing ::selection {
@@ -152,7 +178,7 @@
 
 .ldg-btn-secondary:hover {
   border-color: var(--ldg-text-faint);
-  background: rgba(28, 28, 30, 0.04);
+  background: var(--ldg-hover);
   color: var(--ldg-text);
 }
 
@@ -182,7 +208,7 @@
 }
 
 .ldg-nav-scrolled {
-  background: rgba(244, 244, 245, 0.94);
+  background: var(--ldg-nav-surface);
   border-bottom-color: var(--ldg-border);
 }
 

@@ -31,9 +31,9 @@ function sevBadgeClass(sev: Severity) {
 }
 
 function slaColor(sla: string) {
-  if (sla === 'Missed') return { color: '#DC2626', dot: '#EF4444' };
-  if (sla === 'Approaching') return { color: '#B45309', dot: '#EAB308' };
-  return { color: '#16A34A', dot: '#22C55E' };
+  if (sla === 'Missed') return { color: 'var(--color-error)', dot: 'var(--color-critical)' };
+  if (sla === 'Approaching') return { color: 'var(--color-caution)', dot: 'var(--color-warning-dot)' };
+  return { color: 'var(--color-positive)', dot: 'var(--color-green)' };
 }
 
 function bucketBadgeClass(bucket: Bucket) {
@@ -331,7 +331,7 @@ export default function AITriage() {
                 key={r.id}
                 className="ws-table-row ws-table-row--clickable triage-grid"
                 style={{
-                  background: checked ? '#EFF6FF' : openId === r.id ? 'var(--color-bg)' : 'transparent',
+                  background: checked ? 'var(--color-blue-bg)' : openId === r.id ? 'var(--color-bg)' : 'transparent',
                   opacity: findingIsResolved(r) ? 0.42 : r.ticketKey ? 0.48 : 1,
                 }}
                 onClick={() => {

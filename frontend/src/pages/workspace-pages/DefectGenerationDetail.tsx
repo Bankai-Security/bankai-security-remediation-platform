@@ -6,12 +6,12 @@ import './StepDetail.css';
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low';
 
 const DEFECTS: { id: string; title: string; service: string; severity: Severity; cvits: number; state: string; stateColor: string }[] = [
-  { id: 'DEF-201', title: 'Upgrade OpenSSL across idp-apps fleet', service: 'Identity Apps', severity: 'Critical', cvits: 12, state: 'Ticketed · BNK-112', stateColor: '#1D4ED8' },
-  { id: 'DEF-118', title: 'Enforce SAML response signature on ACS endpoint', service: 'Identity Core', severity: 'Critical', cvits: 1, state: 'Ticketed · BNK-118', stateColor: '#1D4ED8' },
-  { id: 'DEF-224', title: 'Rotate expiring intermediate TLS certificate', service: 'Identity Core', severity: 'High', cvits: 3, state: 'Updated Jul 6', stateColor: '#A16207' },
-  { id: 'DEF-229', title: 'Remove public read ACL from idp-export-archive', service: 'Identity Apps', severity: 'High', cvits: 1, state: 'Ticketed · BNK-129', stateColor: '#1D4ED8' },
-  { id: 'DEF-217', title: 'Add rate limiting to password reset endpoint', service: 'Identity Core', severity: 'Medium', cvits: 2, state: 'Ticketed · BNK-127', stateColor: '#1D4ED8' },
-  { id: 'DEF-233', title: 'Rebuild shared base image against upstream tag', service: 'Identity Apps', severity: 'Low', cvits: 14, state: 'Resolved', stateColor: '#15803D' },
+  { id: 'DEF-201', title: 'Upgrade OpenSSL across idp-apps fleet', service: 'Identity Apps', severity: 'Critical', cvits: 12, state: 'Ticketed · BNK-112', stateColor: 'var(--color-blue-text)' },
+  { id: 'DEF-118', title: 'Enforce SAML response signature on ACS endpoint', service: 'Identity Core', severity: 'Critical', cvits: 1, state: 'Ticketed · BNK-118', stateColor: 'var(--color-blue-text)' },
+  { id: 'DEF-224', title: 'Rotate expiring intermediate TLS certificate', service: 'Identity Core', severity: 'High', cvits: 3, state: 'Updated Jul 6', stateColor: 'var(--color-yellow-text)' },
+  { id: 'DEF-229', title: 'Remove public read ACL from idp-export-archive', service: 'Identity Apps', severity: 'High', cvits: 1, state: 'Ticketed · BNK-129', stateColor: 'var(--color-blue-text)' },
+  { id: 'DEF-217', title: 'Add rate limiting to password reset endpoint', service: 'Identity Core', severity: 'Medium', cvits: 2, state: 'Ticketed · BNK-127', stateColor: 'var(--color-blue-text)' },
+  { id: 'DEF-233', title: 'Rebuild shared base image against upstream tag', service: 'Identity Apps', severity: 'Low', cvits: 14, state: 'Resolved', stateColor: 'var(--color-green-text)' },
 ];
 
 const MAPPING = [

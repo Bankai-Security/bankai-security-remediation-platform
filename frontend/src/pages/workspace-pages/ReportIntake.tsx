@@ -362,7 +362,7 @@ export default function ReportIntake() {
                   <div className="intake-error-title">Intake failed</div>
                   <div className="intake-error-text">{csvErrorMessage}</div>
                   <div className="intake-error-actions">
-                    <button onClick={retryCsv} className="ws-btn" style={{ background: '#DC2626', color: '#fff', padding: '9px 22px', fontSize: 13 }}>Try again</button>
+                    <button onClick={retryCsv} className="ws-btn" style={{ background: 'var(--color-error)', color: '#fff', padding: '9px 22px', fontSize: 13 }}>Try again</button>
                   </div>
                 </div>
               </div>

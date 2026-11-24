@@ -88,7 +88,7 @@ export default function IntakeDetail() {
             </div>
           ))}
         </div>
-        <div className="step-footnote">Only <strong style={{ color: '#DB2777' }}>New Delta</strong> rows are eligible for Jira ticket creation in step 3.</div>
+        <div className="step-footnote">Only <strong style={{ color: 'var(--color-pink-text, #DB2777)' }}>New Delta</strong> rows are eligible for Jira ticket creation in step 3.</div>
       </section>
     </main>
   );

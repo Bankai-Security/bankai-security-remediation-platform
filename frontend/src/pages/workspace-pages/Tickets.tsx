@@ -11,10 +11,10 @@ import { useProject } from '../../lib/project-context';
 import './Tickets.css';
 
 const COLUMNS: { name: TicketStatus; dot: string }[] = [
-  { name: 'To Do', dot: '#8A8A8E' },
-  { name: 'In Progress', dot: '#2563EB' },
-  { name: 'In Review', dot: '#EAB308' },
-  { name: 'Done', dot: '#22C55E' },
+  { name: 'To Do', dot: 'var(--color-text-muted)' },
+  { name: 'In Progress', dot: 'var(--color-blue)' },
+  { name: 'In Review', dot: 'var(--color-warning-dot)' },
+  { name: 'Done', dot: 'var(--color-green)' },
 ];
 
 function sevBadgeClass(sev: Severity) {
@@ -22,10 +22,10 @@ function sevBadgeClass(sev: Severity) {
 }
 
 function statusColor(status: TicketStatus) {
-  if (status === 'To Do') return { dot: '#8A8A8E', color: '#3A3A3C' };
-  if (status === 'In Progress') return { dot: '#2563EB', color: '#1D4ED8' };
-  if (status === 'In Review') return { dot: '#EAB308', color: '#A16207' };
-  return { dot: '#22C55E', color: '#15803D' };
+  if (status === 'To Do') return { dot: 'var(--color-text-muted)', color: 'var(--color-text-subtle)' };
+  if (status === 'In Progress') return { dot: 'var(--color-blue)', color: 'var(--color-blue-text)' };
+  if (status === 'In Review') return { dot: 'var(--color-warning-dot)', color: 'var(--color-yellow-text)' };
+  return { dot: 'var(--color-green)', color: 'var(--color-green-text)' };
 }
 
 function formatDue(dueDate: string | null): string {
@@ -326,7 +326,7 @@ export default function Tickets() {
           </div>
         </div>
         <div className="tickets-toolbar-right">
-          {statusError && <span style={{ fontSize: 12, color: '#DC2626' }}>{statusError}</span>}
+          {statusError && <span style={{ fontSize: 12, color: 'var(--color-error)' }}>{statusError}</span>}
           {syncMessage && <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{syncMessage}</span>}
           <button
             className={`ws-btn ${project?.jiraConnected && canEdit(project?.myRole) ? 'ws-btn-secondary' : 'ws-btn-disabled'}`}
@@ -468,7 +468,7 @@ export default function Tickets() {
 
                         </div>
                         <div className="tickets-kanban-card-footer">
-                          <span className="tickets-kanban-card-due" style={{ color: t.overdue ? '#DC2626' : 'var(--color-text-muted)' }}>
+                          <span className="tickets-kanban-card-due" style={{ color: t.overdue ? 'var(--color-error)' : 'var(--color-text-muted)' }}>
                             {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
                           </span>
                         </div>
@@ -553,7 +553,7 @@ export default function Tickets() {
                     <span><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
                     <span className="ws-mono tickets-table-cvit">{t.findingExternalId ?? '—'}</span>
                     <span className="ws-dot-status" style={{ color: sc.color }}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}</span>
-                    <span className="ws-col-right tickets-table-due" style={{ color: t.overdue ? '#DC2626' : 'var(--color-text-muted)' }}>
+                    <span className="ws-col-right tickets-table-due" style={{ color: t.overdue ? 'var(--color-error)' : 'var(--color-text-muted)' }}>
                       {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
                     </span>
                   </div>

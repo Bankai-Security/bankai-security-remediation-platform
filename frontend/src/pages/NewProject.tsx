@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import RepoPicker from '../components/RepoPicker';
+import JiraIcon from '../components/JiraIcon';
 import {
   ApiError,
   connectGithub,
@@ -443,6 +444,7 @@ export default function NewProject() {
               <>
                 <div className="new-project-actions">
                   <button type="button" className="new-project-create-btn" onClick={() => void handleStartJiraOAuth()} disabled={jiraOAuthBusy}>
+                    <JiraIcon size={16} />
                     {jiraOAuthBusy ? 'Opening Atlassian…' : 'Connect Jira with Atlassian'}
                   </button>
                 </div>

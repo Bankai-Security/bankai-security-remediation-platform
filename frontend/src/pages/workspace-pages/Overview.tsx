@@ -5,7 +5,7 @@ import { getOverview, type Overview as OverviewData } from '../../lib/api';
 import { useProject } from '../../lib/project-context';
 import './Overview.css';
 
-const SEVERITY_COLORS: Record<string, string> = { Critical: '#DC2626', High: '#F97316', Medium: '#EAB308', Low: '#8A8A8E' };
+const SEVERITY_COLORS: Record<string, string> = { Critical: 'var(--color-error)', High: 'var(--color-severity-high)', Medium: 'var(--color-warning-dot)', Low: 'var(--color-text-muted)' };
 
 function formatEventTime(iso: string): string {
   const date = new Date(iso);
@@ -109,7 +109,7 @@ export default function Overview() {
                 <line x1="10" y1="70" x2="710" y2="70" stroke="var(--color-divider)" strokeWidth="1" />
                 <line x1="10" y1="130" x2="710" y2="130" stroke="var(--color-divider)" strokeWidth="1" />
                 <line x1="10" y1="190" x2="710" y2="190" stroke="var(--color-divider)" strokeWidth="1" />
-                <path d={trend.areaPath} fill="rgba(37,99,235,0.07)" />
+                <path d={trend.areaPath} fill="var(--color-blue-bg)" />
                 <path d={trend.linePath} fill="none" stroke="var(--color-blue)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                 <circle cx={trend.last.x} cy={trend.last.y} r="4.5" fill="var(--color-blue)" stroke="var(--color-surface)" strokeWidth="2" />
               </svg>
@@ -176,17 +176,17 @@ export default function Overview() {
                   const sum = Math.max(1, totals.missed + totals.approaching + totals.onTrack);
                   return (
                     <>
-                      <div style={{ width: `${(totals.missed / sum) * 100}%`, background: '#EF4444' }} />
-                      <div style={{ width: `${(totals.approaching / sum) * 100}%`, background: '#EAB308' }} />
-                      <div style={{ width: `${(totals.onTrack / sum) * 100}%`, background: '#22C55E' }} />
+                      <div style={{ width: `${(totals.missed / sum) * 100}%`, background: 'var(--color-critical)' }} />
+                      <div style={{ width: `${(totals.approaching / sum) * 100}%`, background: 'var(--color-warning-dot)' }} />
+                      <div style={{ width: `${(totals.onTrack / sum) * 100}%`, background: 'var(--color-green)' }} />
                     </>
                   );
                 })()}
               </div>
               <div className="overview-service-legend">
-                <span><span className="overview-legend-dot" style={{ background: '#EF4444' }} />Missed SLA</span>
-                <span><span className="overview-legend-dot" style={{ background: '#EAB308' }} />Approaching</span>
-                <span><span className="overview-legend-dot" style={{ background: '#22C55E' }} />On track</span>
+                <span><span className="overview-legend-dot" style={{ background: 'var(--color-critical)' }} />Missed SLA</span>
+                <span><span className="overview-legend-dot" style={{ background: 'var(--color-warning-dot)' }} />Approaching</span>
+                <span><span className="overview-legend-dot" style={{ background: 'var(--color-green)' }} />On track</span>
               </div>
             </>
           )}
@@ -206,7 +206,7 @@ export default function Overview() {
             ) : (
               overview.recentActivity.map((ev) => (
                 <div key={ev.id} className="overview-activity-item">
-                  <span className="ws-dot" style={{ background: ev.type === 'sla' ? '#EF4444' : ev.type === 'ticket' ? '#2563EB' : ev.type === 'triage' ? '#22C55E' : '#8A8A8E' }} />
+                  <span className="ws-dot" style={{ background: ev.type === 'sla' ? 'var(--color-critical)' : ev.type === 'ticket' ? 'var(--color-blue)' : ev.type === 'triage' ? 'var(--color-green)' : 'var(--color-text-muted)' }} />
                   <span className="overview-activity-text">
                     <strong>{ev.actor}</strong> {ev.summary} {ev.linkLabel && <strong>{ev.linkLabel}</strong>}
                   </span>

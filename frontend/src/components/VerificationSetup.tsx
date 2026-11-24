@@ -109,8 +109,8 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
           <div className="ws-card-eyebrow">Verification</div>
           <h2 id="verification-setup-title" className="settings-h2">Choose a CI provider</h2>
         </div>
-        <span className="ws-dot-status" style={{ color: providerReady ? "#15803D" : "#71717A" }}>
-          <span className="ws-dot" style={{ background: providerReady ? "#22C55E" : "#A1A1AA" }} />
+        <span className="ws-dot-status" style={{ color: providerReady ? "var(--color-success)" : "var(--color-text-muted)" }}>
+          <span className="ws-dot" style={{ background: providerReady ? "var(--color-green)" : "var(--color-text-faint)" }} />
           {settings.verification_provider === "jenkins" ? jenkinsStatus : providerReady ? "Ready" : settings.verification_provider === "none" ? "Not configured" : "Setup pending"}
         </span>
       </div>
@@ -139,7 +139,7 @@ export default function VerificationSetup({ projectId, role }: { projectId: stri
           {proposal.assumptions.map((item) => <div className="ws-card-hint" key={item} style={{ marginTop: 6 }}>• {item}</div>)}
           <details style={{ marginTop: 10 }} open>
             <summary style={{ cursor: "pointer" }}>Review complete workflow</summary>
-            <pre style={{ overflowX: "auto", maxHeight: 360, padding: 12, background: "var(--color-surface-subtle, #F4F4F5)", borderRadius: 8 }}>{proposal.content}</pre>
+            <pre style={{ overflowX: "auto", maxHeight: 360, padding: 12, background: "var(--color-surface-alt)", color: "var(--color-text)", border: "1px solid var(--color-border)", borderRadius: 8 }}>{proposal.content}</pre>
           </details>
           <div className="settings-jira-actions">
             <button type="button" className="ws-btn ws-btn-primary" disabled={!editable || refreshing || busy} onClick={() => void acceptProposal()}>{busy ? "Opening pull request…" : "Open workflow setup pull request"}</button>
