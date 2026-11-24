@@ -479,19 +479,19 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
     // If Bankai timed out while Jenkins was still alive, reuse the persisted
     // build URL on retry. Starting a second build would duplicate work and
     // leave the already-finished result disconnected from the ticket.
-    const resumeTimedOutBuild = run!.status === "needs_review" && !!run!.jenkins_build_url
-      && /could not confirm whether the Jenkins build finished|Jenkins build is still running|existing Jenkins build is still running/i.test(run!.failure_summary ?? "");
+    const resumeRecordedBuild = run!.status === "needs_review" && !!run!.jenkins_build_url
+      && /could not confirm whether the Jenkins build finished|Jenkins build is still running|existing Jenkins build is still running|Jenkins built a different commit than the remediation PR/i.test(run!.failure_summary ?? "");
     const { data: queued, error: queueError } = await supabaseAdmin.from("pipeline_runs").update({
       status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
-      jenkins_job_url: null, html_url: resumeTimedOutBuild ? run!.jenkins_build_url : null,
-      jenkins_build_url: resumeTimedOutBuild ? run!.jenkins_build_url : null,
-      jenkins_build_number: resumeTimedOutBuild ? run!.jenkins_build_number : null,
-      failure_summary: null, updated_at: now, manual_retry_requested: !resumeTimedOutBuild,
+      jenkins_job_url: null, html_url: resumeRecordedBuild ? run!.jenkins_build_url : null,
+      jenkins_build_url: resumeRecordedBuild ? run!.jenkins_build_url : null,
+      jenkins_build_number: resumeRecordedBuild ? run!.jenkins_build_number : null,
+      failure_summary: null, updated_at: now, manual_retry_requested: !resumeRecordedBuild,
     }).eq("id", run!.id).in("status", ["needs_review", "completed"]).select("id").maybeSingle();
     if (queueError) throw new HttpError(500, "Could not queue the Jenkins verification retry.");
     if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
     const { error: updateTicketError } = await supabaseAdmin.from("tickets").update({ ci_status: "queued", ci_error: null,
-      ci_run_url: resumeTimedOutBuild ? run!.jenkins_build_url : null })
+      ci_run_url: resumeRecordedBuild ? run!.jenkins_build_url : null })
       .eq("id", ticketId).eq("project_id", req.project!.id).eq("github_fix_commit_sha", ticket.github_fix_commit_sha).in("ci_status", ["needs_review", "failed"]);
     if (updateTicketError) throw new HttpError(500, "The Jenkins retry was queued, but the ticket status could not be updated.");
   } else {
