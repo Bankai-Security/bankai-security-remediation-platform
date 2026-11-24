@@ -654,7 +654,7 @@ export async function markTicketPrMerged(
 ): Promise<boolean> {
   const { data: ticket, error: loadError } = await supabase
     .from("tickets")
-    .select("id, key, title, jira_issue_key, status")
+    .select("id, key, title, jira_issue_key, status, ci_status")
     .eq("project_id", input.projectId)
     .eq("github_pr_number", input.prNumber)
     .maybeSingle();
@@ -669,7 +669,12 @@ export async function markTicketPrMerged(
   // guards can evaluate the merged state in the same write.
   const { data: updated, error: updateError } = await supabase
     .from("tickets")
-    .update({ github_pr_state: "merged", github_pr_error: null, status: "Done" })
+    .update({
+      github_pr_state: "merged", github_pr_error: null, status: "Done",
+      ...(ticket.ci_status === "queued" || ticket.ci_status === "running" || ticket.ci_status === "retrying"
+        ? { ci_status: "cancelled", ci_error: "The pull request merged before Jenkins verification finished." }
+        : {}),
+    })
     .eq("id", ticket.id)
     .eq("project_id", input.projectId)
     .select("status")
@@ -684,6 +689,11 @@ export async function markTicketPrMerged(
       "Database did not move the merged-PR ticket to Done",
     );
     return false;
+  }
+
+  if (ticket.ci_status === "queued" || ticket.ci_status === "running") {
+    await supabase.from("pipeline_runs").update({ status: "cancelled", conclusion: "pull_request_merged", completed_at: new Date().toISOString() })
+      .eq("ticket_id", ticket.id).eq("project_id", input.projectId).in("status", ["queued", "in_progress"]);
   }
 
   if (ticket.status === "Done") return true;
@@ -789,15 +799,26 @@ export async function markTicketPrClosedWithoutMerge(
   supabase: SupabaseClient,
   input: { projectId: string; prNumber: number },
 ): Promise<void> {
+  const { data: ticket, error: loadError } = await supabase.from("tickets").select("id,ci_status")
+    .eq("project_id", input.projectId).eq("github_pr_number", input.prNumber).maybeSingle();
+  if (loadError) {
+    logger.error({ err: loadError, ...input }, "Could not load ticket after its PR was closed");
+    return;
+  }
+  const hasActiveCi = ticket?.ci_status === "queued" || ticket?.ci_status === "running" || ticket?.ci_status === "retrying";
   const { error } = await supabase
     .from("tickets")
-    .update({ github_pr_state: "closed", github_pr_error: "Pull request was closed without being merged." })
+    .update({ github_pr_state: "closed", github_pr_error: "Pull request was closed without being merged.",
+      ...(hasActiveCi ? { ci_status: "cancelled", ci_error: "The pull request was closed without merging; Jenkins verification was stopped." } : {}) })
     .eq("project_id", input.projectId)
     .eq("github_pr_number", input.prNumber);
 
   if (error) {
     logger.error({ err: error, ...input }, "Could not mark ticket's PR as closed-without-merge");
+    return;
   }
+  if (hasActiveCi && ticket) await supabase.from("pipeline_runs").update({ status: "cancelled", conclusion: "pull_request_closed", completed_at: new Date().toISOString() })
+    .eq("ticket_id", ticket.id).eq("project_id", input.projectId).in("status", ["queued", "in_progress"]);
 }
 
 export interface ReconcileJiraTicketsInput {

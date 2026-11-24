@@ -545,8 +545,29 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
           ticket_id: ticketId, project_id: projectId, workflow_file: "Jenkinsfile", head_branch: branch,
           commit_sha: headSha, pull_request_number: pr.number, status: "queued", retry_count: 0,
         }, { onConflict: "ticket_id,commit_sha", ignoreDuplicates: true });
-        if (pipelineError) logger.error({ err: pipelineError, ticketId, projectId }, "Could not queue Jenkins verification for remediation PR");
-        await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId).eq("project_id", projectId);
+        if (pipelineError) {
+          logger.error({ err: pipelineError, ticketId, projectId }, "Could not queue Jenkins verification for remediation PR");
+          await supabase.from("tickets").update({ ci_status: "needs_review", ci_error: "Bankai could not queue Jenkins verification. Retry verification from the ticket after checking the Jenkins connection." })
+            .eq("id", ticketId).eq("project_id", projectId).eq("github_fix_commit_sha", headSha);
+        } else {
+          // An idempotent insert may have found a run for this exact commit.
+          // Preserve its real state rather than claiming work is queued when
+          // the only matching run already completed or was cancelled.
+          const { data: run, error: runError } = await supabase.from("pipeline_runs").select("status,conclusion")
+            .eq("ticket_id", ticketId).eq("project_id", projectId).eq("commit_sha", headSha).maybeSingle();
+          if (runError || !run) {
+            logger.error({ err: runError, ticketId, projectId }, "Could not confirm Jenkins verification was queued for remediation PR");
+            await supabase.from("tickets").update({ ci_status: "needs_review", ci_error: "Bankai could not confirm a Jenkins run was queued. Retry verification from the ticket." })
+              .eq("id", ticketId).eq("project_id", projectId).eq("github_fix_commit_sha", headSha);
+          } else {
+            const ciStatus = run.status === "queued" ? "queued" : run.status === "in_progress" ? "running"
+              : run.status === "needs_review" ? "needs_review" : run.status === "cancelled" ? "cancelled"
+                : run.conclusion === "passed" ? "passed" : run.conclusion === "failed" ? "failed"
+                  : run.conclusion === "cancelled" ? "cancelled" : "needs_review";
+            const ciError = ciStatus === "needs_review" ? "The existing Jenkins run needs review before this ticket can be verified." : null;
+            await supabase.from("tickets").update({ ci_status: ciStatus, ci_error: ciError }).eq("id", ticketId).eq("project_id", projectId).eq("github_fix_commit_sha", headSha);
+          }
+        }
       } else if (verification?.verification_provider === "hosted_ci" && verification.ci_bootstrap_status === "ready") {
         await supabase.from("tickets").update({ ci_status: "queued", ci_error: null }).eq("id", ticketId).eq("project_id", projectId);
       } else {

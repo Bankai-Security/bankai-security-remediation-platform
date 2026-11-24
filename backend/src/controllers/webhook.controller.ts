@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
 import { decrypt } from "../lib/crypto.js";
 import { enqueueRepoScan } from "../lib/queue.js";
-import { upsertHostedCiEvidenceComment } from "../lib/github.js";
+import { getPullRequest, upsertHostedCiEvidenceComment } from "../lib/github.js";
 import { logger } from "../lib/logger.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import {
@@ -181,10 +181,7 @@ export async function handleGithubWebhook(req: Request, res: Response): Promise<
 }
 
 // Signature verification already happened in handleGithubWebhook before this
-// is called — same trust boundary as the push handling above. Only
-// "closed" is interesting here: "opened"/"synchronize"/etc. carry nothing
-// Bankai needs to act on (the ticket already moved to "In Review" when the
-// fix-pr job itself opened the PR).
+// is called — same trust boundary as the push handling above.
 async function handlePullRequestEvent(projectId: string, project: WebhookProjectRow, rawBody: Buffer, res: Response): Promise<void> {
   let payload: GithubPullRequestPayload;
   try {
@@ -244,18 +241,119 @@ async function handlePullRequestEvent(projectId: string, project: WebhookProject
       res.status(503).end();
       return;
     }
+    // A remediation PR can receive additional commits after Bankai opens it
+    // (for example, a user fixes the Jenkinsfile). Keep the Jenkins run
+    // pinned to the PR's latest exact head so successful newer builds can be
+    // verified without accepting evidence for an older revision.
+    if (payload.action === "synchronize" && (project.verification_provider === "jenkins"
+      || (project.verification_provider === "hosted_ci" && project.ci_bootstrap_status === "ready"))) {
+      const github = await loadGithubCreds(supabaseAdmin, projectId);
+      if (!github) {
+        logger.error({ projectId, prNumber: payload.number }, "Cannot reconcile the synchronized Jenkins PR without GitHub credentials");
+        res.status(503).end();
+        return;
+      }
+      let currentPr;
+      try { currentPr = await getPullRequest(github.creds, payload.number); }
+      catch (err) {
+        logger.error({ err, projectId, prNumber: payload.number }, "Could not verify the current GitHub PR head for Jenkins");
+        res.status(503).end();
+        return;
+      }
+      // Webhook deliveries may arrive out of order. Always reconcile against
+      // GitHub's live PR head, never a stale synchronize payload.
+      const currentHeadSha = currentPr?.headSha;
+      if (!currentPr || currentPr.state !== "open" || currentPr.headRef !== branch
+        || !currentHeadSha || !/^[0-9a-f]{40}$/i.test(currentHeadSha)) {
+        res.status(202).json({ queued: true, scanType: "pull_request", pullRequestNumber: payload.number, headSha });
+        return;
+      }
+      const { data: ticket, error: ticketError } = await supabaseAdmin.from("tickets")
+        .select("id,github_branch_name,github_fix_commit_sha")
+        .eq("project_id", projectId).eq("github_pr_number", payload.number).eq("github_pr_state", "open")
+        .maybeSingle();
+      if (ticketError) {
+        logger.error({ err: ticketError, projectId, prNumber: payload.number }, "Could not load the remediation ticket for an updated PR");
+        res.status(500).end();
+        return;
+      }
+      if (ticket && ticket.github_branch_name === branch) {
+        const now = new Date().toISOString();
+        if (ticket.github_fix_commit_sha?.toLowerCase() !== currentHeadSha.toLowerCase()) {
+          let updateTicketQuery = supabaseAdmin.from("tickets").update({
+            github_fix_commit_sha: currentHeadSha, ci_status: "queued", ci_error: null, ci_run_url: null,
+          }).eq("id", ticket.id).eq("project_id", projectId).eq("github_pr_state", "open");
+          updateTicketQuery = ticket.github_fix_commit_sha
+            ? updateTicketQuery.eq("github_fix_commit_sha", ticket.github_fix_commit_sha)
+            : updateTicketQuery.is("github_fix_commit_sha", null);
+          const { data: updatedTicket, error: updateError } = await updateTicketQuery.select("id").maybeSingle();
+          if (updateError) {
+            logger.error({ err: updateError, projectId, ticketId: ticket.id }, "Could not update the Jenkins remediation commit");
+            res.status(500).end();
+            return;
+          }
+          if (updatedTicket) {
+            await supabaseAdmin.from("pipeline_runs").update({ status: "cancelled", conclusion: "superseded", completed_at: now, updated_at: now })
+              .eq("ticket_id", ticket.id).eq("project_id", projectId).neq("commit_sha", currentHeadSha).in("status", ["queued", "in_progress"]);
+          } else {
+            const { data: currentTicket, error: currentTicketError } = await supabaseAdmin.from("tickets").select("github_fix_commit_sha")
+              .eq("id", ticket.id).eq("project_id", projectId).maybeSingle();
+            if (currentTicketError) {
+              logger.error({ err: currentTicketError, projectId, ticketId: ticket.id }, "Could not confirm the remediation commit after a concurrent update");
+              res.status(500).end();
+              return;
+            }
+            if (currentTicket?.github_fix_commit_sha?.toLowerCase() !== currentHeadSha.toLowerCase()) {
+              res.status(202).json({ queued: true, scanType: "pull_request", pullRequestNumber: payload.number, headSha });
+              return;
+            }
+          }
+        }
+        if (project.verification_provider === "jenkins") {
+          // Ensure the run exists on repeated webhook deliveries too. This
+          // repairs partial failures where the ticket SHA update succeeded but
+          // the run insert failed and GitHub retried the same event.
+          let { data: run, error: runError } = await supabaseAdmin.from("pipeline_runs").select("status,conclusion,failure_summary")
+            .eq("ticket_id", ticket.id).eq("project_id", projectId).eq("commit_sha", currentHeadSha).maybeSingle();
+          if (!run && !runError) {
+            const { error: queueError } = await supabaseAdmin.from("pipeline_runs").upsert({
+              ticket_id: ticket.id, project_id: projectId, workflow_file: "Jenkinsfile", head_branch: branch,
+              commit_sha: currentHeadSha, pull_request_number: payload.number, retry_count: 0, status: "queued", updated_at: now,
+            }, { onConflict: "ticket_id,commit_sha", ignoreDuplicates: true });
+            if (queueError) {
+              logger.error({ err: queueError, projectId, ticketId: ticket.id, headSha: currentHeadSha }, "Could not queue Jenkins verification for the updated PR");
+              await supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_error: "Bankai could not queue Jenkins verification. Retry from the ticket after checking Jenkins." })
+                .eq("id", ticket.id).eq("project_id", projectId).eq("github_fix_commit_sha", currentHeadSha);
+              res.status(500).end();
+              return;
+            }
+            ({ data: run, error: runError } = await supabaseAdmin.from("pipeline_runs").select("status,conclusion,failure_summary")
+              .eq("ticket_id", ticket.id).eq("project_id", projectId).eq("commit_sha", currentHeadSha).maybeSingle());
+          }
+          if (runError || !run) {
+            logger.error({ err: runError, projectId, ticketId: ticket.id, headSha: currentHeadSha }, "Could not confirm Jenkins verification was queued");
+            await supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_error: "Bankai could not confirm Jenkins verification was queued. Retry from the ticket." })
+              .eq("id", ticket.id).eq("project_id", projectId).eq("github_fix_commit_sha", currentHeadSha);
+            res.status(500).end();
+            return;
+          }
+          const ciStatus = run.status === "queued" ? "queued" : run.status === "in_progress" ? "running"
+            : run.status === "needs_review" ? "needs_review" : run.status === "cancelled" ? "cancelled"
+              : run.conclusion === "passed" ? "passed" : run.conclusion === "failed" ? "failed"
+                : run.conclusion === "cancelled" ? "cancelled" : "needs_review";
+          await supabaseAdmin.from("tickets").update({ ci_status: ciStatus,
+            ci_error: ciStatus === "needs_review" ? run.failure_summary ?? "The existing Jenkins run needs review." : null,
+          }).eq("id", ticket.id).eq("project_id", projectId).eq("github_fix_commit_sha", currentHeadSha);
+        }
+      }
+    }
     if (project.verification_provider === "hosted_ci") {
-      const { data: ticket } = await supabaseAdmin.from("tickets").select("id")
-        .eq("project_id", projectId).eq("github_pr_number", payload.number).maybeSingle();
-      if (ticket) {
-        const ready = project.ci_bootstrap_status === "ready";
-        const reopened = payload.action === "reopened";
-        await supabaseAdmin.from("tickets").update({
-          ci_status: !ready ? "pending_setup" : reopened ? "needs_review" : "queued",
-          ci_error: !ready ? "Hosted CI setup is pending review and merge of its workflow pull request."
-            : reopened ? "This pull request was reopened without a new commit. Hosted CI does not start a second automatic run for the same revision; review the existing run or push a new commit."
-              : null,
-        }).eq("id", ticket.id).eq("project_id", projectId);
+      if (payload.action === "reopened" && project.ci_bootstrap_status === "ready") {
+        const { data: ticket } = await supabaseAdmin.from("tickets").select("id")
+          .eq("project_id", projectId).eq("github_pr_number", payload.number).maybeSingle();
+        if (ticket) await supabaseAdmin.from("tickets").update({ ci_status: "needs_review",
+          ci_error: "This pull request was reopened without a new commit. Review the existing run or push a new commit to trigger verification." })
+          .eq("id", ticket.id).eq("project_id", projectId);
       }
     }
     res.status(202).json({ queued: true, scanType: "pull_request", pullRequestNumber: payload.number, headSha });
@@ -330,7 +428,7 @@ async function handleWorkflowRunEvent(projectId: string, project: WebhookProject
 
     const { data: ticket } = await supabaseAdmin.from("tickets").select("id,github_fix_commit_sha")
       .eq("project_id", projectId).eq("github_pr_number", prNumber).maybeSingle();
-    const exactTicketCommit = !ticket?.github_fix_commit_sha || ticket.github_fix_commit_sha.toLowerCase() === run.head_sha.toLowerCase();
+    const exactTicketCommit = !ticket || (!!ticket.github_fix_commit_sha && ticket.github_fix_commit_sha.toLowerCase() === run.head_sha.toLowerCase());
     const reportedConclusion = ticket && !exactTicketCommit ? "needs_review" : conclusion;
     const startedAt = run.run_started_at && !Number.isNaN(Date.parse(run.run_started_at)) ? run.run_started_at : null;
     const completedAt = workflowStatus === "completed" && run.updated_at && !Number.isNaN(Date.parse(run.updated_at)) ? run.updated_at : null;
@@ -353,13 +451,11 @@ async function handleWorkflowRunEvent(projectId: string, project: WebhookProject
       return;
     }
 
-    if (ticket) {
+    if (ticket && exactTicketCommit) {
       const ciStatus = reportedConclusion ?? (workflowStatus === "queued" ? "queued" : "running");
-      const message = ticket.github_fix_commit_sha && !exactTicketCommit
-        ? "GitHub Actions reported a different commit than the remediation ticket. Review the run before relying on it."
-        : reportedConclusion === "needs_review" ? "GitHub Actions completed without a recognized conclusion. Review the run manually." : null;
+      const message = reportedConclusion === "needs_review" ? "GitHub Actions completed without a recognized conclusion. Review the run manually." : null;
       await supabaseAdmin.from("tickets").update({ ci_status: ciStatus, ci_run_url: runUrl.toString(), ci_error: message })
-        .eq("id", ticket.id).eq("project_id", projectId);
+        .eq("id", ticket.id).eq("project_id", projectId).eq("github_fix_commit_sha", run.head_sha);
     }
 
     const statusLabel = reportedConclusion === "passed" ? "Passed"

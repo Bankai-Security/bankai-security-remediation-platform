@@ -5,6 +5,8 @@ import { requireRole } from "../lib/roles.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { enqueueJenkinsRetry } from "../lib/queue.js";
 import { publishJenkinsEvidence } from "../lib/jenkins-evidence.js";
+import { getBranchHeadSha, getPullRequest } from "../lib/github.js";
+import { loadGithubCreds } from "../lib/ticketing.js";
 
 const MAX_RETRIES = 2;
 const JENKINS_AUDIT_ACTIONS = {
@@ -97,7 +99,7 @@ function buildBelongsToJob(jobUrl: string, buildUrl: string): boolean {
   } catch { return false; }
 }
 
-async function markJenkinsNeedsReview(projectId: string, run: { id: string; ticket_id: string; pull_request_number: number }, message: string, buildUrl?: string | null, jobUrl?: string): Promise<void> {
+async function markJenkinsNeedsReview(projectId: string, run: { id: string; ticket_id: string; pull_request_number: number; commit_sha?: string | null }, message: string, buildUrl?: string | null, jobUrl?: string): Promise<void> {
   const now = new Date().toISOString();
   const safeMessage = redact(message).slice(0, 1500);
   const { data: changed, error } = await supabaseAdmin.from("pipeline_runs").update({ status: "needs_review", conclusion: "needs_review", failure_summary: safeMessage,
@@ -108,8 +110,10 @@ async function markJenkinsNeedsReview(projectId: string, run: { id: string; tick
     const { data: current } = await supabaseAdmin.from("pipeline_runs").select("status").eq("id", run.id).maybeSingle();
     if (current?.status !== "needs_review") throw new HttpError(409, "This Jenkins run has already finished and needs no recovery update.");
   }
-  await supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_run_url: buildUrl ?? undefined, ci_error: safeMessage })
+  let ticketUpdate = supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_run_url: buildUrl ?? undefined, ci_error: safeMessage })
     .eq("id", run.ticket_id).eq("project_id", projectId);
+  if (run.commit_sha) ticketUpdate = ticketUpdate.eq("github_fix_commit_sha", run.commit_sha);
+  await ticketUpdate;
   await recordActivity(supabaseAdmin, { projectId, actorId: null, actorLabel: "Bankai Desktop", eventType: "pipeline",
     summary: "marked Jenkins verification for as needing review", linkLabel: `PR #${run.pull_request_number}`, linkTo: "tickets", meta: safeMessage });
   await publishJenkinsEvidence(projectId, run.ticket_id);
@@ -154,11 +158,19 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
     .order("created_at", { ascending: true }).limit(1).maybeSingle();
   if (activeError) throw new HttpError(500, "Could not check for a Jenkins run to resume.");
   if (activeRun) {
-    res.status(200).json({ runId: activeRun.id, ticketId: activeRun.ticket_id, commitSha: activeRun.commit_sha, branch: activeRun.head_branch,
-      pullRequestNumber: activeRun.pull_request_number, retryCount: activeRun.retry_count, jobUrl: activeRun.jenkins_job_url || selectedJobUrl,
-      resume: true, buildUrl: activeRun.jenkins_build_url ?? null, buildNumber: activeRun.jenkins_build_number ?? null,
-      manualRetry: false, buildSearchSince: activeRun.claimed_at ?? activeRun.created_at });
-    return;
+    const { data: activeTicket } = await supabaseAdmin.from("tickets").select("github_pr_state,github_pr_number,github_fix_commit_sha")
+      .eq("id", activeRun.ticket_id).eq("project_id", req.project!.id).maybeSingle();
+    const activeIsCurrent = activeTicket?.github_pr_state === "open" && activeTicket.github_pr_number === activeRun.pull_request_number
+      && !!activeRun.commit_sha && activeTicket.github_fix_commit_sha?.toLowerCase() === activeRun.commit_sha.toLowerCase();
+    if (activeIsCurrent) {
+      res.status(200).json({ runId: activeRun.id, ticketId: activeRun.ticket_id, commitSha: activeRun.commit_sha, branch: activeRun.head_branch,
+        pullRequestNumber: activeRun.pull_request_number, retryCount: activeRun.retry_count, jobUrl: activeRun.jenkins_job_url || selectedJobUrl,
+        resume: true, buildUrl: activeRun.jenkins_build_url ?? null, buildNumber: activeRun.jenkins_build_number ?? null,
+        manualRetry: false, buildSearchSince: activeRun.claimed_at ?? activeRun.created_at });
+      return;
+    }
+    await supabaseAdmin.from("pipeline_runs").update({ status: "cancelled", conclusion: "superseded", completed_at: new Date().toISOString() })
+      .eq("id", activeRun.id).eq("status", "in_progress");
   }
   const { data: queued, error } = await supabaseAdmin.from("pipeline_runs").select("*")
     .eq("project_id", req.project!.id).eq("status", "queued").order("created_at").limit(1).maybeSingle();
@@ -176,7 +188,15 @@ export async function claimJenkinsRun(req: Request, res: Response): Promise<void
   }).eq("id", queued.id).eq("status", "queued").select("*").maybeSingle();
   if (claimError) throw new HttpError(500, "Could not claim Jenkins work.");
   if (!claimed) { res.status(204).end(); return; }
-  await supabaseAdmin.from("tickets").update({ ci_status: "running", ci_error: null }).eq("id", claimed.ticket_id).eq("project_id", req.project!.id);
+  const { data: currentTicket } = await supabaseAdmin.from("tickets").update({ ci_status: "running", ci_error: null })
+    .eq("id", claimed.ticket_id).eq("project_id", req.project!.id).eq("github_fix_commit_sha", claimed.commit_sha)
+    .eq("github_pr_state", "open").eq("github_pr_number", claimed.pull_request_number).select("id").maybeSingle();
+  if (!currentTicket) {
+    await supabaseAdmin.from("pipeline_runs").update({ status: "cancelled", conclusion: "superseded", completed_at: new Date().toISOString() })
+      .eq("id", claimed.id).eq("status", "in_progress");
+    res.status(204).end();
+    return;
+  }
   await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: req.user!.id, actorLabel: "Bankai Desktop", eventType: "pipeline",
     summary: "started Jenkins verification for", linkLabel: `PR #${claimed.pull_request_number}`, linkTo: "tickets", meta: `commit ${claimed.commit_sha}` });
   res.status(200).json({ runId: claimed.id, ticketId: claimed.ticket_id, commitSha: claimed.commit_sha, branch: claimed.head_branch,
@@ -205,6 +225,16 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
       res.status(200).json({ ciStatus: ticket?.ci_status ?? state, retrying: ticket?.ci_status === "retrying" }); return;
     }
     throw new HttpError(409, "This Jenkins run has already finished or been reviewed.");
+  }
+  const { data: currentTicket, error: ticketLoadError } = await supabaseAdmin.from("tickets")
+    .select("github_fix_commit_sha").eq("id", run.ticket_id).eq("project_id", req.project!.id).maybeSingle();
+  if (ticketLoadError) throw new HttpError(500, "Could not verify the current remediation commit.");
+  if (!currentTicket || !run.commit_sha || currentTicket.github_fix_commit_sha?.toLowerCase() !== run.commit_sha.toLowerCase()) {
+    const now = new Date().toISOString();
+    await supabaseAdmin.from("pipeline_runs").update({ status: "cancelled", conclusion: "superseded", completed_at: now, updated_at: now })
+      .eq("id", run.id).eq("status", "in_progress");
+    res.status(200).json({ ciStatus: "queued", retrying: false, superseded: true });
+    return;
   }
   const safeJobUrl = jobUrl == null ? run.jenkins_job_url : validateJenkinsJobUrl(jobUrl);
   if (!jobBelongsToSelection(run.jenkins_job_url, safeJobUrl)) throw new HttpError(400, "The Jenkins job is outside the selected multibranch job.");
@@ -250,8 +280,12 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
     && /(test|assert|compil|lint|checkstyle|build failed|failed to compile|failure:|error:)/i.test(log)
     && !/(401|403|credential|permission|authentication|agent offline|connection refused|timed? out|no space left|jenkins.*unavailable|setup:|configuration|branch discovery|no matching)/i.test(log);
   if (eligible && run.retry_count < MAX_RETRIES) {
-    await supabaseAdmin.from("tickets").update({ ci_status: "retrying", ci_run_url: validBuildUrl, ci_error: summary })
-      .eq("id", run.ticket_id).eq("project_id", req.project!.id);
+    const { data: retryTicket } = await supabaseAdmin.from("tickets").update({ ci_status: "retrying", ci_run_url: validBuildUrl, ci_error: summary })
+      .eq("id", run.ticket_id).eq("project_id", req.project!.id).eq("github_fix_commit_sha", run.commit_sha).select("id").maybeSingle();
+    if (!retryTicket) {
+      res.status(200).json({ ciStatus: "queued", retrying: false, superseded: true });
+      return;
+    }
     try {
       await enqueueJenkinsRetry({ ticketId: run.ticket_id, projectId: req.project!.id, runId: run.id, retryCount: run.retry_count + 1, failureLog: log });
       ciStatus = "retrying";
@@ -262,7 +296,8 @@ export async function finishJenkinsRun(req: Request, res: Response): Promise<voi
     }
   } else if (state === "failed" && (run.retry_count >= MAX_RETRIES || !eligible)) ciStatus = "needs_review";
   const ciError = ciStatus === "needs_review" ? (eligible ? "The automatic retry limit was reached. Review the Jenkins build and update the pull request." : "Jenkins failed for a setup or environment reason. Fix the Jenkins configuration, then review the pull request.") : summary;
-  if (ciStatus !== "retrying") await supabaseAdmin.from("tickets").update({ ci_status: ciStatus, ci_run_url: validBuildUrl, ci_error: ciError }).eq("id", run.ticket_id).eq("project_id", req.project!.id);
+  if (ciStatus !== "retrying") await supabaseAdmin.from("tickets").update({ ci_status: ciStatus, ci_run_url: validBuildUrl, ci_error: ciError })
+    .eq("id", run.ticket_id).eq("project_id", req.project!.id).eq("github_fix_commit_sha", run.commit_sha);
   if (ciStatus !== "retrying") await publishJenkinsEvidence(req.project!.id, run.ticket_id);
   await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: req.user!.id, actorLabel: "Bankai Desktop", eventType: "pipeline",
     summary: state === "passed" ? "passed Jenkins verification for" : state === "failed" ? `reported Jenkins ${ciStatus} for` : "cancelled Jenkins verification for",
@@ -276,7 +311,7 @@ export async function reportJenkinsProgress(req: Request, res: Response): Promis
   if (typeof deviceId !== "string" || !/^[\w.-]{8,100}$/.test(deviceId) || typeof buildUrl !== "string" || buildUrl.length > 2048) {
     throw new HttpError(400, "The Jenkins progress update is invalid.");
   }
-  const { data: run, error } = await supabaseAdmin.from("pipeline_runs").select("id,ticket_id,jenkins_job_url")
+  const { data: run, error } = await supabaseAdmin.from("pipeline_runs").select("id,ticket_id,commit_sha,jenkins_job_url")
     .eq("id", req.params.runId).eq("project_id", req.project!.id).eq("claimed_by", deviceId).eq("status", "in_progress").maybeSingle();
   if (error || !run) throw new HttpError(409, "This Jenkins run is no longer claimed by this desktop.");
   const safeJobUrl = jobUrl == null ? run.jenkins_job_url : validateJenkinsJobUrl(jobUrl);
@@ -290,8 +325,13 @@ export async function reportJenkinsProgress(req: Request, res: Response): Promis
   const { error: updateError } = await supabaseAdmin.from("pipeline_runs").update({ jenkins_job_url: safeJobUrl, jenkins_build_url: safeBuildUrl,
     jenkins_build_number: Number.isInteger(buildNumber) ? buildNumber : null, updated_at: new Date().toISOString() }).eq("id", run.id);
   if (updateError) throw new HttpError(500, "Could not save the Jenkins progress update.");
-  await supabaseAdmin.from("tickets").update({ ci_run_url: safeBuildUrl }).eq("id", run.ticket_id).eq("project_id", req.project!.id);
-  res.status(200).json({ accepted: true });
+  const { data: currentTicket, error: ticketError } = await supabaseAdmin.from("tickets").select("github_fix_commit_sha")
+    .eq("id", run.ticket_id).eq("project_id", req.project!.id).maybeSingle();
+  if (ticketError) throw new HttpError(500, "Could not verify the current remediation commit.");
+  const isCurrentRun = !!run.commit_sha && currentTicket?.github_fix_commit_sha?.toLowerCase() === run.commit_sha.toLowerCase();
+  if (isCurrentRun) await supabaseAdmin.from("tickets").update({ ci_run_url: safeBuildUrl })
+    .eq("id", run.ticket_id).eq("project_id", req.project!.id).eq("github_fix_commit_sha", run.commit_sha);
+  res.status(200).json({ accepted: isCurrentRun, superseded: !isCurrentRun });
 }
 
 export async function reportJenkinsDeployment(req: Request, res: Response): Promise<void> {
@@ -304,8 +344,11 @@ export async function reportJenkinsDeployment(req: Request, res: Response): Prom
   const { data: run, error: loadError } = await supabaseAdmin.from("pipeline_runs").select("id,ticket_id,commit_sha,conclusion,claimed_by,jenkins_job_url,deployment_job_url,deployment_build_url,deployment_status,pull_request_number")
     .eq("id", req.params.runId).eq("project_id", req.project!.id).eq("claimed_by", deviceId).maybeSingle();
   if (loadError || !run || run.conclusion !== "passed" || !run.commit_sha) throw new HttpError(409, "Deployment is only available after the matching Jenkins build passes.");
-  const { data: ticket, error: ticketLoadError } = await supabaseAdmin.from("tickets").select("github_pr_state,github_pr_number").eq("id", run.ticket_id).eq("project_id", req.project!.id).maybeSingle();
-  if (ticketLoadError || ticket?.github_pr_state !== "open" || ticket.github_pr_number !== run.pull_request_number) throw new HttpError(409, "Deployment is only available while the verified remediation pull request is open.");
+  const { data: ticket, error: ticketLoadError } = await supabaseAdmin.from("tickets").select("github_pr_state,github_pr_number,github_fix_commit_sha").eq("id", run.ticket_id).eq("project_id", req.project!.id).maybeSingle();
+  if (ticketLoadError || ticket?.github_pr_state !== "open" || ticket.github_pr_number !== run.pull_request_number
+    || !ticket.github_fix_commit_sha || ticket.github_fix_commit_sha.toLowerCase() !== run.commit_sha.toLowerCase()) {
+    throw new HttpError(409, "Deployment is only available for the currently verified remediation pull request commit.");
+  }
   if (run.deployment_status === state && state !== "running" && (!buildUrl || run.deployment_build_url === buildUrl)) {
     res.status(200).json({ cdStatus: state, duplicate: true }); return;
   }
@@ -406,7 +449,7 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   if (!ticketId) throw new HttpError(400, "A ticket ID is required.");
 
   const { data: ticket, error: ticketError } = await supabaseAdmin.from("tickets")
-    .select("id,ci_status,github_pr_number,github_pr_state,github_fix_commit_sha")
+    .select("id,ci_status,github_pr_number,github_pr_state,github_branch_name,github_fix_commit_sha")
     .eq("id", ticketId).eq("project_id", req.project!.id).maybeSingle();
   if (ticketError) throw new HttpError(500, "Could not load the remediation pull request.");
   if (!ticket) throw new HttpError(404, "Ticket not found.");
@@ -422,23 +465,71 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
     .eq("ticket_id", ticketId).eq("project_id", req.project!.id).in("status", ["needs_review", "completed"])
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (runError) throw new HttpError(500, "Could not load the Jenkins run for retry.");
-  if (!run || !run.commit_sha || !ticket.github_fix_commit_sha || run.commit_sha.toLowerCase() !== ticket.github_fix_commit_sha.toLowerCase()
-    || run.pull_request_number !== ticket.github_pr_number) {
-    throw new HttpError(409, "Bankai cannot safely retry this run because its pull request commit could not be verified.");
+  if (!ticket.github_branch_name) throw new HttpError(409, "Bankai cannot verify the remediation branch for this pull request.");
+  if (run?.pull_request_number != null && run.pull_request_number !== ticket.github_pr_number) {
+    throw new HttpError(409, "Bankai cannot safely retry a run associated with a different pull request.");
   }
 
   const now = new Date().toISOString();
-  const { data: queued, error: queueError } = await supabaseAdmin.from("pipeline_runs").update({
-    status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
-    jenkins_job_url: null, html_url: null, jenkins_build_url: null, jenkins_build_number: null, failure_summary: null, updated_at: now,
-    manual_retry_requested: true,
-  }).eq("id", run.id).in("status", ["needs_review", "completed"]).select("id").maybeSingle();
-  if (queueError) throw new HttpError(500, "Could not queue the Jenkins verification retry.");
-  if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
-
-  const { error: updateTicketError } = await supabaseAdmin.from("tickets").update({ ci_status: "queued", ci_error: null, ci_run_url: null })
-    .eq("id", ticketId).eq("project_id", req.project!.id).in("ci_status", ["needs_review", "failed"]);
-  if (updateTicketError) throw new HttpError(500, "The Jenkins retry was queued, but the ticket status could not be updated.");
+  const matchesRecordedRun = !!run?.id && !!run.commit_sha && !!ticket.github_fix_commit_sha
+    && run.commit_sha.toLowerCase() === ticket.github_fix_commit_sha.toLowerCase();
+  if (matchesRecordedRun) {
+    const { data: queued, error: queueError } = await supabaseAdmin.from("pipeline_runs").update({
+      status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
+      jenkins_job_url: null, html_url: null, jenkins_build_url: null, jenkins_build_number: null, failure_summary: null, updated_at: now,
+      manual_retry_requested: true,
+    }).eq("id", run!.id).in("status", ["needs_review", "completed"]).select("id").maybeSingle();
+    if (queueError) throw new HttpError(500, "Could not queue the Jenkins verification retry.");
+    if (!queued) throw new HttpError(409, "This Jenkins run changed before the retry could be queued.");
+    const { error: updateTicketError } = await supabaseAdmin.from("tickets").update({ ci_status: "queued", ci_error: null, ci_run_url: null })
+      .eq("id", ticketId).eq("project_id", req.project!.id).eq("github_fix_commit_sha", ticket.github_fix_commit_sha).in("ci_status", ["needs_review", "failed"]);
+    if (updateTicketError) throw new HttpError(500, "The Jenkins retry was queued, but the ticket status could not be updated.");
+  } else {
+    // The PR advanced after Bankai recorded the original fix. Validate the
+    // live PR and branch head with GitHub, then queue that exact commit so a
+    // user can recover without pushing an artificial commit to trigger the
+    // webhook again.
+    const github = await loadGithubCreds(supabaseAdmin, req.project!.id);
+    if (!github) throw new HttpError(409, "Reconnect GitHub before retrying verification for the updated pull request.");
+    const pr = await getPullRequest(github.creds, ticket.github_pr_number!);
+    const headSha = await getBranchHeadSha(github.creds, ticket.github_branch_name);
+    if (!pr || pr.state !== "open" || pr.headRef !== ticket.github_branch_name || !pr.headSha || pr.headSha.toLowerCase() !== headSha.toLowerCase()) {
+      throw new HttpError(409, "The remediation pull request changed while Bankai was verifying it. Refresh the pull request and retry.");
+    }
+    const { error: queueError } = await supabaseAdmin.from("pipeline_runs").upsert({
+      ticket_id: ticketId, project_id: req.project!.id, workflow_file: "Jenkinsfile", head_branch: ticket.github_branch_name,
+      commit_sha: headSha, pull_request_number: ticket.github_pr_number, retry_count: 0, status: "queued", updated_at: now,
+      manual_retry_requested: true,
+    }, { onConflict: "ticket_id,commit_sha", ignoreDuplicates: true });
+    if (queueError) throw new HttpError(500, "Could not queue Jenkins verification for the latest pull request commit.");
+    const { data: latestRun, error: latestRunError } = await supabaseAdmin.from("pipeline_runs").select("id,status")
+      .eq("ticket_id", ticketId).eq("project_id", req.project!.id).eq("commit_sha", headSha).maybeSingle();
+    if (latestRunError || !latestRun) throw new HttpError(500, "Could not confirm Jenkins verification for the latest pull request commit.");
+    if (latestRun.status !== "queued") {
+      if (latestRun.status === "in_progress") throw new HttpError(409, "Jenkins is already verifying the latest pull request commit.");
+      const { data: requeued, error: requeueError } = await supabaseAdmin.from("pipeline_runs").update({
+        status: "queued", conclusion: null, claimed_by: null, claimed_at: null, started_at: null, completed_at: null,
+        jenkins_job_url: null, html_url: null, jenkins_build_url: null, jenkins_build_number: null, failure_summary: null,
+        manual_retry_requested: true, updated_at: now,
+      }).eq("id", latestRun.id).in("status", ["needs_review", "completed", "cancelled"]).select("id").maybeSingle();
+      if (requeueError) throw new HttpError(500, "Could not requeue Jenkins verification for the latest pull request commit.");
+      if (!requeued) throw new HttpError(409, "The Jenkins run changed before it could be retried.");
+    }
+    let updateTicketQuery = supabaseAdmin.from("tickets").update({
+      github_fix_commit_sha: headSha, ci_status: "queued", ci_error: null, ci_run_url: null,
+    }).eq("id", ticketId).eq("project_id", req.project!.id);
+    updateTicketQuery = ticket.github_fix_commit_sha
+      ? updateTicketQuery.eq("github_fix_commit_sha", ticket.github_fix_commit_sha)
+      : updateTicketQuery.is("github_fix_commit_sha", null);
+    const { data: updatedTicket, error: updateError } = await updateTicketQuery
+      .in("ci_status", ["needs_review", "failed"]).select("id").maybeSingle();
+    if (updateError) throw new HttpError(500, "The Jenkins run was queued, but the ticket status could not be updated.");
+    if (!updatedTicket) throw new HttpError(409, "The ticket changed before the latest pull request commit could be queued. Refresh and retry.");
+    if (ticket.github_fix_commit_sha) {
+      await supabaseAdmin.from("pipeline_runs").update({ status: "cancelled", conclusion: "superseded", completed_at: now, updated_at: now })
+        .eq("ticket_id", ticketId).eq("project_id", req.project!.id).neq("commit_sha", headSha).in("status", ["queued", "in_progress"]);
+    }
+  }
   await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: req.user!.id, actorLabel: req.user!.email ?? "Bankai user",
     eventType: "pipeline", summary: "queued a manual Jenkins verification retry for", linkLabel: `PR #${ticket.github_pr_number}`, linkTo: "tickets" });
   res.status(202).json({ queued: true });
