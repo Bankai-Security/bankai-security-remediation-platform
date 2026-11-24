@@ -8,7 +8,7 @@ function safeHref(value: string): string | null {
 }
 
 function inline(text: string): ReactNode[] {
-  const token = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^\s)]+(?:\s+"[^"]*")?\))/g;
+  const token = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^\s)]+(?:\s+"[^"]*")?\)|https?:\/\/[^\s<>]+)/g;
   const result: ReactNode[] = [];
   let cursor = 0;
   for (const match of text.matchAll(token)) {
@@ -19,7 +19,13 @@ function inline(text: string): ReactNode[] {
     if (value.startsWith('`')) result.push(<code key={key}>{value.slice(1, -1)}</code>);
     else if (value.startsWith('**') || value.startsWith('__')) result.push(<strong key={key}>{value.slice(2, -2)}</strong>);
     else if (value.startsWith('*') || value.startsWith('_')) result.push(<em key={key}>{value.slice(1, -1)}</em>);
-    else {
+    else if (/^https?:\/\//i.test(value)) {
+      const url = value.replace(/[.,;:!?]+$/, '');
+      const trailing = value.slice(url.length);
+      const href = safeHref(url);
+      result.push(href ? <a key={key} href={href} target="_blank" rel="noreferrer">{url}</a> : value);
+      if (trailing) result.push(trailing);
+    } else {
       const link = value.match(/^\[([^\]]+)\]\(([^\s)]+)/);
       const href = link ? safeHref(link[2]!) : null;
       result.push(href ? <a key={key} href={href} target="_blank" rel="noreferrer">{link![1]}</a> : value);

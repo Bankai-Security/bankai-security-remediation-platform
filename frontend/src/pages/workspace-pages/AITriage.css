@@ -266,6 +266,10 @@
   word-break: break-word;
 }
 
+.triage-drawer-desc > p { margin: 0; }
+.triage-drawer-desc a { color: var(--color-blue); text-decoration: underline; text-underline-offset: 2px; }
+.triage-drawer-desc a:hover { color: var(--color-blue-dark); }
+
 .triage-drawer-evidence {
   background: var(--color-bg);
   border-radius: 12px;

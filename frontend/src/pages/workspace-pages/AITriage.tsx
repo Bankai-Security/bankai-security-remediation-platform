@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
+import MarkdownText from '../../components/MarkdownText';
 import {
   ApiError,
   createTickets,
@@ -421,7 +422,7 @@ export default function AITriage() {
               {openRow.remediationGuidance && (
                 <div>
                   <div className="triage-drawer-label">REMEDIATION GUIDANCE</div>
-                  <div className="triage-drawer-desc" style={{ whiteSpace: 'pre-wrap' }}>{openRow.remediationGuidance}</div>
+                  <MarkdownText className="triage-drawer-desc">{openRow.remediationGuidance}</MarkdownText>
                   {openRow.source === 'github_ai' && openRow.sourceUrl && (
                     <a href={openRow.sourceUrl} target="_blank" rel="noreferrer" className="ws-btn ws-btn-outline-blue" style={{ marginTop: 10, display: 'inline-flex' }}>
                       View file on GitHub{openRow.lineStart ? ` (line ${openRow.lineStart}${openRow.lineEnd && openRow.lineEnd !== openRow.lineStart ? `–${openRow.lineEnd}` : ''})` : ''}

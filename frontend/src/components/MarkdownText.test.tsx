@@ -12,8 +12,10 @@ describe('MarkdownText', () => {
   });
 
   it('does not turn unsafe Markdown URLs into links', () => {
-    render(<MarkdownText>{'[unsafe](javascript:alert(1)) [safe](https://example.com)'}</MarkdownText>);
+    const { container } = render(<MarkdownText>{'[unsafe](javascript:alert(1)) [safe](https://example.com)\nhttps://nvd.nist.gov/vuln/detail/CVE-2019-20477;'}</MarkdownText>);
     expect(screen.getByText(/unsafe/).closest('a')).toBeNull();
     expect(screen.getByRole('link', { name: 'safe' })).toHaveAttribute('href', 'https://example.com/');
+    expect(screen.getByRole('link', { name: 'https://nvd.nist.gov/vuln/detail/CVE-2019-20477' })).toHaveAttribute('href', 'https://nvd.nist.gov/vuln/detail/CVE-2019-20477');
+    expect(container.textContent).toContain(';');
   });
 });
