@@ -7,6 +7,7 @@ it("repairs TT2-65's To Do status when its PR is open", () => {
 });
 it("preserves completed tickets and never closes tickets from Jira alone", () => {
   expect(reconciledTicketStatus("Done", "To Do", false, { githubPrState: "merged" })).toBe("Done");
+  expect(reconciledTicketStatus("Done", "To Do", false, { githubPrState: "resolved_externally" })).toBe("Done");
   expect(reconciledTicketStatus("In Review", "Done", true)).toBe("In Review");
   expect(reconciledTicketStatus("In Progress", "Done", false)).toBe("In Progress");
 });

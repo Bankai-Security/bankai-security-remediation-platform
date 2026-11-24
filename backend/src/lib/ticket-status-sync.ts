@@ -11,7 +11,7 @@ export function statusAllowedByCompletionGate(
   evidence: TicketCompletionEvidence,
 ): TicketStatus {
   if (current !== "Done") return current;
-  if (evidence.githubPrState === "merged") return "Done";
+  if (evidence.githubPrState === "merged" || evidence.githubPrState === "resolved_externally") return "Done";
   return evidence.githubPrNumber != null ? "In Review" : "In Progress";
 }
 

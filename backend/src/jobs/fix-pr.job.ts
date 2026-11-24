@@ -284,9 +284,32 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       cves: item.cves,
     }));
     if (!findingStillPresent(storedFinding, rescannedFindings)) {
+      // A completed scanner run against the live default-branch head is
+      // positive evidence that this ticket is stale. Resolve it here so a
+      // normal retry doesn't leave users with an unrecoverable scanner error.
+      try {
+        if (await getBranchHeadSha(github.creds, github.defaultBranch) === currentBranchSha) {
+          const { error: findingError } = await supabaseAdmin.from("findings")
+            .update({ bucket: "Resolved", rationale: `Not detected by ${scannerRun.scanner} in a complete scan of the current default branch (${currentBranchSha.slice(0, 8)}).` })
+            .eq("id", findingId)
+            .eq("project_id", projectId);
+          if (findingError) throw findingError;
+          const { error: ticketError } = await supabaseAdmin.from("tickets")
+            .update({ status: "Done", github_pr_state: "resolved_externally", github_pr_error: null })
+            .eq("id", ticketId)
+            .eq("project_id", projectId);
+          if (ticketError) throw ticketError;
+          const jira = await loadJiraCreds(supabaseAdmin, projectId);
+          if (jira && ticket.jira_issue_key) await transitionIssue(jira.creds, ticket.jira_issue_key, "Done");
+          logger.info({ ticketId, findingId, scanner: scannerRun.scanner, commitSha: currentBranchSha }, "Resolved stale ticket from current default-branch scan evidence");
+          return;
+        }
+      } catch (err) {
+        logger.error({ err, ticketId, findingId }, "Could not auto-resolve a finding absent from the current default branch");
+      }
       await setTicketError(
         ticketId,
-        `This finding was not detected by ${scannerRun.scanner} on the current default branch (${currentBranchSha.slice(0, 8)}). No remediation changes were made; rescan and review the ticket before retrying.`,
+        `This finding was not detected by ${scannerRun.scanner} on the current default branch (${currentBranchSha.slice(0, 8)}). Bankai could not verify the same branch head at completion, so no changes were made; retry after the scan completes.`,
       );
       return;
     }

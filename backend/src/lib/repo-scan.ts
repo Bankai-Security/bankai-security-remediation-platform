@@ -7,6 +7,7 @@ import {
 } from "./csv-ingest.js";
 import { getBranchHeadSha, type GithubCredentials } from "./github.js";
 import { scanRepository } from "./scanners.js";
+import { closeTicketsForResolvedFindings } from "./ticketing.js";
 import type { SlaPolicyDays } from "./sla.js";
 import {
   fetchAlreadyTicketedFingerprints,
@@ -42,6 +43,7 @@ export interface RepoScanResult {
 }
 
 interface ExistingFindingWithTicket {
+  id: string;
   fingerprint: string;
   severity: ExistingFinding["severity"];
   cvss_score: number | null;
@@ -52,16 +54,6 @@ interface ExistingFindingWithTicket {
   finding_type: string | null;
   cves: string | null;
   last_seen_at: string | null;
-  tickets?: { status: string; github_pr_state: string | null; ci_status: string | null }
-    | { status: string; github_pr_state: string | null; ci_status: string | null }[]
-    | null;
-}
-
-function findingsResolvedByVerifiedRemediation(existing: ExistingFinding[], missing: string[]): string[] {
-  const missingSet = new Set(missing);
-  return existing
-    .filter((finding) => missingSet.has(finding.fingerprint) && finding.verifiedRemediation)
-    .map((finding) => finding.fingerprint);
 }
 
 // PR scans are pinned to the webhook's exact head revision. They are kept as
@@ -96,12 +88,11 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
 
   const { data: existingRaw, error: existingError } = await supabase
     .from("findings")
-    .select("fingerprint, severity, cvss_score, bucket, file_path, external_id, component, finding_type, cves, last_seen_at, tickets ( status, github_pr_state, ci_status )")
+    .select("id, fingerprint, severity, cvss_score, bucket, file_path, external_id, component, finding_type, cves, last_seen_at")
     .eq("project_id", projectId);
   if (existingError) throw new Error("Could not load this project's existing findings.");
 
   const existing: ExistingFinding[] = ((existingRaw ?? []) as unknown as ExistingFindingWithTicket[]).map((f) => {
-    const ticket = Array.isArray(f.tickets) ? f.tickets[0] : f.tickets;
     return {
       fingerprint: f.fingerprint,
       severity: f.severity,
@@ -113,7 +104,6 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
       findingType: f.finding_type,
       cves: f.cves,
       lastSeenAt: f.last_seen_at,
-      verifiedRemediation: ticket?.status === "Done" && ticket.github_pr_state === "merged" && ticket.ci_status === "passed",
     };
   });
 
@@ -151,20 +141,38 @@ export async function runFullRepoScan(input: RunRepoScanInput): Promise<RepoScan
     });
   }
 
-  // A complete baseline scan can close a ticketed finding only when its
-  // linked remediation PR is merged, CI passed, and the finding is absent.
-  // Missing findings with no verified remediation remain open for review.
-  const verifiedResolvedFingerprints = findingsResolvedByVerifiedRemediation(existing, plan.notDetectedFingerprints);
-  if (verifiedResolvedFingerprints.length > 0) {
+  // A complete baseline scan reconciles findings absent from the live default
+  // branch, including ones fixed outside Bankai.
+  // A complete scan of the current baseline is authoritative for whether a
+  // ticketed finding remains present. Include externally fixed findings even
+  // when they have no Bankai PR; closeTicketsForResolvedFindings preserves any
+  // open remediation PR and pushes completion to Jira when applicable.
+  let resolvedFingerprints = plan.notDetectedFingerprints;
+  if (resolvedFingerprints.length > 0) {
+    // Jobs scan a pinned SHA. If the default branch moved during the scan, its
+    // absence results are stale and must not complete tickets.
+    const latestHeadSha = await getBranchHeadSha(github.creds, github.defaultBranch);
+    if (latestHeadSha !== commitSha) resolvedFingerprints = [];
+  }
+  const resolvedSet = new Set(resolvedFingerprints);
+  const resolvedFindingIds = ((existingRaw ?? []) as unknown as ExistingFindingWithTicket[])
+    .filter((finding) => resolvedSet.has(finding.fingerprint))
+    .map((finding) => finding.id);
+  if (resolvedFingerprints.length > 0) {
     const { error: resolveError } = await supabase
       .from("findings")
       .update({
         bucket: "Resolved",
-        rationale: "Not detected in the latest complete repository scan after the linked remediation PR merged and passed CI.",
+        rationale: "Not detected in the latest complete repository scan of the current default branch.",
       })
       .eq("project_id", projectId)
-      .in("fingerprint", verifiedResolvedFingerprints);
+      .in("fingerprint", resolvedFingerprints);
     if (resolveError) throw new Error("Could not resolve findings verified absent after remediation.");
+    await closeTicketsForResolvedFindings(supabase, {
+      projectId,
+      resolvedFindingIds,
+      jira: jiraCreds?.creds ?? null,
+    });
   }
 
   return {

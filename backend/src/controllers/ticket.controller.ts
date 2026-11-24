@@ -467,7 +467,7 @@ export async function updateTicket(req: Request, res: Response): Promise<void> {
   // Manual PATCH must not close a ticket that still has open
   // work — use reopenTicket to go the other direction.
   if (status === "Done") {
-    const resolvedSignal = current.github_pr_state === "merged";
+    const resolvedSignal = current.github_pr_state === "merged" || current.github_pr_state === "resolved_externally";
     if (!resolvedSignal) {
       throw new HttpError(
         422,

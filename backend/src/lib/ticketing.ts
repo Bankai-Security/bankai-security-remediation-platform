@@ -599,8 +599,10 @@ export async function createTicketForFinding(
   return { ticket: publicTicket, remediationQueued: enqueued };
 }
 
-// A rescan omission alone cannot close a ticket. Reconcile completion only
-// after a fix PR has merged, including tickets that never received a PR.
+// A complete baseline scan verifies the live default branch. If a finding is
+// absent and there is no in-flight remediation PR, that is sufficient evidence
+// that the ticket is stale (including fixes made outside Bankai). Incomplete
+// scans never call this function, and present findings are never passed here.
 export async function closeTicketsForResolvedFindings(
   supabase: SupabaseClient,
   input: { projectId: string; resolvedFindingIds: string[]; jira: JiraCredentials | null },
@@ -620,24 +622,27 @@ export async function closeTicketsForResolvedFindings(
     return;
   }
 
-  // A missing scanner result is not proof of remediation. In particular,
-  // tickets without a PR must remain actionable until a fix actually lands.
-  const toClose = (candidates ?? []).filter((t) => t.github_pr_state === "merged");
+  // Keep an open PR actionable. A closed-but-unmerged PR is not in flight;
+  // a complete baseline finding absence confirms the issue is already fixed.
+  const toClose = (candidates ?? []).filter((t) => t.github_pr_state !== "open");
   if (toClose.length === 0) return;
 
-  const { data: closedRows, error } = await supabase
-    .from("tickets")
-    .update({ status: "Done" })
-    .eq("github_pr_state", "merged")
-    .in(
-      "id",
-      toClose.map((t) => t.id),
-    )
-    .select("id, jira_issue_key");
-
-  if (error) {
-    logger.error({ err: error, projectId }, "Could not auto-close tickets for resolved findings");
-    return;
+  const closedRows: { id: string; jira_issue_key: string | null }[] = [];
+  for (const [group, status] of [
+    [toClose.filter((ticket) => ticket.github_pr_state === "merged"), "merged"],
+    [toClose.filter((ticket) => ticket.github_pr_state !== "merged"), "resolved_externally"],
+  ] as const) {
+    if (group.length === 0) continue;
+    const { data, error } = await supabase
+      .from("tickets")
+      .update({ status: "Done", ...(status === "resolved_externally" ? { github_pr_state: status } : {}) })
+      .in("id", group.map((ticket) => ticket.id))
+      .select("id, jira_issue_key");
+    if (error) {
+      logger.error({ err: error, projectId, resolution: status }, "Could not auto-close tickets for resolved findings");
+      continue;
+    }
+    closedRows.push(...(data ?? []));
   }
 
   if (jira) {

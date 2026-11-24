@@ -79,7 +79,7 @@ it("repairs premature Done rows according to their remediation progress", async 
 });
 
 describe("scan resolution cannot bypass remediation", () => {
-  it("closes only merged PR tickets, leaving no-PR, failed and open-PR tickets actionable", async () => {
+  it("closes absent findings after a complete scan, keeping an open PR actionable", async () => {
     const update = vi.fn();
     const selectedIds = vi.fn();
     const write = {
@@ -95,15 +95,19 @@ describe("scan resolution cannot bypass remediation", () => {
         { id: "no-pr", github_pr_state: null },
         { id: "open", github_pr_state: "open" },
         { id: "closed-unmerged", github_pr_state: "closed" },
-                { id: "merged", github_pr_state: "merged" },
+        { id: "merged", github_pr_state: "merged" },
       ], error: null }),
     };
     const db = { from: vi.fn().mockReturnValueOnce(read).mockReturnValue({ update }) };
     await closeTicketsForResolvedFindings(db as unknown as SupabaseClient, {
-      projectId: "project", resolvedFindingIds: ["finding"], jira: null,
+      projectId: "project", resolvedFindingIds: ["finding"], jira: JIRA.creds,
     });
-    expect(selectedIds).toHaveBeenCalledWith("id", ["merged"]);
-    expect(write.eq).toHaveBeenCalledWith("github_pr_state", "merged");
+    expect(selectedIds).toHaveBeenNthCalledWith(1, "id", ["merged"]);
+    expect(selectedIds).toHaveBeenNthCalledWith(2, "id", ["no-pr", "closed-unmerged"]);
+    expect(update).toHaveBeenCalledWith({
+      status: "Done",
+      github_pr_state: "resolved_externally",
+    });
   });
 });
 
