@@ -562,6 +562,9 @@ export interface JenkinsPipelineClaim {
 export function claimJenkinsPipeline(projectId: string, input: { deviceId: string; jobUrl: string }): Promise<JenkinsPipelineClaim | undefined> {
   return apiFetch(`/projects/${projectId}/pipeline/claim`, { method: "POST", body: JSON.stringify(input) });
 }
+export function reportJenkinsSetupFailure(projectId: string, error: string): Promise<{ updatedRuns: number }> {
+  return apiFetch(`/projects/${projectId}/pipeline/setup-failure`, { method: "POST", body: JSON.stringify({ error }) });
+}
 export function finishJenkinsPipeline(projectId: string, runId: string, input: {
   deviceId: string; state: "passed" | "failed" | "cancelled" | "needs_review"; jobUrl?: string; buildUrl?: string; buildNumber?: number | null;
   commitSha?: string | null; failureLog?: string;

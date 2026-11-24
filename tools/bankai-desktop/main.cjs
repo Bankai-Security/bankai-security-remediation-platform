@@ -76,7 +76,10 @@ async function jenkinsFetch(credentials, url, options = {}) {
       continue;
     }
     if (response.status === 429) throw new Error('Jenkins is rate limiting requests. Wait briefly, then refresh jobs or retry the build.');
-    if (response.status >= 500) throw new Error('Jenkins is temporarily unavailable. Check the server, then retry from Bankai.');
+    if (response.status >= 500) {
+      const method = (options.method || 'GET').toUpperCase();
+      throw new Error(`Jenkins returned HTTP ${response.status} for ${method} ${target.pathname}. Check the Jenkins controller log for this request, then retry from Bankai.`);
+    }
     if (response.status === 401 || response.status === 403) throw new Error('Jenkins rejected the saved credentials or permissions. Reconnect with a valid Jenkins API token.');
     return response;
   }

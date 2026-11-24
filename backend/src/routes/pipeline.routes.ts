@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { cancelQueuedJenkinsRun, claimJenkinsRun, finishJenkinsRun, recordJenkinsAuditAction, reportJenkinsDeployment, reportJenkinsProgress, retryJenkinsVerification } from "../controllers/pipeline.controller.js";
+import { cancelQueuedJenkinsRun, claimJenkinsRun, finishJenkinsRun, recordJenkinsAuditAction, reportJenkinsDeployment, reportJenkinsProgress, reportJenkinsSetupFailure, retryJenkinsVerification } from "../controllers/pipeline.controller.js";
 
 export const pipelineRouter = Router({ mergeParams: true });
 pipelineRouter.post("/claim", claimJenkinsRun);
 pipelineRouter.post("/audit", recordJenkinsAuditAction);
+pipelineRouter.post("/setup-failure", reportJenkinsSetupFailure);
 pipelineRouter.post("/runs/:runId/result", finishJenkinsRun);
 pipelineRouter.post("/runs/:runId/progress", reportJenkinsProgress);
 pipelineRouter.post("/runs/:runId/deployment", reportJenkinsDeployment);

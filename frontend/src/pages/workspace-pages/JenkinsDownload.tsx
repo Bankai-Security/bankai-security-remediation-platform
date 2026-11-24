@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, getVerificationSettings, inspectJenkinsfile, recordJenkinsAuditAction, setVerificationProvider, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
+import { createJenkinsfilePullRequest, generateJenkinsfileProposal, getGithubConnection, getVerificationSettings, inspectJenkinsfile, recordJenkinsAuditAction, reportJenkinsSetupFailure, setVerificationProvider, updateJenkinsfilePullRequest, type JenkinsfileInspection, type JenkinsfileProposal, type JenkinsfilePullRequest } from '../../lib/api';
 import jenkinsLogo from '../../assets/jenkins.svg';
 import { useProject } from '../../lib/project-context';
 import WorkspaceBreadcrumb from '../../components/WorkspaceBreadcrumb';
@@ -251,7 +251,12 @@ function DesktopJenkinsOptions({ projectId, canManage }: { projectId: string; ca
           } catch { /* optional convenience */ }
         }
       }
-    }).catch((reason) => { if (active) setError(errorMessage(reason)); }).finally(() => { if (active) setBusy(false); });
+    }).catch((reason) => {
+      if (!active) return;
+      const message = errorMessage(reason);
+      setError(message);
+      if (choice === 'enabled') void reportJenkinsSetupFailure(projectId, message).catch(() => undefined);
+    }).finally(() => { if (active) setBusy(false); });
     const unsubscribe = api.onJenkinsJobProgress((progress) => setRun(progress));
     return () => { active = false; unsubscribe(); };
   }, [api, projectId, canManage, choice]);

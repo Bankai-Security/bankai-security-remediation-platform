@@ -26,6 +26,39 @@ export async function recordJenkinsAuditAction(req: Request, res: Response): Pro
   res.status(200).json({ recorded: true });
 }
 
+// A Jenkins setup failure can happen before the desktop claims a queued PR
+// run (for example, while the repository's multibranch job is being created).
+// Move those runs out of the queue so Tickets never implies Jenkins has a build.
+export async function reportJenkinsSetupFailure(req: Request, res: Response): Promise<void> {
+  requireRole(req.project!.myRole, ["owner", "admin", "editor"]);
+  const supplied = req.body?.error;
+  if (typeof supplied !== "string" || !supplied.trim()) throw new HttpError(400, "A Jenkins setup error is required.");
+  const safeMessage = redact(supplied.trim()).slice(0, 1500);
+  const { data: settings, error: settingsError } = await supabaseAdmin.from("projects").select("verification_provider")
+    .eq("id", req.project!.id).maybeSingle();
+  if (settingsError) throw new HttpError(500, "Could not load the selected CI provider.");
+  if (settings?.verification_provider !== "jenkins") throw new HttpError(409, "Jenkins is not the selected CI provider for this project.");
+
+  const now = new Date().toISOString();
+  const { data: runs, error: runError } = await supabaseAdmin.from("pipeline_runs").update({ status: "needs_review", conclusion: "needs_review",
+    failure_summary: safeMessage, completed_at: now, updated_at: now })
+    .eq("project_id", req.project!.id).eq("status", "queued").select("id,ticket_id,pull_request_number");
+  if (runError) throw new HttpError(500, "Could not mark queued Jenkins runs for review.");
+
+  for (const ticketId of new Set((runs ?? []).map((run) => run.ticket_id))) {
+    const { data: changed, error: ticketError } = await supabaseAdmin.from("tickets").update({ ci_status: "needs_review", ci_error: safeMessage, ci_run_url: null })
+      .eq("id", ticketId).eq("project_id", req.project!.id).eq("ci_status", "queued").select("id").maybeSingle();
+    if (ticketError) throw new HttpError(500, "Could not update the ticket's Jenkins status.");
+    if (!changed) continue;
+    const run = (runs ?? []).find((item) => item.ticket_id === ticketId);
+    await recordActivity(supabaseAdmin, { projectId: req.project!.id, actorId: null, actorLabel: "Bankai Desktop", eventType: "pipeline",
+      summary: "could not start Jenkins verification for", linkLabel: run?.pull_request_number ? `PR #${run.pull_request_number}` : undefined,
+      linkTo: "tickets", meta: safeMessage });
+    await publishJenkinsEvidence(req.project!.id, ticketId);
+  }
+  res.status(200).json({ updatedRuns: runs?.length ?? 0 });
+}
+
 const redact = (value: string) => value
   .replace(/(password|token|secret|authorization|api[_-]?key)(\s*[=:]\s*)([^\s,;]+)/gi, "$1$2[REDACTED]")
   .replace(/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
