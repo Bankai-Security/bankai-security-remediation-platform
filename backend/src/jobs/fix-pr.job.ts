@@ -16,6 +16,7 @@ import { transitionIssue, type JiraCredentials } from "../lib/jira.js";
 import { logger } from "../lib/logger.js";
 import { env } from "../env.js";
 import type { FixPrJobData } from "../lib/queue.js";
+import { findingStillPresent } from "../lib/finding-revalidation.js";
 import { scanRepository } from "../lib/scanners.js";
 import { attemptBranchCreation, loadGithubCreds, loadJiraCreds } from "../lib/ticketing.js";
 import { supabaseAdmin } from "../lib/supabase.js";
@@ -89,56 +90,6 @@ function buildRemediationGuidance(finding: FixPrFindingRow): string {
     .filter((part): part is string => Boolean(part && part.trim()))
     .join("\n\n");
 }
-
-function normalizeFindingIdentity(value: string | null | undefined): string {
-  return value?.trim().toLowerCase().replaceAll("\\", "/").replace(/\s+/g, " ") ?? "";
-}
-
-function findingStillPresent(finding: FixPrFindingRow, scanFindings: RescannedFinding[]): boolean {
-  const scanner = normalizeFindingIdentity(finding.finding_type);
-  const component = normalizeFindingIdentity(finding.component);
-  const externalId = normalizeFindingIdentity(finding.external_id);
-  const filePath = normalizeFindingIdentity(finding.file_path);
-  const title = normalizeFindingIdentity(finding.title);
-
-  return scanFindings.some((current) => {
-    if (current.fingerprint === finding.fingerprint) return true;
-    if (normalizeFindingIdentity(current.findingType) !== scanner) return false;
-
-    const currentComponent = normalizeFindingIdentity(current.component);
-    const currentId = normalizeFindingIdentity(current.externalId);
-    const currentPath = normalizeFindingIdentity(current.filePath);
-    if (externalId && currentId === externalId && (!component || currentComponent === component)) {
-      // Rule/advisory identity is enough for dependency findings, whose
-      // manifest location can legitimately move between scans. Code findings
-      // also require the same path so a match in another file cannot revive a
-      // stale ticket.
-      return scanner === "pip-audit" || !filePath || currentPath === filePath;
-    }
-
-    if (scanner === "pip-audit" && component && currentComponent === component) {
-      // Backfill-style Jira imports predate persisted external IDs. Match the
-      // old truncated summary against the scanner's full advisory text so a
-      // different vulnerability in the same package does not count as found.
-      const titleAnchor = title.replace(/…|\.\.\.$/, "").slice(0, 100);
-      const currentTitle = normalizeFindingIdentity(current.title);
-      const currentDescription = normalizeFindingIdentity(current.description);
-      return titleAnchor.length >= 40 && (currentTitle.includes(titleAnchor) || currentDescription.includes(titleAnchor));
-    }
-
-    return false;
-  });
-}
-
-type RescannedFinding = {
-  fingerprint: string;
-  externalId: string | null;
-  title: string;
-  component: string | null;
-  filePath: string | null;
-  findingType: string | null;
-  description: string | null;
-};
 
 function compactMultiline(value: string | null | undefined, maxLength = 1600): string | null {
   const trimmed = value?.trim();
@@ -293,7 +244,7 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
     await setTicketError(ticketId, "Could not read the current default branch. No remediation changes were made; retry after GitHub is available.");
     return;
   }
-  const scannerName = finding.finding_type?.trim().toLowerCase();
+  const scannerName = finding.finding_type?.trim().toLowerCase().replace(/[\s_]+/g, "-");
   const configuredScanners = new Set(["trivy", "semgrep", "gitleaks", "bandit", "npm-audit", "pip-audit", "osv"]);
   if (scannerName && configuredScanners.has(scannerName)) {
     let currentScan: Awaited<ReturnType<typeof scanRepository>>;
@@ -304,14 +255,35 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
       await setTicketError(ticketId, "Could not verify this finding against the current default branch. No remediation changes were made; retry after the repository scan is available.");
       return;
     }
-    const scannerRun = currentScan.scanners.find((run) => run.scanner.toLowerCase() === scannerName);
+    const scannerRun = currentScan.scanners.find((run) => run.scanner.toLowerCase().replace(/[\s_]+/g, "-") === scannerName);
     if (!scannerRun || scannerRun.status === "failed") {
       await setTicketError(ticketId, scannerRun?.reason
         ? `Could not verify this finding because ${scannerRun.scanner} failed: ${scannerRun.reason}`
         : `Could not verify this finding because scanner "${finding.finding_type}" did not run. No remediation changes were made.`);
       return;
     }
-    if (!findingStillPresent(finding, currentScan.findings)) {
+    const storedFinding = {
+      fingerprint: finding.fingerprint,
+      externalId: finding.external_id,
+      title: finding.title,
+      component: finding.component,
+      affectedPackages: finding.affected_packages,
+      filePath: finding.file_path,
+      findingType: finding.finding_type,
+      description: finding.description,
+      cves: finding.cves,
+    };
+    const rescannedFindings = currentScan.findings.map((item) => ({
+      fingerprint: item.fingerprint,
+      externalId: item.externalId,
+      title: item.title,
+      component: item.component,
+      filePath: item.filePath,
+      findingType: item.findingType,
+      description: item.description,
+      cves: item.cves,
+    }));
+    if (!findingStillPresent(storedFinding, rescannedFindings)) {
       await setTicketError(
         ticketId,
         `This finding was not detected by ${scannerRun.scanner} on the current default branch (${currentBranchSha.slice(0, 8)}). No remediation changes were made; rescan and review the ticket before retrying.`,

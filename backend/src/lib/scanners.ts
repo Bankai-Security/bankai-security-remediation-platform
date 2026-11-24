@@ -102,9 +102,13 @@ function stableFingerprint(scanner: string, identity: string): string {
 
 function repositoryRelativePath(path: string | null, repoRoot: string): string | null {
   if (!path) return null;
-  const normalized = path.replaceAll("\\", "/");
+  let normalized = path.trim();
+  if (/^file:\/\//i.test(normalized)) {
+    try { normalized = decodeURIComponent(new URL(normalized).pathname); } catch { /* Preserve the source path if it is not a valid file URI. */ }
+  }
+  normalized = normalized.replaceAll("\\", "/").replace(/^\/[a-z]:\//i, (drivePath) => drivePath.slice(1));
   const root = repoRoot.replaceAll("\\", "/").replace(/\/+$/, "");
-  if (normalized.startsWith(`${root}/`)) return normalized.slice(root.length + 1);
+  if (normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`)) return normalized.slice(root.length + 1);
   const marker = normalized.match(/(?:^|\/)tmp\/bankai-scan-[^/]+\/repo\/(.+)$/i);
   return marker?.[1] ?? normalized.replace(/^\.\//, "");
 }
@@ -160,7 +164,7 @@ export function normalizeScannerFindings(scanner: string, data: unknown, repo: s
   if (scanner === "bandit") for (const r of arr(root.results).map(object)) add({ id: str(r.test_id), title: str(r.issue_text), severity: r.issue_severity, path: str(r.filename), line: typeof r.line_number === "number" ? r.line_number : null, description: str(r.issue_text), guidance: str(r.more_info) });
   if (scanner === "gitleaks") for (const r of arr(data).map(object)) add({ id: str(r.RuleID), title: str(r.Description) || str(r.RuleID), severity: "high", path: str(r.File), line: typeof r.StartLine === "number" ? r.StartLine : null, description: str(r.Secret) ? `Potential secret detected by ${String(r.RuleID)}.` : str(r.Description), guidance: "Revoke and rotate the exposed secret; remove it from repository history." });
   if (scanner === "npm-audit") for (const [name, raw] of Object.entries(object(root.vulnerabilities))) { const v = object(raw); for (const via of arr(v.via)) { if (typeof via === "string") continue; const item = object(via); add({ id: str(item.url) || `npm:${name}`, title: str(item.title) || `${name} vulnerability`, severity: v.severity, path: "package-lock.json", component: name, description: str(item.title), url: str(item.url), fixed: typeof v.fixAvailable === "object" ? String(object(v.fixAvailable).version ?? "") || null : null }); } }
-  if (scanner === "pip-audit") for (const dep of arr(root.dependencies).map(object)) for (const v of arr(dep.vulns).map(object)) add({ id: str(v.id), title: str(v.description) || `${String(dep.name)} vulnerability`, severity: "high", path: str(dep.name), component: str(dep.name), description: str(v.description), url: str(arr(v.aliases).map(String).find(a => a.startsWith("https://")) ?? null), fixed: arr(v.fix_versions).join(", ") || null });
+  if (scanner === "pip-audit") for (const dep of arr(root.dependencies).map(object)) for (const v of arr(dep.vulns).map(object)) add({ id: str(v.id), title: str(v.description) || `${String(dep.name)} vulnerability`, severity: "high", path: str(dep.name), component: str(dep.name), description: str(v.description), url: str(arr(v.aliases).map(String).find(a => a.startsWith("https://")) ?? null), cves: arr(v.aliases).map(String), fixed: arr(v.fix_versions).join(", ") || null });
   if (scanner === "osv") {
     const results = arr(root.results);
     for (const result of results.map(object)) for (const pkg of arr(result.packages).map(object)) for (const v of arr(pkg.vulnerabilities).map(object)) {
