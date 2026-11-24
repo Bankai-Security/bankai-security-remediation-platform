@@ -160,6 +160,21 @@ async function createRepositoryMultibranchPipeline(credentials, repo) {
     if (!config.ok) throw new Error(`Could not verify the existing Jenkins pipeline (HTTP ${config.status}).`);
     const xml = await config.text();
     if (!xml.includes(`<repoOwner>${owner}</repoOwner>`) || !xml.includes(`<repository>${repository}</repository>`)) throw new Error(`Jenkins job ${name} exists but is configured for a different GitHub repository.`);
+    const validOwnerReference = /<owner\s+class="org\.jenkinsci\.plugins\.workflow\.multibranch\.WorkflowMultiBranchProject"\s+reference="\.\."\s*\/>/g;
+    const references = xml.match(validOwnerReference) || [];
+    if (references.length !== 2) {
+      // Repair jobs created by older Bankai versions. A missing/non-reference
+      // owner leaves BranchSourceList.owner null and Jenkins fails to render
+      // the job page. Repost the minimal supported config with root references.
+      const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
+      const crumb = crumbResponse.ok ? await crumbResponse.json() : null;
+      const repair = await jenkinsFetch(credentials, configUrl.toString(), {
+        method: 'POST',
+        headers: { ...jenkinsCrumbHeaders(crumb), 'Content-Type': 'application/xml' },
+        body: pipelineConfigXml(owner, repository),
+      });
+      if (![200, 201, 302, 303].includes(repair.status)) throw new Error(`Jenkins could not repair the existing multibranch pipeline (HTTP ${repair.status}).`);
+    }
     return { name, url: existing.url, created: false };
   }
   const crumbResponse = await jenkinsFetch(credentials, jenkinsApiUrl(credentials.url, 'crumbIssuer/api/json'));
