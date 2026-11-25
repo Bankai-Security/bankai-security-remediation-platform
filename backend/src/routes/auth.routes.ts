@@ -24,6 +24,7 @@ import {
   updateProfileSchema,
 } from "../schemas/auth.schema.js";
 import { githubOAuthRouter } from "./github-oauth.routes.js";
+import { jiraAccountOAuthRouter } from "./jira-account-oauth.routes.js";
 import { ssoRouter } from "./sso.routes.js";
 
 export const authRouter = Router();
@@ -42,6 +43,7 @@ authRouter.delete("/account", requireAuth, baselineProtect, validateBody(deleteA
 // Connecting a GitHub account (for repo scanning) is unrelated to Bankai's
 // own session/login above — see github-oauth.routes.ts.
 authRouter.use("/github", githubOAuthRouter);
+authRouter.use("/jira", jiraAccountOAuthRouter);
 
 // "Log in with Google/GitHub" via Supabase's own OAuth integration — see
 // sso.routes.ts.

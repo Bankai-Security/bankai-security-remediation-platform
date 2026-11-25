@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordActivity } from "./activity.js";
 import { normalizeDate, normalizeSeverity, type FindingUpsertRow } from "./csv-ingest.js";
 import { decrypt } from "./crypto.js";
-import { loadJiraOAuthCredentials } from "./atlassian-oauth.js";
+import { loadJiraAccountOAuthCredentials, loadJiraOAuthCredentials } from "./atlassian-oauth.js";
 import { buildBranchName, createBranch, GithubApiError, type GithubCredentials } from "./github.js";
 import { HttpError } from "./http-error.js";
 import {
@@ -161,6 +161,7 @@ export interface ProjectJiraRow {
   jira_connected_at: string | null;
   jira_cloud_id?: string | null;
   jira_oauth_access_token_enc?: string | null;
+  jira_oauth_user_id?: string | null;
 }
 
 export async function loadJiraCreds(
@@ -169,7 +170,7 @@ export async function loadJiraCreds(
 ): Promise<{ creds: JiraCredentials; projectKey: string } | null> {
   const { data } = await supabase
     .from("projects")
-    .select("jira_site, jira_key, jira_email, jira_api_token_enc, jira_connected_at, jira_cloud_id, jira_oauth_access_token_enc")
+    .select("jira_site, jira_key, jira_email, jira_api_token_enc, jira_connected_at, jira_cloud_id, jira_oauth_access_token_enc, jira_oauth_user_id")
     .eq("id", projectId)
     .single();
 
@@ -178,10 +179,14 @@ export async function loadJiraCreds(
     return null;
   }
 
-  if (row.jira_oauth_access_token_enc && row.jira_cloud_id) {
+  if ((row.jira_oauth_access_token_enc || row.jira_oauth_user_id) && row.jira_cloud_id) {
     try {
-      const oauth = await loadJiraOAuthCredentials(projectId);
-      if (oauth?.cloudId && oauth.site) return { creds: { site: oauth.site, cloudId: oauth.cloudId, accessToken: oauth.accessToken }, projectKey: row.jira_key };
+      const oauth = row.jira_oauth_user_id
+        ? await loadJiraAccountOAuthCredentials(row.jira_oauth_user_id)
+        : await loadJiraOAuthCredentials(projectId);
+      if (oauth && (!('cloudId' in oauth) || (oauth.cloudId && oauth.site))) {
+        return { creds: { site: row.jira_site, cloudId: row.jira_cloud_id, accessToken: oauth.accessToken }, projectKey: row.jira_key };
+      }
     } catch (error) {
       logger.warn({ err: error, projectId }, "Jira OAuth credentials need reconnection");
     }

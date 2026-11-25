@@ -19,6 +19,8 @@ import {
   loadJiraOAuthCredentials,
   parseJiraOAuthState,
   saveJiraOAuthTokens,
+  saveJiraAccountOAuthTokens,
+  loadJiraAccountOAuthCredentials,
 } from "../lib/atlassian-oauth.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
@@ -58,7 +60,15 @@ export async function getJiraStatus(req: Request, res: Response): Promise<void> 
     throw new HttpError(500, "Could not load this project's Jira connection.");
   }
 
-  res.status(200).json(toPublicConnection(data as JiraConnectionRow));
+  const { data: profile } = await supabase.from("profiles").select("jira_oauth_connected_at").eq("id", req.user!.id).maybeSingle();
+  res.status(200).json({ ...toPublicConnection(data as JiraConnectionRow), accountOAuthAvailable: profile?.jira_oauth_connected_at != null });
+}
+
+async function availableJiraOAuth(req: Request, projectId: string) {
+  const projectAuthorization = await loadJiraOAuthCredentials(projectId);
+  if (projectAuthorization) return { accessToken: projectAuthorization.accessToken, accountPair: null as Awaited<ReturnType<typeof loadJiraAccountOAuthCredentials>> };
+  const accountPair = await loadJiraAccountOAuthCredentials(req.user!.id);
+  return accountPair ? { accessToken: accountPair.accessToken, accountPair } : null;
 }
 
 export async function connectJira(req: Request, res: Response): Promise<void> {
@@ -88,6 +98,7 @@ export async function connectJira(req: Request, res: Response): Promise<void> {
       jira_oauth_expires_at: null,
       jira_cloud_id: null,
       jira_oauth_account_id: null,
+      jira_oauth_user_id: null,
       jira_connected_at: new Date().toISOString(),
     })
     .eq("id", project.id)
@@ -143,6 +154,7 @@ export async function disconnectJira(req: Request, res: Response): Promise<void>
       jira_oauth_expires_at: null,
       jira_cloud_id: null,
       jira_oauth_account_id: null,
+      jira_oauth_user_id: null,
       jira_connected_at: null,
     })
     .eq("id", project.id)
@@ -172,6 +184,12 @@ function callbackUrl(projectId: string, result: "connected" | "error", returnTo?
   return url.toString();
 }
 
+function accountCallbackUrl(result: "connected" | "error"): string {
+  const url = new URL("/settings", env.FRONTEND_ORIGIN);
+  url.searchParams.set("jira_account", result);
+  return url.toString();
+}
+
 export async function startJiraOAuth(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin"]);
   if (!jiraOAuthConfigured()) throw new HttpError(503, "Jira one-click authorization is not configured. Use the API-token fallback or configure Atlassian OAuth on the backend.");
@@ -183,6 +201,16 @@ export async function startJiraOAuth(req: Request, res: Response): Promise<void>
 export async function jiraOAuthCallback(req: Request, res: Response): Promise<void> {
   const state = typeof req.query.state === "string" ? parseJiraOAuthState(req.query.state) : null;
   if (!state) { res.status(400).send("Jira authorization could not be verified. Return to Bankai and try again."); return; }
+  if (state.target === "account") {
+    if (typeof req.query.error === "string" || typeof req.query.code !== "string") { res.redirect(accountCallbackUrl("error")); return; }
+    try {
+      const pair = await exchangeJiraOAuthCode(req.query.code);
+      await saveJiraAccountOAuthTokens(supabaseAdmin, state.userId, pair);
+      res.redirect(accountCallbackUrl("connected"));
+    } catch { res.redirect(accountCallbackUrl("error")); }
+    return;
+  }
+  if (!state.projectId) { res.status(400).send("Jira authorization could not be verified. Return to Bankai and try again."); return; }
   if (typeof req.query.error === "string" || typeof req.query.code !== "string") { res.redirect(callbackUrl(state.projectId, "error", state.returnTo)); return; }
 
   const [{ data: project }, { data: membership }] = await Promise.all([
@@ -203,7 +231,7 @@ export async function jiraOAuthCallback(req: Request, res: Response): Promise<vo
 
 export async function listJiraOAuthSites(req: Request, res: Response): Promise<void> {
   requireRole(req.project!.myRole, ["owner", "admin"]);
-  const authorization = await loadJiraOAuthCredentials(req.project!.id);
+  const authorization = await availableJiraOAuth(req, req.project!.id);
   if (!authorization) throw new HttpError(409, "Connect Jira with Atlassian first.");
   try {
     const sites = await getAtlassianAccessibleSites(authorization.accessToken);
@@ -215,7 +243,7 @@ export async function listJiraOAuthProjects(req: Request, res: Response): Promis
   requireRole(req.project!.myRole, ["owner", "admin"]);
   const cloudId = req.query.cloudId;
   if (typeof cloudId !== "string") throw new HttpError(400, "Choose a Jira site first.");
-  const authorization = await loadJiraOAuthCredentials(req.project!.id);
+  const authorization = await availableJiraOAuth(req, req.project!.id);
   if (!authorization) throw new HttpError(409, "Connect Jira with Atlassian first.");
   try {
     const sites = await getAtlassianAccessibleSites(authorization.accessToken);
@@ -232,7 +260,7 @@ export async function selectJiraOAuthProject(req: Request, res: Response): Promi
   const project = req.project!;
   requireRole(project.myRole, ["owner", "admin"]);
   const { cloudId, projectKey } = req.body as SelectJiraOAuthProjectInput;
-  const authorization = await loadJiraOAuthCredentials(project.id);
+  const authorization = await availableJiraOAuth(req, project.id);
   if (!authorization) throw new HttpError(409, "Connect Jira with Atlassian first.");
 
   let site: string;
@@ -258,6 +286,7 @@ export async function selectJiraOAuthProject(req: Request, res: Response): Promi
     jira_api_token_enc: null,
     jira_cloud_id: cloudId,
     jira_connected_at: new Date().toISOString(),
+    jira_oauth_user_id: authorization.accountPair ? req.user!.id : null,
   }).eq("id", project.id)
     .select("jira_site,jira_key,jira_email,jira_connected_at,jira_oauth_access_token_enc,jira_cloud_id")
     .single();

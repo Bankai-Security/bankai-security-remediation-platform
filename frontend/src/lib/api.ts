@@ -207,7 +207,13 @@ export interface JiraConnection {
   email: string | null;
   connectedAt: string | null;
   oauthAuthorized: boolean;
+  accountOAuthAvailable?: boolean;
 }
+
+export interface JiraAccountOAuthStatus { connected: boolean }
+export function getJiraAccountOAuthStatus(): Promise<JiraAccountOAuthStatus> { return apiFetch("/auth/jira/status", { method: "GET" }); }
+export function disconnectJiraAccountOAuth(): Promise<JiraAccountOAuthStatus> { return apiFetch("/auth/jira/disconnect", { method: "POST" }); }
+export function startJiraAccountOAuth(): Promise<{ authorizationUrl: string }> { return apiFetch("/auth/jira/authorize", { method: "GET" }); }
 
 export interface JiraOAuthSite { id: string; name: string; url: string; scopes: string[] }
 export interface JiraOAuthProject { id: string; key: string; name: string; projectTypeKey?: string }

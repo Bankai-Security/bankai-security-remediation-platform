@@ -85,7 +85,7 @@ declare global {
       connectJenkins: (input: { url: string; username: string; apiToken: string; repo: string }) => Promise<JenkinsConnection & { jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
       ensureJenkinsPipeline: (repo: string) => Promise<{ jobs: JenkinsJob[]; pipeline: { name: string; url: string; created: boolean } }>;
       scanJenkinsMultibranch: (jobUrl: string) => Promise<{ startedAt: number; previousTimestamp: number | string | null }>;
-      getJenkinsMultibranchIndexingStatus: (jobUrl: string, scan: { startedAt: number; previousTimestamp: number | string | null }, includeLog?: boolean) => Promise<{ supported: boolean; current: boolean; building: boolean; result: string | null; timestamp: number | string | null; summary: { rateLimitDelay: string | null; result: string | null } | null }>;
+      getJenkinsMultibranchIndexingStatus: (jobUrl: string, scan: { startedAt: number; previousTimestamp: number | string | null }, includeLog?: boolean) => Promise<{ supported: boolean; current: boolean; building: boolean; result: string | null; timestamp: number | string | null; summary: { rateLimitDelay: string | null; rateLimitDelayMs?: number; result: string | null } | null }>;
       listJenkinsJobs: (repo?: string) => Promise<JenkinsJob[]>;
       disconnectJenkins: () => Promise<void>;
       runJenkinsJob: (url: string, parameters?: Record<string, string>) => Promise<JenkinsJobProgress>;

@@ -177,7 +177,7 @@ export default function Settings() {
           setJiraOAuthError('Atlassian authorization did not complete. Check the Jira app callback and permissions, then try again.');
           window.history.replaceState({}, '', window.location.pathname);
         }
-        if (conn.oauthAuthorized && !conn.connected) {
+        if ((conn.oauthAuthorized || conn.accountOAuthAvailable) && !conn.connected) {
           getJiraOAuthSites(project.id).then(({ sites }) => {
             if (!cancelled) setJiraOAuthSites(sites);
           }).catch((err) => {
@@ -712,9 +712,9 @@ export default function Settings() {
         ) : (
           <div>
           {jiraOAuthError && <div className="settings-jira-error" role="alert">{jiraOAuthError}</div>}
-          {jira?.oauthAuthorized && !manualJiraFallback ? (
+          {(jira?.oauthAuthorized || jira?.accountOAuthAvailable) && !manualJiraFallback ? (
             <div>
-              <div className="ws-card-hint" style={{ marginBottom: 12 }}>Atlassian is authorized. Choose a site and project for this Bankai project.</div>
+              <div className="ws-card-hint" style={{ marginBottom: 12 }}>{jira.oauthAuthorized ? 'Atlassian is authorized for this project.' : 'Using your connected Atlassian account.'} Choose a site and project for this Bankai project.</div>
               <div className="settings-jira-grid">
                 <div className="settings-jira-field">
                   <label htmlFor="jira-oauth-site" className="settings-field-label">Jira site</label>

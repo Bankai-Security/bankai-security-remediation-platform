@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import GithubIcon from '../components/GithubIcon';
+import JiraIcon from '../components/JiraIcon';
 import {
   ApiError,
   changePassword,
@@ -10,12 +11,16 @@ import {
   deleteAccount,
   deleteTeam,
   disconnectGithubAccount,
+  disconnectJiraAccountOAuth,
   getGithubAccountStatus,
+  getJiraAccountOAuthStatus,
+  startJiraAccountOAuth,
   githubAuthorizeUrl,
   listProjects,
   listTeams,
   updateProfile,
   type GithubAccountStatus,
+  type JiraAccountOAuthStatus,
   type OrgSummary,
   type Project,
   type TeamSummary,
@@ -146,6 +151,10 @@ export default function AccountSettings() {
   const [githubAccount, setGithubAccount] = useState<GithubAccountStatus | null>(null);
   const [githubAccountBusy, setGithubAccountBusy] = useState(false);
   const [githubAccountBanner, setGithubAccountBanner] = useState<'connected' | 'error' | null>(null);
+  const [jiraAccount, setJiraAccount] = useState<JiraAccountOAuthStatus | null>(null);
+  const [jiraAccountBusy, setJiraAccountBusy] = useState(false);
+  const [jiraAccountBanner, setJiraAccountBanner] = useState<'connected' | 'error' | null>(null);
+  const [jiraAccountError, setJiraAccountError] = useState<string | null>(null);
 
   // The GitHub OAuth callback (backend/src/controllers/github-oauth.controller.ts)
   // redirects the whole page back here with ?github_account=connected|error —
@@ -155,11 +164,20 @@ export default function AccountSettings() {
     getGithubAccountStatus()
       .then(setGithubAccount)
       .catch(() => {});
+    getJiraAccountOAuthStatus().then(setJiraAccount).catch(() => {});
     const params = new URLSearchParams(window.location.search);
     const status = params.get('github_account');
     if (status === 'connected' || status === 'error') {
       setGithubAccountBanner(status);
       params.delete('github_account');
+      const rest = params.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    }
+    const jiraStatus = params.get('jira_account');
+    if (jiraStatus === 'connected' || jiraStatus === 'error') {
+      setJiraAccountBanner(jiraStatus);
+      getJiraAccountOAuthStatus().then(setJiraAccount).catch(() => {});
+      params.delete('jira_account');
       const rest = params.toString();
       window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
     }
@@ -176,6 +194,26 @@ export default function AccountSettings() {
       setGithubAccount(status);
     } finally {
       setGithubAccountBusy(false);
+    }
+  };
+
+  const handleDisconnectJiraAccount = async () => {
+    setJiraAccountBusy(true);
+    setJiraAccountError(null);
+    try { setJiraAccount(await disconnectJiraAccountOAuth()); }
+    catch (err) { setJiraAccountError(err instanceof ApiError ? err.message : 'Could not disconnect your Atlassian account.'); }
+    finally { setJiraAccountBusy(false); }
+  };
+
+  const handleConnectJiraAccount = async () => {
+    setJiraAccountBusy(true);
+    setJiraAccountError(null);
+    try {
+      const { authorizationUrl } = await startJiraAccountOAuth();
+      window.location.assign(authorizationUrl);
+    } catch (err) {
+      setJiraAccountError(err instanceof ApiError ? err.message : 'Could not start Atlassian authorization.');
+      setJiraAccountBusy(false);
     }
   };
 
@@ -412,6 +450,34 @@ export default function AccountSettings() {
             <div className="new-project-actions" style={{ marginTop: 16 }}>
               <button type="button" className="new-project-create-btn" onClick={handleConnectGithubAccount}>
                 Connect GitHub account
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="new-project-section" style={{ marginTop: 28 }}>
+          <h2 className="new-project-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <JiraIcon size={18} />
+            Jira Account
+          </h2>
+          <div className="account-settings-hint">
+            Connect your Atlassian account once, then choose an authorized Jira site and project from each project&apos;s Jira settings. Your encrypted authorization can be reused across projects.
+          </div>
+          {jiraAccount?.connected && <div className="account-settings-hint">Disconnecting this account can stop Jira sync for projects connected through this authorization.</div>}
+          {jiraAccountBanner === 'connected' && <div className="account-settings-success" role="status" style={{ marginTop: 12 }}>Atlassian account connected.</div>}
+          {jiraAccountBanner === 'error' && <div className="new-project-error" role="alert" style={{ marginTop: 12 }}>Could not connect your Atlassian account. Please try again.</div>}
+          {jiraAccountError && <div className="new-project-error" role="alert" style={{ marginTop: 12 }}>{jiraAccountError}</div>}
+          {jiraAccount?.connected ? (
+            <div className="new-project-actions" style={{ marginTop: 16 }}>
+              <span className="account-settings-profile-name" style={{ fontSize: 14 }}>Atlassian connected</span>
+              <button type="button" className="new-project-create-btn" style={{ background: 'var(--color-red)' }} onClick={() => void handleDisconnectJiraAccount()} disabled={jiraAccountBusy}>
+                {jiraAccountBusy ? 'Disconnecting…' : 'Disconnect account'}
+              </button>
+            </div>
+          ) : (
+            <div className="new-project-actions" style={{ marginTop: 16 }}>
+              <button type="button" className="new-project-create-btn" onClick={() => void handleConnectJiraAccount()} disabled={jiraAccountBusy}>
+                <JiraIcon size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />{jiraAccountBusy ? 'Opening Atlassian…' : 'Connect Jira account'}
               </button>
             </div>
           )}

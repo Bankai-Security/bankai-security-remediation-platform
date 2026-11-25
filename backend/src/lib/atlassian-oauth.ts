@@ -13,7 +13,7 @@ export interface AtlassianSite { id: string; name: string; url: string; scopes: 
 export interface AtlassianProject { id: string; key: string; name: string; projectTypeKey?: string }
 export interface AtlassianTokenPair { accessToken: string; refreshToken: string; expiresAt: string; scope?: string }
 
-interface OAuthState { projectId: string; userId: string; expiresAt: number; nonce: string; returnTo?: "onboarding" }
+interface OAuthState { projectId?: string; userId: string; target?: "account"; expiresAt: number; nonce: string; returnTo?: "onboarding" }
 
 function signingKey(): Buffer {
   const key = Buffer.from(env.TOKEN_ENC_KEY, "base64");
@@ -46,6 +46,22 @@ export function createJiraOAuthAuthorizationUrl(projectId: string, userId: strin
   return url.toString();
 }
 
+export function createJiraAccountOAuthAuthorizationUrl(userId: string): string {
+  if (!jiraOAuthConfigured()) throw new Error("Jira Cloud OAuth is not configured.");
+  const state: OAuthState = { userId, target: "account", expiresAt: Date.now() + 10 * 60_000, nonce: randomBytes(18).toString("base64url") };
+  const encoded = Buffer.from(JSON.stringify(state)).toString("base64url");
+  const signature = createHmac("sha256", signingKey()).update(encoded).digest("base64url");
+  const url = new URL(`${AUTH_ROOT}/authorize`);
+  url.searchParams.set("audience", "api.atlassian.com");
+  url.searchParams.set("client_id", env.ATLASSIAN_OAUTH_CLIENT_ID!);
+  url.searchParams.set("scope", OAUTH_SCOPES.join(" "));
+  url.searchParams.set("redirect_uri", jiraOAuthRedirectUri());
+  url.searchParams.set("state", `${encoded}.${signature}`);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("prompt", "consent");
+  return url.toString();
+}
+
 export function parseJiraOAuthState(value: string): OAuthState | null {
   const [encoded, provided, extra] = value.split(".");
   if (!encoded || !provided || extra) return null;
@@ -55,7 +71,7 @@ export function parseJiraOAuthState(value: string): OAuthState | null {
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
   try {
     const state = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as OAuthState;
-    if (!state.projectId || !state.userId || !state.nonce || !Number.isFinite(state.expiresAt) || state.expiresAt < Date.now()) return null;
+    if ((!state.projectId && !(state.target === "account" && state.userId)) || !state.userId || !state.nonce || !Number.isFinite(state.expiresAt) || state.expiresAt < Date.now()) return null;
     return state;
   } catch { return null; }
 }
@@ -127,9 +143,49 @@ export async function saveJiraOAuthTokens(supabase: SupabaseClient, projectId: s
     jira_api_token_enc: null,
     jira_cloud_id: null,
     jira_oauth_account_id: null,
+    jira_oauth_user_id: null,
     jira_connected_at: null,
   }).eq("id", projectId);
   if (error) throw new Error("Could not securely save the Jira authorization.");
+}
+
+export async function saveJiraAccountOAuthTokens(supabase: SupabaseClient, userId: string, pair: AtlassianTokenPair): Promise<void> {
+  const { error } = await supabase.from("profiles").update({
+    jira_oauth_access_token_enc: encrypt(pair.accessToken),
+    jira_oauth_refresh_token_enc: encrypt(pair.refreshToken),
+    jira_oauth_expires_at: pair.expiresAt,
+    jira_oauth_connected_at: new Date().toISOString(),
+  }).eq("id", userId);
+  if (error) throw new Error("Could not securely save the Jira account authorization.");
+}
+
+export async function loadJiraAccountOAuthCredentials(userId: string): Promise<{ accessToken: string; refreshToken: string; expiresAt: string } | null> {
+  const { data, error } = await supabaseAdmin.from("profiles")
+    .select("jira_oauth_access_token_enc,jira_oauth_refresh_token_enc,jira_oauth_expires_at")
+    .eq("id", userId).maybeSingle();
+  if (error) throw new Error("Could not load Jira account authorization state.");
+  const row = data as { jira_oauth_access_token_enc: string | null; jira_oauth_refresh_token_enc: string | null; jira_oauth_expires_at: string | null } | null;
+  if (!row?.jira_oauth_access_token_enc || !row.jira_oauth_refresh_token_enc || !row.jira_oauth_expires_at) return null;
+  let accessToken = decrypt(row.jira_oauth_access_token_enc);
+  let refreshToken = decrypt(row.jira_oauth_refresh_token_enc);
+  let expiresAt = row.jira_oauth_expires_at;
+  if (Date.parse(expiresAt) <= Date.now() + 30_000) {
+    let refresh = refreshes.get(`account:${userId}`);
+    if (!refresh) {
+      refresh = tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken });
+      refreshes.set(`account:${userId}`, refresh);
+      void refresh.finally(() => refreshes.delete(`account:${userId}`)).catch(() => undefined);
+    }
+    const pair = await refresh;
+    accessToken = pair.accessToken;
+    refreshToken = pair.refreshToken;
+    expiresAt = pair.expiresAt;
+    const { error: updateError } = await supabaseAdmin.from("profiles").update({
+      jira_oauth_access_token_enc: encrypt(accessToken), jira_oauth_refresh_token_enc: encrypt(refreshToken), jira_oauth_expires_at: expiresAt,
+    }).eq("id", userId);
+    if (updateError) throw new Error("Could not rotate the Jira account refresh token securely.");
+  }
+  return { accessToken, refreshToken, expiresAt };
 }
 
 export async function loadJiraOAuthCredentials(projectId: string): Promise<{
