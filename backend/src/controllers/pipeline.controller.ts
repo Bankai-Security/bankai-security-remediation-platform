@@ -5,7 +5,7 @@ import { requireRole } from "../lib/roles.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { enqueueJenkinsRetry } from "../lib/queue.js";
 import { publishJenkinsEvidence } from "../lib/jenkins-evidence.js";
-import { getBranchHeadSha, getPullRequest } from "../lib/github.js";
+import { getBranchHeadSha, getPullRequest, GithubApiError } from "../lib/github.js";
 import { loadGithubCreds } from "../lib/ticketing.js";
 
 const MAX_RETRIES = 2;
@@ -478,8 +478,19 @@ export async function retryJenkinsVerification(req: Request, res: Response): Pro
   // stored run; otherwise Bankai repeats the same false commit-mismatch result.
   const github = await loadGithubCreds(supabaseAdmin, req.project!.id);
   if (!github) throw new HttpError(409, "Reconnect GitHub before retrying verification for the updated pull request.");
-  const pr = await getPullRequest(github.creds, ticket.github_pr_number!);
-  const headSha = await getBranchHeadSha(github.creds, ticket.github_branch_name);
+  let pr: Awaited<ReturnType<typeof getPullRequest>>;
+  let headSha: string;
+  try {
+    pr = await getPullRequest(github.creds, ticket.github_pr_number!);
+    headSha = await getBranchHeadSha(github.creds, ticket.github_branch_name);
+  } catch (error) {
+    if (error instanceof GithubApiError) {
+      if (error.status === 401) throw new HttpError(409, "GitHub rejected the saved connection. Reconnect GitHub, then retry Jenkins verification.");
+      if (error.status === 403 || error.status === 429) throw new HttpError(503, "GitHub is temporarily blocking API requests for this repository. Wait for its rate limit to reset, then retry Jenkins verification.");
+      throw new HttpError(502, `Could not verify the pull request with GitHub. ${error.message}`);
+    }
+    throw new HttpError(503, "Could not reach GitHub to verify the pull request. Check the connection and retry Jenkins verification.");
+  }
   if (!pr || pr.state !== "open" || pr.headRef !== ticket.github_branch_name || !pr.headSha || pr.headSha.toLowerCase() !== headSha.toLowerCase()) {
     throw new HttpError(409, "The remediation pull request changed while Bankai was verifying it. Refresh the pull request and retry.");
   }
