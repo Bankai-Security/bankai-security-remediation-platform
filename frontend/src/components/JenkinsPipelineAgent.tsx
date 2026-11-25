@@ -73,10 +73,10 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         let indexingSupported = false;
         let indexingResult: string | null = null;
         let indexingSummary: { rateLimitDelay: string | null; rateLimitDelayMs?: number; result: string | null } | null = null;
-        // When a retry is resuming a persisted build, do not run multibranch
-        // indexing first. Indexing can block on the same GitHub API limiter
-        // and delay reconciliation of a result Jenkins already produced.
-        if (!run.manualRetry && !run.buildUrl && desktop.scanJenkinsMultibranch) {
+        // A retry with a persisted build should reconcile that build directly.
+        // Other retries need fresh indexing so Jenkins can rediscover a missing
+        // PR branch before Bankai looks for its job.
+        if (!run.buildUrl && desktop.scanJenkinsMultibranch) {
           const scan = await desktop.scanJenkinsMultibranch(scope);
           if (desktop.getJenkinsMultibranchIndexingStatus) {
             // Jenkins may be sleeping for a long GitHub API quota window. Extend
