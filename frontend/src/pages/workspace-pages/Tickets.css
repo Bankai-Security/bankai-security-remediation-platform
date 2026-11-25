@@ -286,23 +286,48 @@
 }
 
 .tickets-grid {
-  grid-template-columns: 100px 2.4fr 1.1fr 0.9fr 1fr 1fr 1fr;
+  grid-template-columns: 84px minmax(240px, 2.2fr) minmax(90px, 0.8fr) 90px minmax(120px, 1fr) minmax(210px, 1.55fr) 100px 116px 76px;
+  gap: 0 12px;
+}
+
+.tickets-table {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.tickets-table-head,
+.tickets-table-row {
+  min-width: 1220px;
+  box-sizing: border-box;
+}
+
+.tickets-table-row {
+  align-items: start;
+  min-height: 72px;
+}
+
+.tickets-table-row:hover {
+  background: var(--color-surface-alt);
 }
 
 .tickets-table-key {
+  padding-top: 4px;
   font-size: 12px;
   font-weight: 700;
   color: var(--color-blue);
 }
 
 .tickets-table-title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
 }
-.tickets-table-title-markdown { display: inline; }
+.tickets-table-title-markdown { display: -webkit-box; min-width: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .tickets-table-title-markdown > * { display: inline; margin: 0; font-size: inherit; font-weight: inherit; }
 .tickets-table-title-markdown ul,
 .tickets-table-title-markdown ol,
@@ -317,6 +342,54 @@
 .tickets-table-cvit {
   font-size: 12px;
   color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.tickets-table-severity,
+.tickets-table-status {
+  padding-top: 2px;
+}
+
+.tickets-table-ci {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.tickets-table-ci .tickets-pipeline-status {
+  margin: 0;
+  font-size: 10.5px;
+}
+
+.tickets-table-ci .tickets-pipeline-status-label,
+.tickets-table-ci .tickets-deployment-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tickets-table-ci .tickets-pipeline-status-actions {
+  gap: 5px;
+}
+
+.tickets-table-ci .tickets-pipeline-cancel {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.tickets-table-ci .tickets-pipeline-review-hint,
+.tickets-table-ci .tickets-pipeline-error {
+  margin-left: 0;
+  font-size: 10px;
+}
+
+.tickets-table-ci .tickets-pipeline-error {
+  display: -webkit-box;
+  max-height: 2.9em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .tickets-table-refs {
@@ -328,6 +401,23 @@
 }
 
 .tickets-table-due {
+  padding-top: 2px;
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.tickets-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .tickets-table-head,
+  .tickets-table-row {
+    min-width: 1150px;
+  }
 }

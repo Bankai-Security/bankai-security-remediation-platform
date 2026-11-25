@@ -493,9 +493,9 @@ export default function Tickets() {
           )}
 
           {view === 'table' && (
-            <section className="ws-table">
+            <section className="ws-table tickets-table">
               <div className="ws-table-head tickets-grid">
-                <span>Key</span><span>Title</span><span>Service</span><span>Severity</span><span>CVIT</span><span>Status</span><span className="ws-col-right">SLA due</span>
+                <span>Key</span><span>Finding</span><span>Service</span><span>Severity</span><span>CVIT</span><span>Build &amp; deployment</span><span>Status</span><span className="ws-col-right">SLA due</span><span>Links</span>
               </div>
               {filtered.map((t) => {
                 const sc = statusColor(t.status);
@@ -505,10 +505,20 @@ export default function Tickets() {
                     <span className="tickets-table-title">
                       <MarkdownText className="tickets-table-title-markdown">{t.title}</MarkdownText>
                       <RemediationProgress ticket={t} compact />
-                            <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(t.ciRunUrl && window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
-                              onRetry={editable && verificationProvider === 'jenkins' && canRetryJenkinsVerification(t) ? () => void handleRetryJenkins(t.id) : undefined} retrying={retryingPipelineId === t.id} />
+                    </span>
+                    <span className="tickets-table-service">{t.service}</span>
+                    <span className="tickets-table-severity"><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
+                    <span className="ws-mono tickets-table-cvit">{t.findingExternalId ?? '—'}</span>
+                    <span className="tickets-table-ci">
+                      <PipelineStatus ticket={t} onCancel={editable && (t.ciStatus === 'queued' || t.ciStatus === 'retrying' || (t.ciStatus === 'running' && Boolean(t.ciRunUrl && window.bankaiDesktop))) ? () => void handleCancelPipeline(t.id) : undefined}
+                        onRetry={editable && verificationProvider === 'jenkins' && canRetryJenkinsVerification(t) ? () => void handleRetryJenkins(t.id) : undefined} retrying={retryingPipelineId === t.id} />
                       <DeploymentStatus ticket={t} projectId={project?.id ?? ''} onCancel={editable && Boolean(window.bankaiDesktop) ? () => void handleStopDeployment(t.id) : undefined} />
-                      <span className="tickets-table-actions">
+                    </span>
+                    <span className="tickets-table-status"><span className="ws-dot-status" style={{ color: sc.color }}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}</span></span>
+                    <span className="ws-col-right tickets-table-due" style={{ color: t.overdue ? 'var(--color-error)' : 'var(--color-text-muted)' }}>
+                      {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
+                    </span>
+                    <span className="tickets-table-actions">
                         {t.jiraIssueUrl ? (
                           <a
                             href={t.jiraIssueUrl}
@@ -558,15 +568,6 @@ export default function Tickets() {
                             size={18}
                           />
                         )}
-
-                      </span>
-                    </span>
-                    <span className="tickets-table-service">{t.service}</span>
-                    <span><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
-                    <span className="ws-mono tickets-table-cvit">{t.findingExternalId ?? '—'}</span>
-                    <span className="ws-dot-status" style={{ color: sc.color }}><span className="ws-dot" style={{ background: sc.dot }} />{t.status}</span>
-                    <span className="ws-col-right tickets-table-due" style={{ color: t.overdue ? 'var(--color-error)' : 'var(--color-text-muted)' }}>
-                      {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
                     </span>
                   </div>
                 );
