@@ -213,7 +213,13 @@ export interface JiraConnection {
 export interface JiraAccountOAuthStatus { connected: boolean }
 export function getJiraAccountOAuthStatus(): Promise<JiraAccountOAuthStatus> { return apiFetch("/auth/jira/status", { method: "GET" }); }
 export function disconnectJiraAccountOAuth(): Promise<JiraAccountOAuthStatus> { return apiFetch("/auth/jira/disconnect", { method: "POST" }); }
-export function startJiraAccountOAuth(): Promise<{ authorizationUrl: string }> { return apiFetch("/auth/jira/authorize", { method: "GET" }); }
+export function startJiraAccountOAuth(returnTo?: "onboarding"): Promise<{ authorizationUrl: string }> {
+  return apiFetch(`/auth/jira/authorize${returnTo ? `?returnTo=${returnTo}` : ""}`, { method: "GET" });
+}
+export function getJiraAccountOAuthSites(): Promise<{ sites: JiraOAuthSite[] }> { return apiFetch("/auth/jira/sites", { method: "GET" }); }
+export function getJiraAccountOAuthProjects(cloudId: string): Promise<{ projects: JiraOAuthProject[] }> {
+  return apiFetch(`/auth/jira/projects?cloudId=${encodeURIComponent(cloudId)}`, { method: "GET" });
+}
 
 export interface JiraOAuthSite { id: string; name: string; url: string; scopes: string[] }
 export interface JiraOAuthProject { id: string; key: string; name: string; projectTypeKey?: string }

@@ -46,9 +46,9 @@ export function createJiraOAuthAuthorizationUrl(projectId: string, userId: strin
   return url.toString();
 }
 
-export function createJiraAccountOAuthAuthorizationUrl(userId: string): string {
+export function createJiraAccountOAuthAuthorizationUrl(userId: string, returnTo?: "onboarding"): string {
   if (!jiraOAuthConfigured()) throw new Error("Jira Cloud OAuth is not configured.");
-  const state: OAuthState = { userId, target: "account", expiresAt: Date.now() + 10 * 60_000, nonce: randomBytes(18).toString("base64url") };
+  const state: OAuthState = { userId, target: "account", ...(returnTo ? { returnTo } : {}), expiresAt: Date.now() + 10 * 60_000, nonce: randomBytes(18).toString("base64url") };
   const encoded = Buffer.from(JSON.stringify(state)).toString("base64url");
   const signature = createHmac("sha256", signingKey()).update(encoded).digest("base64url");
   const url = new URL(`${AUTH_ROOT}/authorize`);

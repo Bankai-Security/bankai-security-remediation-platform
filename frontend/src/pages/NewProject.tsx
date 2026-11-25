@@ -9,13 +9,16 @@ import {
   connectGithub,
   connectGithubFromAccount,
   createProject,
+  getJiraAccountOAuthProjects,
+  getJiraAccountOAuthSites,
+  getJiraAccountOAuthStatus,
   getJiraConnection,
   getJiraOAuthProjects,
   getJiraOAuthSites,
   getGithubAccountStatus,
   githubAuthorizeUrl,
   selectJiraOAuthProject,
-  startJiraOAuth,
+  startJiraAccountOAuth,
   type GithubAccountStatus,
   type JiraOAuthProject,
   type JiraOAuthSite,
@@ -50,6 +53,7 @@ export default function NewProject() {
   const oauthParams = new URLSearchParams(window.location.search);
   const oauthProjectId = oauthParams.get('projectId');
   const oauthResult = oauthParams.get('jiraOAuth');
+  const jiraAccountResult = oauthParams.get('jira_account');
   const [name, setName] = useState(() => readOnboardingDraft().name || '');
   const [description, setDescription] = useState(() => readOnboardingDraft().description || '');
   const [teamIds, setTeamIds] = useState<string[]>(() => readOnboardingDraft().teamIds || []);
@@ -60,12 +64,15 @@ export default function NewProject() {
 
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(oauthProjectId);
   const [jiraOAuthBusy, setJiraOAuthBusy] = useState(false);
-  const [jiraOAuthError, setJiraOAuthError] = useState<string | null>(oauthResult === 'error' ? 'Atlassian authorization did not complete. Try connecting Jira again.' : null);
+  const [jiraOAuthError, setJiraOAuthError] = useState<string | null>(oauthResult === 'error' || jiraAccountResult === 'error' ? 'Atlassian authorization did not complete. Try connecting Jira again.' : null);
   const [jiraOAuthSites, setJiraOAuthSites] = useState<JiraOAuthSite[]>([]);
   const [jiraOAuthProjects, setJiraOAuthProjects] = useState<JiraOAuthProject[]>([]);
   const [jiraOAuthCloudId, setJiraOAuthCloudId] = useState('');
   const [jiraOAuthProjectKey, setJiraOAuthProjectKey] = useState('');
   const [jiraConnected, setJiraConnected] = useState(false);
+  const [jiraProjectSelected, setJiraProjectSelected] = useState(false);
+  const [jiraAccountLoading, setJiraAccountLoading] = useState(true);
+  const [jiraAccountConnected, setJiraAccountConnected] = useState(false);
 
   const [repo, setRepo] = useState(() => readOnboardingDraft().repo || '');
   const [token, setToken] = useState('');
@@ -80,6 +87,25 @@ export default function NewProject() {
     getGithubAccountStatus()
       .then(setGithubAccount)
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (jiraAccountResult === 'connected' || jiraAccountResult === 'error') {
+      oauthParams.delete('jira_account');
+      const rest = oauthParams.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    }
+    getJiraAccountOAuthStatus().then(async ({ connected }) => {
+      if (cancelled) return;
+      setJiraAccountConnected(connected);
+      if (!connected) return;
+      const { sites } = await getJiraAccountOAuthSites();
+      if (!cancelled) setJiraOAuthSites(sites);
+    }).catch((err) => {
+      if (!cancelled && jiraAccountResult === 'connected') setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not load your Atlassian sites. Try again.');
+    }).finally(() => { if (!cancelled) setJiraAccountLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -149,6 +175,16 @@ export default function NewProject() {
         setCreatedProjectId(project.id);
       }
 
+      if (!jiraConnected && jiraOAuthCloudId && jiraOAuthProjectKey) {
+        try {
+          await selectJiraOAuthProject(projectId, { cloudId: jiraOAuthCloudId, projectKey: jiraOAuthProjectKey });
+          setJiraConnected(true);
+        } catch (err) {
+          setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not connect the selected Jira project.');
+          return;
+        }
+      }
+
       if (githubFieldsFilled) {
         try {
           if (usingRepoPicker) {
@@ -185,15 +221,8 @@ export default function NewProject() {
     setJiraOAuthBusy(true);
     setJiraOAuthError(null);
     try {
-      let projectId = createdProjectId;
       try { sessionStorage.setItem('bankai-new-project-draft', JSON.stringify({ name, description, teamIds, services, repo, baseBranch, useManualPat } satisfies OnboardingDraft)); } catch { /* OAuth can continue without restoring the form draft */ }
-      if (!projectId) {
-        if (!name.trim()) throw new Error('Add a project name before connecting Jira.');
-        const { project } = await createProject({ name: name.trim(), description: description.trim() || undefined, teamIds, services });
-        projectId = project.id;
-        setCreatedProjectId(projectId);
-      }
-      const { authorizationUrl } = await startJiraOAuth(projectId, 'onboarding');
+      const { authorizationUrl } = await startJiraAccountOAuth('onboarding');
       window.location.assign(authorizationUrl);
     } catch (err) {
       setJiraOAuthError(err instanceof Error ? err.message : 'Could not start Atlassian authorization.');
@@ -204,12 +233,15 @@ export default function NewProject() {
   const handleJiraOAuthSite = async (cloudId: string) => {
     setJiraOAuthCloudId(cloudId);
     setJiraOAuthProjectKey('');
+    setJiraProjectSelected(false);
     setJiraOAuthProjects([]);
-    if (!cloudId || !createdProjectId) return;
+    if (!cloudId) return;
     setJiraOAuthBusy(true);
     setJiraOAuthError(null);
     try {
-      const { projects } = await getJiraOAuthProjects(createdProjectId, cloudId);
+      const { projects } = createdProjectId
+        ? await getJiraOAuthProjects(createdProjectId, cloudId)
+        : await getJiraAccountOAuthProjects(cloudId);
       setJiraOAuthProjects(projects);
     } catch (err) {
       setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not load Jira projects for this site.');
@@ -217,7 +249,11 @@ export default function NewProject() {
   };
 
   const handleSelectJiraProject = async () => {
-    if (!createdProjectId || !jiraOAuthCloudId || !jiraOAuthProjectKey) return;
+    if (!jiraOAuthCloudId || !jiraOAuthProjectKey) return;
+    if (!createdProjectId) {
+      setJiraProjectSelected(true);
+      return;
+    }
     setJiraOAuthBusy(true);
     setJiraOAuthError(null);
     try {
@@ -227,6 +263,9 @@ export default function NewProject() {
       setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not connect the selected Jira project.');
     } finally { setJiraOAuthBusy(false); }
   };
+
+  const selectedJiraSite = jiraOAuthSites.find((site) => site.id === jiraOAuthCloudId);
+  const selectedJiraProject = jiraOAuthProjects.find((project) => project.key === jiraOAuthProjectKey);
 
   return (
     <div className="new-project-page">
@@ -417,7 +456,7 @@ export default function NewProject() {
               <div className="new-project-section-hint" role="status">Jira connected with Atlassian OAuth. Tickets will sync to the selected project.</div>
             ) : jiraOAuthSites.length > 0 ? (
               <>
-                <div className="new-project-section-hint">Atlassian is authorized. Choose the Jira site and project for this Bankai project.</div>
+                <div className="new-project-section-hint">Atlassian is authorized. Choose the Jira site and project to link when this Bankai project is created.</div>
                 <div className="new-project-jira-grid">
                   <div className="new-project-field">
                     <label htmlFor="onboarding-jira-site">Jira site</label>
@@ -428,7 +467,7 @@ export default function NewProject() {
                   </div>
                   <div className="new-project-field">
                     <label htmlFor="onboarding-jira-project">Jira project</label>
-                    <select id="onboarding-jira-project" className="new-project-input" value={jiraOAuthProjectKey} onChange={(event) => setJiraOAuthProjectKey(event.target.value)} disabled={!jiraOAuthCloudId || jiraOAuthBusy}>
+                    <select id="onboarding-jira-project" className="new-project-input" value={jiraOAuthProjectKey} onChange={(event) => { setJiraOAuthProjectKey(event.target.value); setJiraProjectSelected(false); }} disabled={!jiraOAuthCloudId || jiraOAuthBusy}>
                       <option value="">{jiraOAuthBusy ? 'Loading projects…' : 'Choose a project'}</option>
                       {jiraOAuthProjects.map((item) => <option key={item.id} value={item.key}>{item.key} · {item.name}</option>)}
                     </select>
@@ -436,10 +475,17 @@ export default function NewProject() {
                 </div>
                 <div className="new-project-actions">
                   <button type="button" className="new-project-create-btn" onClick={() => void handleSelectJiraProject()} disabled={!jiraOAuthCloudId || !jiraOAuthProjectKey || jiraOAuthBusy}>
-                    {jiraOAuthBusy ? 'Connecting…' : 'Connect selected Jira project'}
+                    {jiraOAuthBusy ? 'Loading…' : createdProjectId ? 'Connect selected Jira project' : 'Use selected Jira project'}
                   </button>
                 </div>
+                {jiraProjectSelected && selectedJiraSite && selectedJiraProject && (
+                  <div className="new-project-section-hint" role="status" style={{ marginTop: 10, marginBottom: 0 }}>
+                    <JiraIcon size={15} /> Selected {selectedJiraProject.key} · {selectedJiraProject.name} on {selectedJiraSite.name}. It will connect when you create the project.
+                  </div>
+                )}
               </>
+            ) : jiraAccountLoading ? (
+              <div className="new-project-section-hint" role="status">Checking your Jira account connection…</div>
             ) : (
               <>
                 <div className="new-project-actions">
@@ -448,7 +494,7 @@ export default function NewProject() {
                     {jiraOAuthBusy ? 'Opening Atlassian…' : 'Connect Jira with Atlassian'}
                   </button>
                 </div>
-                <div className="new-project-section-hint" style={{ marginTop: 12, marginBottom: 0 }}>Secure authorization using OAuth 2.0 (3LO). You’ll choose a site and project after authorizing.</div>
+                <div className="new-project-section-hint" style={{ marginTop: 12, marginBottom: 0 }}>{jiraAccountConnected ? 'No Jira sites are available to this account. Check your Atlassian access, or reconnect to refresh permissions.' : 'Secure authorization using OAuth 2.0 (3LO). After authorizing, you’ll return here to choose a site and project before creating the Bankai project.'}</div>
               </>
             )}
             {jiraOAuthError && <div className="new-project-error" role="alert">{jiraOAuthError}</div>}

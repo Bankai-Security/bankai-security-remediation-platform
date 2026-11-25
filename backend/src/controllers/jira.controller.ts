@@ -202,12 +202,15 @@ export async function jiraOAuthCallback(req: Request, res: Response): Promise<vo
   const state = typeof req.query.state === "string" ? parseJiraOAuthState(req.query.state) : null;
   if (!state) { res.status(400).send("Jira authorization could not be verified. Return to Bankai and try again."); return; }
   if (state.target === "account") {
-    if (typeof req.query.error === "string" || typeof req.query.code !== "string") { res.redirect(accountCallbackUrl("error")); return; }
+    const redirectAccount = (result: "connected" | "error") => state.returnTo === "onboarding"
+      ? res.redirect(new URL(`/projects/new?jira_account=${result}`, env.FRONTEND_ORIGIN).toString())
+      : res.redirect(accountCallbackUrl(result));
+    if (typeof req.query.error === "string" || typeof req.query.code !== "string") { redirectAccount("error"); return; }
     try {
       const pair = await exchangeJiraOAuthCode(req.query.code);
       await saveJiraAccountOAuthTokens(supabaseAdmin, state.userId, pair);
-      res.redirect(accountCallbackUrl("connected"));
-    } catch { res.redirect(accountCallbackUrl("error")); }
+      redirectAccount("connected");
+    } catch { redirectAccount("error"); }
     return;
   }
   if (!state.projectId) { res.status(400).send("Jira authorization could not be verified. Return to Bankai and try again."); return; }
