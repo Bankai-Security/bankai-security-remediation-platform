@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs');
 const { repositoryName, pipelineUrl, pipelineConfigXml, jobsForRepository } = require('./jenkins-multibranch.cjs');
+const { listJenkinsJobs: collectJenkinsJobs } = require('./jenkins-job-listing.cjs');
 const { isCurrentIndexing, indexingFinished, summarizeIndexingLog, rateLimitDelayMs } = require('./jenkins-indexing.cjs');
 
 // GitHub Branch Source can pause PR builds for many minutes while anonymous
@@ -132,31 +133,11 @@ async function getJenkinsJobParameters(credentials, jobUrl) {
   return { supported: true, reason: null, parameters };
 }
 async function listJenkinsJobs(credentials, repo = null) {
-  const jobs = [];
-  const visit = async (url, depth = 0, underMultibranch = false) => {
-    if (depth > 8 || jobs.length >= 300) return;
+  const jobs = await collectJenkinsJobs(credentials, async (url) => {
     const response = await jenkinsFetch(credentials, `${url.replace(/\/$/, '')}/api/json?tree=jobs[name,url,color,_class,properties[*]]`);
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected the credentials or they lack permission to read jobs.' : `Could not list Jenkins jobs (HTTP ${response.status}).`);
-    const data = await response.json();
-    for (const item of data.jobs || []) {
-      const jobClass = String(item._class || '').toLowerCase();
-      const isMultibranch = jobClass.includes('multibranch');
-      const isFolder = jobClass.includes('folder') || isMultibranch || jobClass.includes('computedfolder');
-      if (isMultibranch && item.url) jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: true });
-      if (isFolder && item.url) await visit(item.url, depth + 1, underMultibranch || isMultibranch);
-      else if (!isMultibranch) {
-        const properties = Array.isArray(item.properties) ? item.properties : [];
-        const branch = properties.find((property) => property && (property.branch || property._class?.includes('BranchJobProperty')))?.branch;
-        const head = branch?.head || {};
-        const pullRequestNumber = Number(head.number ?? head.id);
-        const headClass = String(head._class || '').toLowerCase();
-        const pullRequest = underMultibranch && (headClass.includes('pullrequest') || headClass.includes('prhead'));
-        jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: Boolean(pullRequest),
-          ...(pullRequest ? { ...(Number.isInteger(pullRequestNumber) && pullRequestNumber > 0 ? { pullRequestNumber } : {}), branchName: typeof head.name === 'string' ? head.name : undefined } : {}) });
-      }
-    }
-  };
-  await visit(credentials.url);
+    return response.json();
+  });
   return typeof repo === 'string' ? jobsForRepository(jobs, credentials.url, repo) : jobs;
 }
 function jenkinsCrumbHeaders(crumb) {

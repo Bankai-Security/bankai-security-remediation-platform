@@ -34,6 +34,7 @@
     "files": [
       "main.cjs",
       "jenkins-build-request.cjs",
+      "jenkins-job-listing.cjs",
       "jenkins-indexing.cjs",
       "jenkins-multibranch.cjs",
       "preload.cjs",
