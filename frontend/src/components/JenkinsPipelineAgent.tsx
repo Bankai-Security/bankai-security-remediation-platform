@@ -72,14 +72,16 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
         activeRun = run;
         let indexingSupported = false;
         let indexingResult: string | null = null;
-        let indexingSummary: { rateLimitDelay: string | null; result: string | null } | null = null;
+        let indexingSummary: { rateLimitDelay: string | null; rateLimitDelayMs?: number; result: string | null } | null = null;
         // When a retry is resuming a persisted build, do not run multibranch
         // indexing first. Indexing can block on the same GitHub API limiter
         // and delay reconciliation of a result Jenkins already produced.
         if (!run.manualRetry && !run.buildUrl && desktop.scanJenkinsMultibranch) {
           const scan = await desktop.scanJenkinsMultibranch(scope);
           if (desktop.getJenkinsMultibranchIndexingStatus) {
-            const indexingDeadline = Date.now() + 15 * 60_000;
+            // Jenkins may be sleeping for a long GitHub API quota window. Extend
+            // the observation deadline to cover the reported delay plus a buffer.
+            let indexingDeadline = Date.now() + 15 * 60_000;
             let sawActiveIndexing = false;
             while (!stopped && Date.now() < indexingDeadline) {
               const indexing = await desktop.getJenkinsMultibranchIndexingStatus(scope, scan);
@@ -87,7 +89,11 @@ export default function JenkinsPipelineAgent({ projectId }: { projectId: string 
               indexingSupported = true;
               const isThisScan = indexing.current || indexing.building;
               if (indexing.building) sawActiveIndexing = true;
-              if (indexing.summary) indexingSummary = indexing.summary;
+              if (indexing.summary) {
+                indexingSummary = indexing.summary;
+                const reportedDelay = indexing.summary.rateLimitDelayMs ?? 0;
+                if (reportedDelay > 0) indexingDeadline = Math.max(indexingDeadline, Date.now() + reportedDelay + 2 * 60_000);
+              }
               if (isThisScan && !indexing.building && indexing.result) {
                 indexingResult = indexing.result;
                 break;

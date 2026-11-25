@@ -3,7 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { buildEndpoint, resolveQueueUrl } = require('./jenkins-build-request.cjs');
 const { repositoryName, pipelineUrl, pipelineConfigXml, jobsForRepository } = require('./jenkins-multibranch.cjs');
-const { isCurrentIndexing, indexingFinished, summarizeIndexingLog } = require('./jenkins-indexing.cjs');
+const { isCurrentIndexing, indexingFinished, summarizeIndexingLog, rateLimitDelayMs } = require('./jenkins-indexing.cjs');
 
 // GitHub Branch Source can pause PR builds for many minutes while anonymous
 // GitHub API requests are rate limited. Keep observing the same Jenkins build
@@ -264,9 +264,12 @@ async function getJenkinsMultibranchIndexingStatus(credentials, jobUrl, scan = {
     timestamp,
     summary: null,
   };
-  if (isCurrentScan && (indexingFinished(status, isCurrentScan) || includeLog)) {
+  if (isCurrentScan && (indexingFinished(status, isCurrentScan) || includeLog || indexing.building)) {
     const log = await jenkinsFetch(credentials, `${indexingUrl}/consoleText`, { headers: { Accept: 'text/plain' } });
-    if (log.ok) status.summary = summarizeIndexingLog(await log.text());
+    if (log.ok) {
+      const summary = summarizeIndexingLog(await log.text());
+      status.summary = { ...summary, rateLimitDelayMs: rateLimitDelayMs(summary.rateLimitDelay) };
+    }
   }
   return status;
 }

@@ -27,4 +27,16 @@ function summarizeIndexingLog(log) {
   };
 }
 
-module.exports = { isCurrentIndexing, indexingFinished, summarizeIndexingLog };
+function rateLimitDelayMs(value) {
+  const text = String(value || '');
+  const units = { day: 86_400_000, hour: 3_600_000, min: 60_000, sec: 1_000 };
+  let total = 0;
+  for (const match of text.matchAll(/(\d+)\s*(day|hour|min|sec)(?:s)?/gi)) {
+    const unit = match[2].toLowerCase();
+    const key = unit.startsWith('day') ? 'day' : unit.startsWith('hour') ? 'hour' : unit.startsWith('min') ? 'min' : 'sec';
+    total += Number(match[1]) * units[key];
+  }
+  return total;
+}
+
+module.exports = { isCurrentIndexing, indexingFinished, summarizeIndexingLog, rateLimitDelayMs };
