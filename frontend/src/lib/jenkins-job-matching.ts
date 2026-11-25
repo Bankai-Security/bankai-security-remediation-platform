@@ -24,6 +24,18 @@ export function isJobNestedUnder(parentUrl: string, candidateUrl: string): boole
   }
 }
 
+function pullRequestNumberFromJobUrl(jobUrl: string): number | undefined {
+  try {
+    const path = decodeURIComponent(new URL(jobUrl).pathname);
+    const match = path.match(/(?:^|\/)job\/(?:pr|pull)[-_]?(\d+)(?:[-_/](?:head|merge))?(?:\/|$)/i);
+    if (!match) return undefined;
+    const number = Number(match[1]);
+    return Number.isInteger(number) && number > 0 ? number : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], selectedUrl: string, expectedNames: Set<string>, pullRequestNumber?: number): T | undefined {
   const isExpectedPullRequest = (job: JenkinsJobCandidate) => job.supportsPullRequests
     && (pullRequestNumber != null ? job.pullRequestNumber === pullRequestNumber : false);
@@ -33,7 +45,8 @@ export function findPullRequestJob<T extends JenkinsJobCandidate>(jobs: T[], sel
 
   const isExpectedName = (job: JenkinsJobCandidate) => expectedNames.has(job.name.toLowerCase());
   const isConventionalPullRequestName = (job: JenkinsJobCandidate) => pullRequestNumber != null
-    && [`pr-${pullRequestNumber}`, `pr_${pullRequestNumber}`, `pr/${pullRequestNumber}`, `pull-${pullRequestNumber}`].includes(job.name.toLowerCase());
+    && ( [`pr-${pullRequestNumber}`, `pr_${pullRequestNumber}`, `pr/${pullRequestNumber}`, `pull-${pullRequestNumber}`].includes(job.name.toLowerCase())
+      || pullRequestNumberFromJobUrl(job.url) === pullRequestNumber );
   const selectedPrJob = jobs.find((job) => isExpectedName(job) && job.supportsPullRequests && sameJobUrl(job.url, selectedUrl));
   if (selectedPrJob) return selectedPrJob;
 
