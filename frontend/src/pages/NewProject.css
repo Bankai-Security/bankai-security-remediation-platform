@@ -266,14 +266,6 @@ select.new-project-input {
   gap: 16px;
 }
 
-.new-project-jira-grid select.new-project-input {
-  height: 40px;
-  background-color: var(--color-surface);
-  border-color: var(--color-border-strong);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-
 .new-project-jira-grid + .new-project-actions {
   margin-top: 12px;
 }

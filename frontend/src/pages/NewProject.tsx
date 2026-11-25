@@ -4,6 +4,7 @@ import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import RepoPicker from '../components/RepoPicker';
 import JiraIcon from '../components/JiraIcon';
+import JiraOptionPicker from '../components/JiraOptionPicker';
 import {
   ApiError,
   connectGithub,
@@ -458,20 +459,28 @@ export default function NewProject() {
               <>
                 <div className="new-project-section-hint">Atlassian is authorized. Choose the Jira site and project to link when this Bankai project is created.</div>
                 <div className="new-project-jira-grid">
-                  <div className="new-project-field">
-                    <label htmlFor="onboarding-jira-site">Jira site</label>
-                    <select id="onboarding-jira-site" className="new-project-input" value={jiraOAuthCloudId} onChange={(event) => void handleJiraOAuthSite(event.target.value)} disabled={jiraOAuthBusy}>
-                      <option value="">Choose a Jira site</option>
-                      {jiraOAuthSites.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.url}</option>)}
-                    </select>
-                  </div>
-                  <div className="new-project-field">
-                    <label htmlFor="onboarding-jira-project">Jira project</label>
-                    <select id="onboarding-jira-project" className="new-project-input" value={jiraOAuthProjectKey} onChange={(event) => { setJiraOAuthProjectKey(event.target.value); setJiraProjectSelected(false); }} disabled={!jiraOAuthCloudId || jiraOAuthBusy}>
-                      <option value="">{jiraOAuthBusy ? 'Loading projects…' : 'Choose a project'}</option>
-                      {jiraOAuthProjects.map((item) => <option key={item.id} value={item.key}>{item.key} · {item.name}</option>)}
-                    </select>
-                  </div>
+                  <JiraOptionPicker
+                    id="onboarding-jira-site"
+                    label="Jira site"
+                    options={jiraOAuthSites.map((site) => ({ value: site.id, label: site.name, detail: site.url }))}
+                    value={jiraOAuthCloudId}
+                    placeholder="Choose a Jira site"
+                    searchPlaceholder="Search Jira sites…"
+                    emptyMessage="No Jira sites are available."
+                    disabled={jiraOAuthBusy}
+                    onChange={(cloudId) => void handleJiraOAuthSite(cloudId)}
+                  />
+                  <JiraOptionPicker
+                    id="onboarding-jira-project"
+                    label="Jira project"
+                    options={jiraOAuthProjects.map((project) => ({ value: project.key, label: `${project.key} · ${project.name}` }))}
+                    value={jiraOAuthProjectKey}
+                    placeholder={jiraOAuthBusy && jiraOAuthCloudId ? 'Loading projects…' : 'Choose a project'}
+                    searchPlaceholder="Search Jira projects…"
+                    emptyMessage="No Jira projects match this site."
+                    disabled={!jiraOAuthCloudId || jiraOAuthBusy}
+                    onChange={(projectKey) => { setJiraOAuthProjectKey(projectKey); setJiraProjectSelected(false); }}
+                  />
                 </div>
                 <div className="new-project-actions">
                   <button type="button" className="new-project-create-btn" onClick={() => void handleSelectJiraProject()} disabled={!jiraOAuthCloudId || !jiraOAuthProjectKey || jiraOAuthBusy}>

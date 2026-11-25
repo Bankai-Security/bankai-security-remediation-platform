@@ -1,0 +1,27 @@
+.jira-picker-field { min-width: 0; }
+.jira-picker-field > label { display: block; margin-bottom: 7px; color: var(--color-text-subtle); font-size: 12.5px; font-weight: 600; }
+.jira-option-picker { position: relative; z-index: 2; width: 100%; }
+.jira-option-picker:has(.jira-option-picker-menu) { z-index: 20; }
+.jira-option-picker-trigger { width: 100%; min-height: 42px; padding: 9px 13px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, background .15s ease; }
+.jira-option-picker-trigger:hover:not(:disabled) { border-color: var(--color-border-strong); background: var(--color-surface-alt); }
+.jira-option-picker-trigger:focus-visible, .jira-option-picker-trigger--open { outline: none; border-color: var(--color-blue); box-shadow: 0 0 0 3px rgba(59, 130, 246, .14); }
+.jira-option-picker-trigger:disabled { opacity: .58; cursor: not-allowed; }
+.jira-option-picker-trigger > span:first-child { min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.jira-option-picker-placeholder { color: var(--color-text-muted); font-weight: 500 !important; }
+.jira-option-picker-chevron { flex-shrink: 0; margin-left: auto; color: var(--color-text-muted); transition: transform .16s ease; }
+.jira-option-picker-chevron--open { transform: rotate(180deg); }
+.jira-option-picker-menu { position: absolute; top: calc(100% + 7px); left: 0; right: 0; z-index: 21; padding: 8px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 13px; background: var(--color-surface); box-shadow: 0 16px 40px rgba(15, 23, 42, .22), 0 3px 8px rgba(15, 23, 42, .1); animation: jira-option-menu-in .14s ease-out; }
+.jira-option-picker-search-wrap { min-height: 38px; margin-bottom: 6px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-alt); color: var(--color-text-faint); }
+.jira-option-picker-search { width: 100%; min-height: 36px; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--color-text); font: inherit; font-size: 12px; }
+.jira-option-picker-search:focus { outline: 0; border: 0; box-shadow: none; }
+.jira-option-picker-search::placeholder { color: var(--color-text-faint); }
+.jira-option-picker-options { max-height: min(280px, 40vh); overflow-y: auto; overscroll-behavior: contain; }
+.jira-option-picker-option { width: 100%; min-height: 46px; padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-radius: 9px; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.jira-option-picker-option:hover, .jira-option-picker-option--active { background: var(--color-fill); }
+.jira-option-picker-option--selected { color: var(--color-blue); }
+.jira-option-picker-option-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.jira-option-picker-option-name { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.jira-option-picker-option-detail { overflow: hidden; color: var(--color-text-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.jira-option-picker-option--selected .jira-option-picker-option-detail { color: var(--color-blue); opacity: .75; }
+.jira-option-picker-empty { padding: 15px 10px; color: var(--color-text-muted); font-size: 12px; text-align: center; }
+@keyframes jira-option-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
