@@ -20,3 +20,18 @@ test('descends into a multibranch pipeline and identifies its PR branch jobs', a
   assert.equal(jobs[1].pullRequestNumber, 16);
   assert.equal(jobs[1].branchName, 'remediation/sql-injection');
 });
+
+test('recognizes a discovered PR-10 job when Jenkins omits its branch metadata', async () => {
+  const responses = new Map([
+    ['https://jenkins.example/', { jobs: [
+      { name: 'bankai-owner-repo', url: 'https://jenkins.example/job/bankai-owner-repo/', _class: 'org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject' },
+    ] }],
+    ['https://jenkins.example/job/bankai-owner-repo/', { jobs: [
+      { name: 'PR-10', url: 'https://jenkins.example/job/bankai-owner-repo/job/PR-10/', _class: 'org.jenkinsci.plugins.workflow.job.WorkflowJob', properties: [] },
+    ] }],
+  ]);
+  const jobs = await listJenkinsJobs({ url: 'https://jenkins.example/' }, async (url) => responses.get(url));
+  assert.equal(jobs[1].supportsPullRequests, true);
+  assert.equal(jobs[1].pullRequestNumber, 10);
+  assert.equal(jobs[1].branchName, 'PR-10');
+});

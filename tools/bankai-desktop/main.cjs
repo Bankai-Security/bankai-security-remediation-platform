@@ -134,7 +134,7 @@ async function getJenkinsJobParameters(credentials, jobUrl) {
 }
 async function listJenkinsJobs(credentials, repo = null) {
   const jobs = await collectJenkinsJobs(credentials, async (url) => {
-    const response = await jenkinsFetch(credentials, `${url.replace(/\/$/, '')}/api/json?tree=jobs[name,url,color,_class,properties[*]]`);
+    const response = await jenkinsFetch(credentials, `${url.replace(/\/$/, '')}/api/json?tree=jobs[name,url,color,_class,properties[_class,branch[head[_class,name,id,number]]]]`);
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Jenkins rejected the credentials or they lack permission to read jobs.' : `Could not list Jenkins jobs (HTTP ${response.status}).`);
     return response.json();
   });

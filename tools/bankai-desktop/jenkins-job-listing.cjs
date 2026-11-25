@@ -14,11 +14,16 @@ async function listJenkinsJobs(credentials, fetchJobs) {
         const properties = Array.isArray(item.properties) ? item.properties : [];
         const branch = properties.find((property) => property && (property.branch || property._class?.includes('BranchJobProperty')))?.branch;
         const head = branch?.head || {};
-        const pullRequestNumber = Number(head.number ?? head.id);
+        const namePullRequestNumber = String(item.name || '').match(/^(?:pr|pull)[-_]?(\d+)$/i)?.[1];
+        const pullRequestNumber = Number(head.number ?? head.id ?? namePullRequestNumber);
         const headClass = String(head._class || '').toLowerCase();
-        const pullRequest = underMultibranch && (headClass.includes('pullrequest') || headClass.includes('prhead'));
+        // Some Jenkins controllers omit BranchJobProperty from the jobs API
+        // response. GitHub Branch Source still gives PR jobs the stable
+        // PR-<number> name, so use it as a scoped fallback.
+        const pullRequest = underMultibranch && (headClass.includes('pullrequest') || headClass.includes('prhead')
+          || Number.isInteger(pullRequestNumber) && pullRequestNumber > 0 && Boolean(namePullRequestNumber));
         jobs.push({ name: item.name, url: item.url, color: item.color || '', supportsPullRequests: Boolean(pullRequest),
-          ...(pullRequest ? { ...(Number.isInteger(pullRequestNumber) && pullRequestNumber > 0 ? { pullRequestNumber } : {}), branchName: typeof head.name === 'string' ? head.name : undefined } : {}) });
+          ...(pullRequest ? { ...(Number.isInteger(pullRequestNumber) && pullRequestNumber > 0 ? { pullRequestNumber } : {}), branchName: typeof head.name === 'string' ? head.name : item.name } : {}) });
       }
     }
   };

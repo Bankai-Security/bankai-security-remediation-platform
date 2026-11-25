@@ -53,5 +53,13 @@ describe("findPullRequestJob", () => {
     expect(findPullRequestJob(metadataJobs, metadataJobs[0].url, new Set(["remediation/security-fix"]), 4)).toBe(metadataJobs[1]);
     expect(findPullRequestJob(metadataJobs, metadataJobs[0].url, new Set(), 5)).toBeUndefined();
   });
+
+  it("matches a nested PR-10 job when Jenkins omits the PR metadata", () => {
+    const incompleteMetadataJobs = [
+      jobs[0]!,
+      { name: "PR-10", url: "http://localhost:8080/job/bankai-scan-fixtures/job/PR-10/", supportsPullRequests: false },
+    ];
+    expect(findPullRequestJob(incompleteMetadataJobs, jobs[0]!.url, new Set(["pr-10"]), 10)).toBe(incompleteMetadataJobs[1]);
+  });
 });
 
