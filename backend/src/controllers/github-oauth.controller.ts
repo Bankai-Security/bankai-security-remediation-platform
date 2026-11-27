@@ -121,6 +121,20 @@ export async function githubAccountCallback(req: Request, res: Response): Promis
       return;
     }
 
+    // Projects connected through the account repo picker keep a project-level
+    // encrypted copy for background workers. Refresh that copy whenever the
+    // account is reauthorized so a rotated/revoked OAuth token does not leave
+    // every linked project requiring a separate reconnect.
+    const { error: projectError } = await supabaseAdmin
+      .from("projects")
+      .update({ github_token_enc: encrypt(token) })
+      .eq("github_oauth_user_id", verifiedState.userId);
+    if (projectError) {
+      logger.error({ err: projectError, userId: verifiedState.userId }, "Could not refresh GitHub credentials for linked projects");
+      redirectTo("error");
+      return;
+    }
+
     redirectTo("connected");
   } catch (err) {
     logger.error({ err, userId: verifiedState.userId }, "GitHub OAuth callback failed");

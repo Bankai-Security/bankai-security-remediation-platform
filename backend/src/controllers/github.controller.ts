@@ -251,9 +251,10 @@ async function persistGithubConnection(input: {
   actor: { id: string; label: string };
   repo: string;
   token: string;
+  githubOAuthUserId?: string | undefined;
   baseBranch?: string | undefined;
 }): Promise<{ connection: ReturnType<typeof toPublicConnection>; webhookSecret: string | null }> {
-  const { supabase, projectId, actor, repo, token, baseBranch } = input;
+  const { supabase, projectId, actor, repo, token, baseBranch, githubOAuthUserId } = input;
 
   let defaultBranch: string;
   let initialHeadSha: string;
@@ -312,6 +313,7 @@ async function persistGithubConnection(input: {
     .update({
       github_repo: repo,
       github_token_enc: encrypt(token),
+      github_oauth_user_id: githubOAuthUserId ?? null,
       github_default_branch: defaultBranch,
       github_connected_at: new Date().toISOString(),
       github_webhook_secret_enc: webhookSecret ? encrypt(webhookSecret) : null,
@@ -431,6 +433,7 @@ export async function connectGithubFromAccount(req: Request, res: Response): Pro
     actor: { id: req.user!.id, label: displayNameFromUser(req.user!) },
     repo,
     token: decrypt(tokenEnc),
+    githubOAuthUserId: req.user!.id,
     baseBranch,
   });
 
