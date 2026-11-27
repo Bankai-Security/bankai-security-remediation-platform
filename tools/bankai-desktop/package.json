@@ -8,6 +8,7 @@
     "start": "electron .",
     "start:dev": "electron .",
     "start:local": "cross-env BANKAI_WEB_URL=http://localhost:5173 electron .",
+    "test": "node --test *.test.cjs",
     "package:win": "electron-builder --win nsis",
     "package:mac": "electron-builder --mac dmg",
     "package:linux": "electron-builder --linux AppImage"

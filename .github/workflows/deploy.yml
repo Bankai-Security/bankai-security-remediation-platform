@@ -43,3 +43,15 @@ jobs:
       # (e.g. push the built images, deploy to a container host, etc).
       # - name: Deploy
       #   run: echo "add deployment steps here"
+
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/bankai-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test

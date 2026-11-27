@@ -22,8 +22,21 @@ test('extracts a rate-limit delay and final result without returning raw logs', 
   assert.deepEqual(summary, { rateLimitDelay: '7 min 9 sec', result: 'SUCCESS' });
 });
 
+test('extracts delays from GitHub Branch Source rate-limit log formats', () => {
+  assert.deepEqual(summarizeIndexingLog('GitHub API rate limit exceeded. Sleeping for 1 hr 12 min.\nFinished: SUCCESS'), {
+    rateLimitDelay: '1 hr 12 min', result: 'SUCCESS',
+  });
+  assert.deepEqual(summarizeIndexingLog('Secondary rate limit reached\nRetry later\nSleeping for 45 sec.\nFinished: SUCCESS'), {
+    rateLimitDelay: '45 sec', result: 'SUCCESS',
+  });
+});
+
 test('parses Jenkins limiter sleep durations for discovery polling', () => {
   assert.equal(rateLimitDelayMs('7 min 9 sec'), 429_000);
   assert.equal(rateLimitDelayMs('1 hour 2 min'), 3_720_000);
   assert.equal(rateLimitDelayMs(null), 0);
+});
+
+test('parses the hour abbreviation used in GitHub rate-limit logs', () => {
+  assert.equal(rateLimitDelayMs('1 hr 12 min'), 4_320_000);
 });
