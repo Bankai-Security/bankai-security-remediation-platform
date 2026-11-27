@@ -152,8 +152,8 @@ body {
 }
 
 @keyframes bankai-loading-pulse {
-  0%, 100% { opacity: .55; transform: scale(.92) rotate(-4deg); }
-  50% { opacity: 1; transform: scale(1.04) rotate(4deg); }
+  0%, 100% { opacity: .55; transform: scale(.92); }
+  50% { opacity: 1; transform: scale(1.04); }
 }
 
 @media (prefers-reduced-motion: reduce) {
