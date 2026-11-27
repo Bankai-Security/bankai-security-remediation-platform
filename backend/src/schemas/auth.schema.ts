@@ -55,6 +55,12 @@ export const resetPasswordSchema = z.object({
 
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 
+export const desktopAuthExchangeSchema = z.object({
+  code: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "This desktop sign-in link is invalid or expired."),
+});
+
+export type DesktopAuthExchangeInput = z.infer<typeof desktopAuthExchangeSchema>;
+
 export const deleteAccountSchema = z.object({
   // Optional: SSO-only accounts have no password to confirm with (see
   // auth.controller.ts's deleteAccount, which requires it only when the

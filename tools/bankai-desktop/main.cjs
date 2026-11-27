@@ -496,12 +496,26 @@ function projectFromDeepLink(value) {
     return link.protocol === 'bankai:' && link.hostname === 'open' && id && /^[\w-]+$/.test(id) ? id : null;
   } catch { return null; }
 }
+function authFromDeepLink(value) {
+  try {
+    const link = new URL(value);
+    if (link.protocol !== 'bankai:' || link.hostname !== 'auth') return null;
+    if (link.searchParams.get('error') === '1') return { error: true };
+    const code = link.searchParams.get('code');
+    return code && /^[A-Za-z0-9_-]{43}$/.test(code) ? { code } : null;
+  } catch { return null; }
+}
+function desktopAuthRoute(result) {
+  const query = new URLSearchParams(result.code ? { code: result.code } : { error: '1' });
+  return `/auth/desktop-callback?${query.toString()}`;
+}
 function desktopPageUrl(route) {
   const target = new URL(route, WEB_URL);
   target.searchParams.set('_bankaiDesktopLaunch', String(Date.now()));
   return target.toString();
 }
 let startupProject = process.argv.map(projectFromDeepLink).find(Boolean) || process.argv.find((arg) => arg.startsWith('--project='))?.slice('--project='.length);
+let startupAuthResult = process.argv.map(authFromDeepLink).find(Boolean) || null;
 
 function allowedBankaiUrl(value) {
   try {
@@ -537,7 +551,8 @@ function createMainWindow() {
   });
   hardenBankaiWindow(mainWindow);
   const projectId = startupProject;
-  const route = projectId && /^[\w-]+$/.test(projectId) ? `/workspace/${projectId}/jenkins` : '/login';
+  const route = startupAuthResult ? desktopAuthRoute(startupAuthResult)
+    : projectId && /^[\w-]+$/.test(projectId) ? `/workspace/${projectId}/jenkins` : '/';
   mainWindow.loadURL(desktopPageUrl(route));
   mainWindow.on('closed', () => { closeJenkinsBrowser(); mainWindow = undefined; });
 }
@@ -625,7 +640,8 @@ ipcMain.handle('bankai:jenkins-browser-close', (event) => {
 ipcMain.handle('bankai:open-external', (event, value) => {
   assertBankaiSender(event);
   const url = new URL(value);
-  if (url.protocol !== 'https:') throw new Error('Only HTTPS links can be opened externally.');
+  const localHttp = isLocalDev && url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !localHttp) || url.username || url.password) throw new Error('Only HTTPS links or local development links can be opened externally.');
   return shell.openExternal(url.toString());
 });
 ipcMain.handle('bankai:jenkins-get-connection', async (event) => {
@@ -691,9 +707,18 @@ ipcMain.handle('bankai:jenkins-get-job-parameters', async (event, url) => {
 });
 app.setAsDefaultProtocolClient('bankai');
 app.on('second-instance', (_event, argv) => {
+  const authResult = argv.map(authFromDeepLink).find(Boolean);
+  if (authResult) mainWindow?.loadURL(desktopPageUrl(desktopAuthRoute(authResult)));
   const projectId = argv.map(projectFromDeepLink).find(Boolean);
-  if (projectId && /^[\w-]+$/.test(projectId)) mainWindow?.loadURL(desktopPageUrl(`/workspace/${projectId}/jenkins`));
+  if (!authResult && projectId && /^[\w-]+$/.test(projectId)) mainWindow?.loadURL(desktopPageUrl(`/workspace/${projectId}/jenkins`));
   mainWindow?.focus();
+});
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  const authResult = authFromDeepLink(url);
+  if (!authResult) return;
+  startupAuthResult = authResult;
+  if (mainWindow) mainWindow.loadURL(desktopPageUrl(desktopAuthRoute(authResult)));
 });
 app.whenReady().then(() => {
   createMainWindow();

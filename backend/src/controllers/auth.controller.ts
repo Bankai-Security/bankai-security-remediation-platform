@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import type { User } from "@supabase/supabase-js";
 import type { Request, Response } from "express";
 import { env } from "../env.js";
 import { clearAuthCookies, readAuthCookies, setAuthCookies } from "../lib/auth-cookies.js";
+import { decrypt } from "../lib/crypto.js";
 import { assertArcjetAllowed } from "../lib/enforce-arcjet.js";
 import { forgotPasswordArcjet, loginArcjet, signupArcjet } from "../lib/arcjet.js";
 import { HttpError } from "../lib/http-error.js";
@@ -9,6 +11,7 @@ import { createRequestSupabaseClient, createUserScopedSupabaseClient, supabaseAd
 import type {
   ChangePasswordInput,
   DeleteAccountInput,
+  DesktopAuthExchangeInput,
   ForgotPasswordInput,
   LoginInput,
   ResetPasswordInput,
@@ -212,6 +215,30 @@ export function me(req: Request, res: Response): void {
     throw new HttpError(401, "Not authenticated");
   }
   res.status(200).json({ user: toPublicUser(req.user) });
+}
+
+export async function exchangeDesktopAuthTransfer(req: Request, res: Response): Promise<void> {
+  const { code } = req.body as DesktopAuthExchangeInput;
+  const codeHash = createHash("sha256").update(code).digest("hex");
+  const { data, error } = await supabaseAdmin.rpc("consume_desktop_auth_transfer", { p_code_hash: codeHash });
+  if (error) {
+    throw new HttpError(500, "Could not complete desktop sign-in. Please try again.");
+  }
+  const transfer = Array.isArray(data) ? data[0] as {
+    access_token_enc: string;
+    refresh_token_enc: string;
+    expires_in: number;
+    is_new_user: boolean;
+  } | undefined : undefined;
+  if (!transfer) throw new HttpError(401, "This desktop sign-in link has expired or was already used. Please sign in again.");
+
+  const accessToken = decrypt(transfer.access_token_enc);
+  const refreshToken = decrypt(transfer.refresh_token_enc);
+  const { data: userData, error: userError } = await createRequestSupabaseClient().auth.getUser(accessToken);
+  if (userError || !userData.user) throw new HttpError(401, "This desktop sign-in has expired. Please sign in again.");
+
+  setAuthCookies(res, { accessToken, refreshToken, expiresIn: transfer.expires_in });
+  res.status(200).json({ user: toPublicUser(userData.user), needsOnboarding: transfer.is_new_user });
 }
 
 export async function updateProfile(req: Request, res: Response): Promise<void> {

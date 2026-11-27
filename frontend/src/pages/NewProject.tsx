@@ -18,6 +18,7 @@ import {
   getJiraOAuthSites,
   getGithubAccountStatus,
   githubAuthorizeUrl,
+  openOAuthUrl,
   selectJiraOAuthProject,
   startJiraAccountOAuth,
   type GithubAccountStatus,
@@ -224,7 +225,7 @@ export default function NewProject() {
     try {
       try { sessionStorage.setItem('bankai-new-project-draft', JSON.stringify({ name, description, teamIds, services, repo, baseBranch, useManualPat } satisfies OnboardingDraft)); } catch { /* OAuth can continue without restoring the form draft */ }
       const { authorizationUrl } = await startJiraAccountOAuth('onboarding');
-      window.location.assign(authorizationUrl);
+      await openOAuthUrl(authorizationUrl);
     } catch (err) {
       setJiraOAuthError(err instanceof Error ? err.message : 'Could not start Atlassian authorization.');
       setJiraOAuthBusy(false);
@@ -558,7 +559,11 @@ export default function NewProject() {
                   Generate a{' '}
                   <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer">personal access token</a>{' '}
                   with contents read/write access to the repo, or{' '}
-                  <a href={githubAuthorizeUrl()}>connect your GitHub account</a> to pick from a list instead.
+                  <a href={githubAuthorizeUrl()} onClick={(event) => {
+                    if (!window.bankaiDesktop) return;
+                    event.preventDefault();
+                    void openOAuthUrl(githubAuthorizeUrl()).catch(() => setGithubError('Could not open your browser for GitHub authorization.'));
+                  }}>connect your GitHub account</a> to pick from a list instead.
                 </div>
                 <div className="new-project-jira-grid">
                   <div className="new-project-field">

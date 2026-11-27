@@ -136,6 +136,30 @@ body {
   min-height: 100vh;
 }
 
+.bankai-loading-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  overflow: hidden;
+  background: #111214;
+}
+
+.bankai-loading-mark {
+  width: 58px;
+  height: 48px;
+  object-fit: contain;
+  animation: bankai-loading-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes bankai-loading-pulse {
+  0%, 100% { opacity: .55; transform: scale(.92) rotate(-4deg); }
+  50% { opacity: 1; transform: scale(1.04) rotate(4deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bankai-loading-mark { animation: none; }
+}
+
 a {
   color: var(--color-blue);
   text-decoration: none;

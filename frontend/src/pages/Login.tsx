@@ -4,7 +4,7 @@ import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import GithubIcon from '../components/GithubIcon';
 import GoogleIcon from '../components/GoogleIcon';
-import { ApiError, login, ssoAuthorizeUrl } from '../lib/api';
+import { ApiError, login, openOAuthUrl, ssoAuthorizeUrl } from '../lib/api';
 import { useCurrentUser } from '../lib/auth-context';
 import './AuthLayout.css';
 
@@ -19,6 +19,12 @@ export default function Login() {
     searchParams.get('sso_error') ? 'Could not sign you in. Please try again.' : null,
   );
   const [submitting, setSubmitting] = useState(false);
+
+  const startSso = (provider: 'google' | 'github') => {
+    const desktop = Boolean(window.bankaiDesktop);
+    const url = ssoAuthorizeUrl(provider, desktop);
+    void openOAuthUrl(url).catch(() => setError(`Could not open your browser for ${provider === 'github' ? 'GitHub' : 'Google'} sign-in.`));
+  };
 
   useEffect(() => {
     if (!loading && user) navigate('/projects', { replace: true });
@@ -57,11 +63,11 @@ export default function Login() {
         <div className="auth-subtitle">Sign in to continue to Bankai.</div>
 
         <div className="auth-oauth-row">
-          <button type="button" className="auth-oauth-btn" onClick={() => { window.location.href = ssoAuthorizeUrl('google'); }}>
+          <button type="button" className="auth-oauth-btn" onClick={() => startSso('google')}>
             <GoogleIcon size={16} />
             Continue with Google
           </button>
-          <button type="button" className="auth-oauth-btn" onClick={() => { window.location.href = ssoAuthorizeUrl('github'); }}>
+          <button type="button" className="auth-oauth-btn" onClick={() => startSso('github')}>
             <GithubIcon size={16} />
             Continue with GitHub
           </button>

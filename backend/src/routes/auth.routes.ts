@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   changePassword,
   deleteAccount,
+  exchangeDesktopAuthTransfer,
   forgotPassword,
   login,
   logout,
@@ -17,6 +18,7 @@ import { validateBody } from "../middleware/validate-body.js";
 import {
   changePasswordSchema,
   deleteAccountSchema,
+  desktopAuthExchangeSchema,
   forgotPasswordSchema,
   loginSchema,
   resetPasswordSchema,
@@ -33,6 +35,7 @@ authRouter.post("/signup", validateBody(signupSchema), signup);
 authRouter.post("/login", validateBody(loginSchema), login);
 authRouter.post("/forgot-password", validateBody(forgotPasswordSchema), forgotPassword);
 authRouter.post("/reset-password", baselineProtect, validateBody(resetPasswordSchema), resetPassword);
+authRouter.post("/desktop/exchange", baselineProtect, validateBody(desktopAuthExchangeSchema), exchangeDesktopAuthTransfer);
 authRouter.post("/logout", logout);
 authRouter.post("/refresh", refresh);
 authRouter.get("/session", requireAuth, me);

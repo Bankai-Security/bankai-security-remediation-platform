@@ -17,6 +17,7 @@ import {
   getGithubConnection,
   getJiraConnection,
   getJiraOAuthProjects,
+  openOAuthUrl,
   getJiraOAuthSites,
   getScan,
   inviteMember,
@@ -207,7 +208,7 @@ export default function Settings() {
     setJiraOAuthError(null);
     try {
       const { authorizationUrl } = await startJiraOAuth(project.id);
-      window.location.assign(authorizationUrl);
+      await openOAuthUrl(authorizationUrl);
     } catch (err) {
       setJiraOAuthError(err instanceof ApiError ? err.message : 'Could not start Atlassian authorization.');
       setJiraOAuthBusy(false);

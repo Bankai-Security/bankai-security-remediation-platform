@@ -4,7 +4,7 @@ import bankaiMark from '../assets/bankai-mark.svg';
 import bankaiWordmark from '../assets/bankai-wordmark.svg';
 import GithubIcon from '../components/GithubIcon';
 import GoogleIcon from '../components/GoogleIcon';
-import { ApiError, signup, ssoAuthorizeUrl } from '../lib/api';
+import { ApiError, openOAuthUrl, signup, ssoAuthorizeUrl } from '../lib/api';
 import { useCurrentUser } from '../lib/auth-context';
 import './AuthLayout.css';
 
@@ -17,6 +17,12 @@ export default function SignUp() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const startSso = (provider: 'google' | 'github') => {
+    const desktop = Boolean(window.bankaiDesktop);
+    const url = ssoAuthorizeUrl(provider, desktop);
+    void openOAuthUrl(url).catch(() => setError(`Could not open your browser for ${provider === 'github' ? 'GitHub' : 'Google'} sign-in.`));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,11 +65,11 @@ export default function SignUp() {
         ) : (
           <>
             <div className="auth-oauth-row">
-              <button type="button" className="auth-oauth-btn" onClick={() => { window.location.href = ssoAuthorizeUrl('google'); }}>
+              <button type="button" className="auth-oauth-btn" onClick={() => startSso('google')}>
                 <GoogleIcon size={16} />
                 Continue with Google
               </button>
-              <button type="button" className="auth-oauth-btn" onClick={() => { window.location.href = ssoAuthorizeUrl('github'); }}>
+              <button type="button" className="auth-oauth-btn" onClick={() => startSso('github')}>
                 <GithubIcon size={16} />
                 Continue with GitHub
               </button>

@@ -15,9 +15,15 @@
       content="Bankai turns raw vulnerability scan output into merged, CI-verified pull requests. Ingest, triage, ticket, fix, verify."
     />
     <title>Bankai</title>
+    <style>
+      .bankai-boot-screen{display:grid;min-height:100vh;place-items:center;background:#111214}
+      .bankai-boot-mark{width:58px;height:48px;animation:bankai-boot-pulse 1.5s ease-in-out infinite}
+      @keyframes bankai-boot-pulse{0%,100%{opacity:.55;transform:scale(.92) rotate(-4deg)}50%{opacity:1;transform:scale(1.04) rotate(4deg)}}
+      @media(prefers-reduced-motion:reduce){.bankai-boot-mark{animation:none}}
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div class="bankai-boot-screen" role="status" aria-label="Loading Bankai"><svg class="bankai-boot-mark" viewBox="0 0 178 147" fill="none" aria-hidden="true"><path d="M0.928467 144.005C65.9285 118.005 80.4285 78.0055 96.4285 0.505493C91.9793 70.538 96.4285 120.505 176.428 144.005C96.4285 120.505 76.4285 130.005 0.928467 144.005Z" fill="white" stroke="white" stroke-width="5" stroke-linejoin="bevel"></path></svg></div></div>
     <script src="/runtime-config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

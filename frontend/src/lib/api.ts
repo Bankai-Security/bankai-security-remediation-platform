@@ -109,11 +109,22 @@ export function resetPassword(input: { accessToken: string; newPassword: string 
 }
 
 // A real browser navigation (the provider's consent screen redirects the
-// whole page), not a fetch — callers should do
-// `window.location.href = ssoAuthorizeUrl('google')`. Works for both
-// login and signup: Supabase creates the account on first use.
-export function ssoAuthorizeUrl(provider: 'google' | 'github'): string {
-  return `${API_BASE_URL}/api/auth/sso/${provider}`;
+// whole browser), not a fetch — callers should pass the result to
+// openOAuthUrl. Works for both login and signup.
+export function ssoAuthorizeUrl(provider: 'google' | 'github', desktop = false): string {
+  const url = new URL(`${API_BASE_URL}/api/auth/sso/${provider}`);
+  if (desktop) url.searchParams.set('desktop', '1');
+  return url.toString();
+}
+
+export function openOAuthUrl(url: string): Promise<void> {
+  if (window.bankaiDesktop) return window.bankaiDesktop.openExternal(url);
+  window.location.assign(url);
+  return Promise.resolve();
+}
+
+export function exchangeDesktopAuthTransfer(code: string): Promise<{ user: PublicUser; needsOnboarding: boolean }> {
+  return apiFetch('/auth/desktop/exchange', { method: 'POST', body: JSON.stringify({ code }) });
 }
 
 export function getSession(): Promise<{ user: PublicUser }> {
@@ -405,8 +416,7 @@ export function listMyGithubRepos(): Promise<{ repos: GithubUserRepo[] }> {
   return apiFetch("/auth/github/repos", { method: "GET" });
 }
 
-// A real browser navigation (GitHub's OAuth flow redirects the whole page),
-// not a fetch — callers should do `window.location.href = githubAuthorizeUrl()`.
+// Authorization URL for connecting the GitHub account used by repo pickers.
 export function githubAuthorizeUrl(): string {
   return `${API_BASE_URL}/api/auth/github/authorize`;
 }

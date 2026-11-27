@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { createClient, type Session, type SupportedStorage } from "@supabase/supabase-js";
 import type { Request, Response } from "express";
 import { env } from "../env.js";
@@ -8,10 +9,11 @@ import { assertArcjetAllowed } from "../lib/enforce-arcjet.js";
 import { getAuthenticatedGithubUser } from "../lib/github-oauth.js";
 import { logger } from "../lib/logger.js";
 import { GITHUB_SSO_SCOPES, isSsoProvider, ssoCallbackUrl } from "../lib/sso.js";
-import { createUserScopedSupabaseClient } from "../lib/supabase.js";
+import { createUserScopedSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
 
 const VERIFIER_COOKIE = "bankai_sso_verifier";
 const PROVIDER_COOKIE = "bankai_sso_provider";
+const DESKTOP_COOKIE = "bankai_sso_desktop";
 const VERIFIER_MAX_AGE_MS = 5 * 60 * 1000;
 
 // A PKCE code verifier only needs to survive from the authorize request to
@@ -60,7 +62,8 @@ function pkceClient(storage: SupportedStorage) {
 // window.location, not fetch), so this always ends in a redirect — never a
 // JSON error — the provider's consent screen is the next hop.
 export async function authorizeSso(req: Request, res: Response): Promise<void> {
-  const redirectToLogin = () => res.redirect(`${env.FRONTEND_ORIGIN}/login?sso_error=1`);
+  const desktop = req.query.desktop === "1";
+  const redirectToLogin = () => res.redirect(desktop ? "bankai://auth?error=1" : `${env.FRONTEND_ORIGIN}/login?sso_error=1`);
 
   const { provider } = req.params;
   if (typeof provider !== "string" || !isSsoProvider(provider)) {
@@ -109,7 +112,25 @@ export async function authorizeSso(req: Request, res: Response): Promise<void> {
   // sign-in, so it can't be used for that (e.g. an existing email/password
   // user linking GitHub later would still show "email").
   res.cookie(PROVIDER_COOKIE, provider, { ...baseCookieOptions(), maxAge: VERIFIER_MAX_AGE_MS });
+  if (desktop) res.cookie(DESKTOP_COOKIE, "1", { ...baseCookieOptions(), maxAge: VERIFIER_MAX_AGE_MS });
   res.redirect(data.url);
+}
+
+async function createDesktopAuthTransfer(session: Session, isNewUser: boolean): Promise<string> {
+  const code = randomBytes(32).toString("base64url");
+  const codeHash = createHash("sha256").update(code).digest("hex");
+  const expiresAt = new Date(Date.now() + VERIFIER_MAX_AGE_MS).toISOString();
+  await supabaseAdmin.from("desktop_auth_transfers").delete().lt("expires_at", new Date().toISOString());
+  const { error } = await supabaseAdmin.from("desktop_auth_transfers").insert({
+    code_hash: codeHash,
+    access_token_enc: encrypt(session.access_token),
+    refresh_token_enc: encrypt(session.refresh_token),
+    expires_in: session.expires_in,
+    is_new_user: isNewUser,
+    expires_at: expiresAt,
+  });
+  if (error) throw error;
+  return code;
 }
 
 // A GitHub SSO login (requested with GITHUB_SSO_SCOPES) already proves
@@ -155,13 +176,16 @@ async function autoConnectGithub(session: Session): Promise<void> {
 // user declined. Also a top-level navigation, so — same as authorize —
 // every path here ends in a redirect to the frontend, never raw JSON.
 export async function ssoCallback(req: Request, res: Response): Promise<void> {
-  const redirectToError = () => res.redirect(`${env.FRONTEND_ORIGIN}/login?sso_error=1`);
+  let desktop = false;
+  const redirectToError = () => res.redirect(desktop ? "bankai://auth?error=1" : `${env.FRONTEND_ORIGIN}/login?sso_error=1`);
 
   const cookies = req.cookies as Record<string, string | undefined> | undefined;
   const verifier = cookies?.[VERIFIER_COOKIE];
   const provider = cookies?.[PROVIDER_COOKIE];
+  desktop = cookies?.[DESKTOP_COOKIE] === "1";
   res.clearCookie(VERIFIER_COOKIE, baseCookieOptions());
   res.clearCookie(PROVIDER_COOKIE, baseCookieOptions());
+  res.clearCookie(DESKTOP_COOKIE, baseCookieOptions());
 
   const { code, error: oauthError } = req.query;
   if (oauthError) {
@@ -204,6 +228,11 @@ export async function ssoCallback(req: Request, res: Response): Promise<void> {
     const { user } = data.session;
     const isNewUser = !!user.created_at && !!user.last_sign_in_at
       && Math.abs(new Date(user.last_sign_in_at).getTime() - new Date(user.created_at).getTime()) < 5000;
+    if (desktop) {
+      const transferCode = await createDesktopAuthTransfer(data.session, isNewUser);
+      res.redirect(`bankai://auth?code=${encodeURIComponent(transferCode)}`);
+      return;
+    }
     res.redirect(`${env.FRONTEND_ORIGIN}${isNewUser ? "/onboarding" : "/projects"}`);
   } catch (err) {
     logger.error({ err }, "SSO callback failed");

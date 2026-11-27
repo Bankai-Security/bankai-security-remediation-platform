@@ -16,6 +16,7 @@ import {
   getJiraAccountOAuthStatus,
   startJiraAccountOAuth,
   githubAuthorizeUrl,
+  openOAuthUrl,
   listProjects,
   listTeams,
   updateProfile,
@@ -183,8 +184,11 @@ export default function AccountSettings() {
     }
   }, []);
 
-  const handleConnectGithubAccount = () => {
-    window.location.href = githubAuthorizeUrl();
+  const handleConnectGithubAccount = async () => {
+    setGithubAccountBusy(true);
+    try { await openOAuthUrl(githubAuthorizeUrl()); }
+    catch { setGithubAccountBanner('error'); }
+    finally { setGithubAccountBusy(false); }
   };
 
   const handleDisconnectGithubAccount = async () => {
@@ -210,7 +214,7 @@ export default function AccountSettings() {
     setJiraAccountError(null);
     try {
       const { authorizationUrl } = await startJiraAccountOAuth();
-      window.location.assign(authorizationUrl);
+      await openOAuthUrl(authorizationUrl);
     } catch (err) {
       setJiraAccountError(err instanceof ApiError ? err.message : 'Could not start Atlassian authorization.');
       setJiraAccountBusy(false);

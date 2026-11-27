@@ -1,12 +1,24 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import BrandLoadingScreen from './components/BrandLoadingScreen';
+import { useCurrentUser } from './lib/auth-context';
 import AccountSettings from './pages/AccountSettings';
+import DesktopAuthCallback from './pages/DesktopAuthCallback';
 
 // Lazy so framer-motion and the landing sections stay out of the app bundle
 // for authenticated users going straight to /login or /projects.
 const Landing = lazy(() => import('./pages/landing/Landing'));
 const Terms = lazy(() => import('./pages/legal/Terms'));
 const Privacy = lazy(() => import('./pages/legal/Privacy'));
+
+function AppStart() {
+  const { user, loading } = useCurrentUser();
+  const location = useLocation();
+  const isDesktopLaunch = new URLSearchParams(location.search).has('_bankaiDesktopLaunch');
+  if (!isDesktopLaunch) return <Suspense fallback={<BrandLoadingScreen />}><Landing /></Suspense>;
+  if (loading) return <BrandLoadingScreen />;
+  return <Navigate to={user ? '/projects' : '/login'} replace />;
+}
 import ForgotPassword from './pages/ForgotPassword';
 import InviteAccept from './pages/InviteAccept';
 import OrgInviteAccept from './pages/OrgInviteAccept';
@@ -40,14 +52,8 @@ import {
 export default function App() {
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          <Suspense fallback={<div style={{ minHeight: '100vh', background: 'var(--color-bg)' }} />}>
-            <Landing />
-          </Suspense>
-        }
-      />
+      <Route path="/" element={<AppStart />} />
+      <Route path="/auth/desktop-callback" element={<DesktopAuthCallback />} />
       <Route
         path="/terms"
         element={
