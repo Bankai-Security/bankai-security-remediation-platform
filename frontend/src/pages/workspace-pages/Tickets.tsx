@@ -48,6 +48,20 @@ function RemediationProgress({ ticket, compact = false }: { ticket: Ticket; comp
   );
 }
 
+function RemediationIssue({ ticket, onRetry, retrying = false }: { ticket: Ticket; onRetry?: () => void; retrying?: boolean }) {
+  const message = ticket.githubPrError ?? ticket.githubBranchError;
+  if (!message) return null;
+  return (
+    <div className="tickets-remediation-issue" role="alert">
+      <div className="tickets-remediation-issue-heading">Automatic fix needs attention</div>
+      <p>{message}</p>
+      {onRetry && <button className="tickets-remediation-issue-retry" type="button" onClick={onRetry} disabled={retrying}>
+        {retrying ? 'Retrying…' : 'Retry fix'}
+      </button>}
+    </div>
+  );
+}
+
 function canRetryFix(t: Ticket): boolean {
   // A failure can happen before Bankai creates the remediation branch (for
   // example, when validating the original finding path). Retrying that ticket
@@ -466,19 +480,10 @@ export default function Tickets() {
                             </a>
                           ) : null}
 
-                          {!t.githubPrUrl && (t.githubPrError || t.githubBranchError) ? (
-                            <span className="ws-icon-btn ws-icon-btn--warn" title={t.githubPrError ?? t.githubBranchError ?? undefined}>!</span>
-                          ) : null}
-
-                          {canRetryFix(t) && (
-                            <RetryFixButton
-                              onClick={() => void handleRetryFix(t.id)}
-                              retrying={retryingFixId === t.id}
-                              title="Retry fix generation"
-                            />
-                          )}
-
                         </div>
+                        <RemediationIssue ticket={t}
+                          onRetry={editable && canRetryFix(t) ? () => void handleRetryFix(t.id) : undefined}
+                          retrying={retryingFixId === t.id} />
                         <div className="tickets-kanban-card-footer">
                           <span className="tickets-kanban-card-due" style={{ color: t.overdue ? 'var(--color-error)' : 'var(--color-text-muted)' }}>
                             {t.overdue ? 'Overdue · ' : 'Due '}{formatDue(t.dueDate)}
@@ -505,6 +510,9 @@ export default function Tickets() {
                     <span className="tickets-table-title">
                       <MarkdownText className="tickets-table-title-markdown">{t.title}</MarkdownText>
                       <RemediationProgress ticket={t} compact />
+                      <RemediationIssue ticket={t}
+                        onRetry={editable && canRetryFix(t) ? () => void handleRetryFix(t.id) : undefined}
+                        retrying={retryingFixId === t.id} />
                     </span>
                     <span className="tickets-table-service">{t.service}</span>
                     <span className="tickets-table-severity"><span className={sevBadgeClass(t.severity)}>{t.severity}</span></span>
@@ -556,18 +564,6 @@ export default function Tickets() {
                           </a>
                         ) : null}
 
-                        {!t.githubPrUrl && (t.githubPrError || t.githubBranchError) ? (
-                          <span className="ws-icon-btn ws-icon-btn--warn ws-icon-btn--sm" title={t.githubPrError ?? t.githubBranchError ?? undefined}>!</span>
-                        ) : null}
-
-                        {canRetryFix(t) && (
-                          <RetryFixButton
-                            onClick={() => void handleRetryFix(t.id)}
-                            retrying={retryingFixId === t.id}
-                            title="Retry fix generation"
-                            size={18}
-                          />
-                        )}
                     </span>
                   </div>
                 );

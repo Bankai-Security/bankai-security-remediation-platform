@@ -150,24 +150,28 @@ ${finding.remediationGuidance}
 ${numbered}`;
 }
 
+export type FixGenerationFailure = "file_too_large" | "provider_error" | "invalid_response" | "no_actionable_change";
+export type FixGenerationResult = { fix: GeneratedFix; failure: null } | { fix: null; failure: FixGenerationFailure };
+
 // Best-effort, same contract as gemini.ts's analyzeChunk: 2 attempts, never
 // throws — a fix-generation failure degrades to "no PR", never blocks upstream.
-export async function generateFix(
+export async function generateFixWithDiagnostics(
   finding: FixFindingInput,
   fileContent: string,
   repoContextPrompt?: string,
-): Promise<GeneratedFix | null> {
+): Promise<FixGenerationResult> {
   if (fileContent.length > env.MAX_SCAN_FILE_BYTES) {
     logger.warn(
       { filePath: finding.filePath, size: fileContent.length },
       "Skipping AI fix generation — file exceeds MAX_SCAN_FILE_BYTES",
     );
-    return null;
+    return { fix: null, failure: "file_too_large" };
   }
 
   const contents = buildUserPrompt(finding, fileContent, repoContextPrompt);
   const systemInstruction = SYSTEM_PROMPT;
 
+  let failure: FixGenerationFailure = "provider_error";
   for (let attempt = 1; attempt <= 2; attempt++) {
     let text: string | undefined;
     try {
@@ -184,11 +188,13 @@ export async function generateFix(
       text = response.text;
     } catch (err) {
       logger.error({ err, attempt, filePath: finding.filePath }, "AI fix-generation request failed");
+      failure = "provider_error";
       continue;
     }
 
     if (!text) {
       logger.error({ attempt, filePath: finding.filePath }, "AI returned an empty fix-generation response");
+      failure = "invalid_response";
       continue;
     }
 
@@ -197,6 +203,7 @@ export async function generateFix(
       parsed = JSON.parse(text);
     } catch (err) {
       logger.error({ err, attempt, filePath: finding.filePath }, "AI fix-generation response was not valid JSON");
+      failure = "invalid_response";
       continue;
     }
 
@@ -206,12 +213,24 @@ export async function generateFix(
         { issues: result.error.issues, attempt, filePath: finding.filePath },
         "AI fix-generation response did not match the expected schema",
       );
+      failure = "invalid_response";
       continue;
     }
 
-    return result.data;
+    if (result.data.fixedContent === fileContent) {
+      return { fix: null, failure: "no_actionable_change" };
+    }
+    return { fix: result.data, failure: null };
   }
 
   logger.error({ filePath: finding.filePath }, "Dropping fix generation after repeated AI failures");
-  return null;
+  return { fix: null, failure };
+}
+
+export async function generateFix(
+  finding: FixFindingInput,
+  fileContent: string,
+  repoContextPrompt?: string,
+): Promise<GeneratedFix | null> {
+  return (await generateFixWithDiagnostics(finding, fileContent, repoContextPrompt)).fix;
 }

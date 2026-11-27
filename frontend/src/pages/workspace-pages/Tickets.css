@@ -197,6 +197,43 @@
   border-width: 1.5px;
 }
 
+.tickets-remediation-issue {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-text);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.tickets-remediation-issue-heading {
+  color: var(--color-error);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tickets-remediation-issue p { margin: 4px 0 0; color: var(--color-text-subtle); }
+
+.tickets-remediation-issue-retry {
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-blue-text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tickets-remediation-issue-retry:disabled { opacity: .65; cursor: wait; }
+
+.tickets-remediation-issue .tickets-remediation-issue-retry:hover { text-decoration: underline; }
+
 @keyframes tickets-remediation-spin {
   to { transform: rotate(360deg); }
 }

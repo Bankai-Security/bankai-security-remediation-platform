@@ -1,7 +1,7 @@
 import type { Job } from "bullmq";
 import { recordActivity } from "../lib/activity.js";
 import { loadPythonDependencyContext, tryApplyDependencyVersionFix } from "../lib/dependency-fix.js";
-import { generateFix, generatedFixPathsAreInScope, isSafePatchPath, normalizeRepositoryFilePath, type FixFindingInput } from "../lib/gemini-fix.js";
+import { generateFixWithDiagnostics, generatedFixPathsAreInScope, isSafePatchPath, normalizeRepositoryFilePath, type FixFindingInput } from "../lib/gemini-fix.js";
 import { gatherRepoContext } from "../lib/repo-context.js";
 import {
   commitFileToBranch,
@@ -459,11 +459,19 @@ export async function processFixPrJob(job: Job<FixPrJobData>): Promise<void> {
         affectedPackages: finding.affected_packages ?? finding.component,
         fixedVersions: finding.fixed_versions ?? finding.fix_available,
       });
-      const fix = deterministicFix
-        ? { confident: true, fixedContent: deterministicFix.fixedContent, summary: deterministicFix.summary, filesToUpdate: undefined }
-        : await generateFix(findingInput, fileContent, `${repoContext.formattedPromptContext}${dependencyContext}`);
-      if (!fix || fix.fixedContent === fileContent) {
-        await setTicketError(ticketId, "Could not generate an automatic fix for this finding.");
+      const generation = deterministicFix
+        ? { fix: { confident: true, fixedContent: deterministicFix.fixedContent, summary: deterministicFix.summary, filesToUpdate: undefined }, failure: null }
+        : await generateFixWithDiagnostics(findingInput, fileContent, `${repoContext.formattedPromptContext}${dependencyContext}`);
+      const fix = generation.fix;
+      if (!fix) {
+        const errorMessage = generation.failure === "file_too_large"
+          ? `Bankai could not prepare a fix because ${targetFilePath} exceeds the configured ${env.MAX_SCAN_FILE_BYTES.toLocaleString()} character limit. Reduce or split the file, or fix the finding manually.`
+          : generation.failure === "no_actionable_change"
+            ? "The AI reviewed the finding and source file but could not identify a safe, meaningful change. Add more precise remediation guidance or fix the issue manually, then retry. No repository changes were made."
+            : generation.failure === "invalid_response"
+              ? "The AI provider did not return a usable fix after two attempts. Retry once; if this persists, check the configured model's structured JSON response support. No repository changes were made."
+              : "The AI service did not complete fix generation after two attempts. Check the AI service configuration and availability, then retry. No repository changes were made.";
+        await setTicketError(ticketId, errorMessage);
         return;
       }
       const suppliedContextPaths = new Set([
